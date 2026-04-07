@@ -1,0 +1,99 @@
+// Base de datos compacta para optimizar rendimiento y carga
+const rawClients = [
+  [1, "AGUIRRE HEIDI ELIZABETH"], [2, "ANDERSON MICHAEL MEDRANDA ALCIVAR"], [3, "ASUNELEC S.A."],
+  [4, "BALSECA CABERA DIANA ADRIANA"], [5, "BOLANOS RODRIGUEZ GERMAN MARCELO"], [6, "BORJA ZAMBRANO JAZMIN BEATRIZ"],
+  [7, "C Y M IMAGENES MEDICINA Y SALUD SA CMSALUD SA"], [8, "CENTRO DE ESPECIALIDADES COLON ECCM S.A."],
+  [9, "CENTRO RADIOLOGICO IMAGE3DSTUDIO SAS"], [10, "CIMEDLAB S.A."], [11, "CLIJENA CIA LTDA"],
+  [12, "CLINICA DEL PACIFICO"], [13, "CLISAISA CLINICA SANTA INES SA"], [14, "COMPANIA FONAR3D IMAGE DENTAL CIA LTDA"],
+  [15, "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S."], [16, "CRISTIAN OMAR CAMACHO CHADAN"],
+  [17, "DIAGNOSTICO AGUDO Y MEDICOS ESPECIALISTA"], [18, "DIRAD DIAGNOSTICO RADIOLOGICO CIA LTDA"],
+  [19, "DR ANDRES EUCLIDES MONTALVAN AYALA"], [20, "DR BORIS ALMEIDA"], [21, "DR CARLOS ALBERTO NARANJO PEREZ"],
+  [22, "DR CARLOS SANTANA RODRIGUEZ"], [23, "DR EDGAR RENE ESPINOZA ENCALADA"], [24, "DR EDGAR SEBASTIAN ESPINOZA MUNOZ"],
+  [25, "DR EDUARDO CANTOS RIVERA"], [26, "DR FABIAN LOZANO"], [27, "DR FELIPE MOROCHO PACHECO"],
+  [28, "DR FERNANDO AGUILERA"], [29, "DR HUGO GUAMAN"], [30, "DR HUGO VINICIO PALACIOS"],
+  [31, "DR JHONNY ALEJANDRO JACOME PONCE"], [32, "DR JHONNY JACOME PONCE"], [33, "DR JORGE ORDONEZ"],
+  [34, "DR JOSE LUIS MOSQUERA CIMELAB"], [35, "DR JOSE MANUEL HUNG ARROYO"], [36, "DR KEVIN WILFRIDO VERSOZA CASTRO"],
+  [37, "DR LEONARDO MORETA"], [38, "DR LUIS SANCHEZ SALINAS"], [39, "DR MARCELO CABRERA"],
+  [40, "DR OSCAR VINICIO VACA SANCHEZ"], [41, "DR PASCUAL LOOR FIENCO"], [42, "DR PEDRO DELGADO ORTIZ"],
+  [43, "DR. JOSE MULLO"], [44, "DRA ALEXANDRA MONARD"], [45, "DRA ANA QUINTANA"],
+  [46, "DRA HILDA SALAZAR SANCHEZ"], [47, "DRA SILVIA ALEXANDRA CULLACAY BUNAY"], [48, "DRA VANESSA LUIS DELGADO"],
+  [49, "ECOGRAMED CIA LTDA"], [50, "ECOSALUD"], [51, "ECOSCAN"], [52, "ECUAIMAGEN"],
+  [53, "ESPECIALIDADES MEDICAS ZAMORA CIA. LTDA."], [54, "EXTOM C.L."], [55, "FABIAN CLOTARIO BORJA ZAMBRANO"],
+  [56, "FULLCARE MEDICAL S.A."], [57, "FUNARMAF"], [58, "GOMEZ VERA JOSE ANTONIO"],
+  [59, "GRACIELA MARIA PACHACAMA GOYA"], [60, "HOSPITAL BASICO EDGAR ARCOS"], [61, "IDENT SAS"],
+  [62, "IMAGENES CENTRAL"], [63, "IMAGENES DIAGNOSTICAS CRUZ ROCA SANANGO CROCSAN S.A.S"], [64, "IMAGENES Y PRISMA SA"],
+  [65, "IZURIETA SANCHEZ E HIJOS CIA LTDA"], [66, "JAAR ASOCIADOS SAS"], [67, "JIMENEZ CASTILLO SANDRA DEL CISNE"],
+  [68, "JOELDA CIA LTDA"], [69, "JORGE ANDRES MOSQUERA JIBAJA"], [70, "JOSE ARIAS MUNIOZ"],
+  [71, "JULIO HUMBERTO RUIZ FLORES"], [72, "KLEVER EDUARDO ECHEVERRIA MARQUEZ"], [73, "LASER CENTRO MEDICO BASTANTES ORBEA"],
+  [74, "LCDO JOSE HERIBERTO ARIAS MUNOZ"], [75, "LM RADIOLOGOS CL"], [76, "LUIS ALFONSO SANCHEZ SALINAS"],
+  [77, "MAGDALENA VERNAZA MEJIA"], [78, "MARCELO ALEJANDRO MONTANO BENITEZ"], [79, "MARIA JOSE BRAVO TENE"],
+  [80, "MARIANA YOCONDA CANTOS RIVERA"], [81, "MEDIMAGENES CIA LTDA"], [82, "MICKELY DAYANA ROMERO CHAMORRO"],
+  [83, "MONARD PROANIO MARIA ALEXANDRA"], [84, "NORMA ORBEA HERRERA"], [85, "NUEVAIMAGENTC CIA LTDA"],
+  [86, "OFFICEGOLDEN S.A."], [87, "ORIMEC INTERNO"], [88, "ORIONGROUP S.A."], [89, "PAEZ HILDA ELISA"],
+  [90, "PATRICIA YAJAIRA ERAZO TORRES"], [91, "PAZOS GONZALES MERCEDES COLIS"], [92, "PREMIUM DENTAL LAB S.C."],
+  [93, "QUIZHPI BRAVO MARCO VINICIO"], [94, "RADIOMED"], [95, "RESONADOR CLINICA SAN PABLO CIA LTDA"],
+  [96, "RINCON ALVAREZ EDILMARIS DE LOS ANGELES"], [97, "ROJAS CHURO JULIO ALBERTO"], [98, "RUTHY CIA. LTDA."],
+  [99, "SAAB CORP SAS"], [100, "SCAN-3D S.A.S."], [101, "SCAN3DIGITAL S.A.S."],
+  [102, "SERVICIOS Y VENTAS MOGROVEJO RODRIGUEZ SERVEMOR CIA LTDA"], [103, "SISTEMAS SERVICIOS Y SUMINISTROS MEDICOS 3S"],
+  [104, "SISTEMAS SERVICIOS Y SUMINISTROS MEDICOS 3SMED"], [105, "SMIMAGENES SAS"], [106, "SOCIEDAD CIVIL CTRO DE IMAGENES QUEVEDO CIQ"],
+  [107, "TAILY LUISANA MONTOYA BERSOZA"], [108, "TEC MED CRISTOBAL REYES TIGSE"], [109, "TERESA CORDOVA"],
+  [110, "TMD EDWIN ESPANA"], [111, "TOMOGRAMED CIA LTDA"], [112, "ULLOA AGUILERA LUIS FELIPE"],
+  [113, "ULTRADIAGNOSTIC"], [114, "UNIDAD DE DIAGNOSTICOS E IMAGENES S.A. UNIMAGENLOOR"], [115, "UNIMOVILRAY CIA LTDA"],
+  [116, "UNIVERSIDAD CATOLICA DE CUENCA"], [117, "VASCONEZ ROJAS MARIA BELEN"], [118, "VERNAZA TAC Y ASOCIADOS SA"],
+  [119, "VIVANCO ARMIJOS VICTOR GEOVANNY"], [120, "WAGNER GONZALO ESPINOZA CHAVEZ"], [121, "WASHINGTON TENEMAZA"],
+  [122, "ZAMBRANO ORDONEZ JOSE PAUL"], [123, "ZEA CORONEL DENNISE ALEJANDRA"]
+];
+
+const sizes = ["14x17", "8x10", "10x14", "14x17", "10x14", "10x12", "8x10", "8x10"];
+
+// Formato: [clientId, sizeIndex, quantity]
+const rawConsumos = [
+  [1, 1, 1], [1, 5, 1], [2, 1, 120], [3, 0, 4], [3, 1, 17], [3, 4, 1], [3, 5, 2], [3, 6, 2],
+  [4, 1, 2], [4, 4, 2], [5, 1, 18], [5, 5, 1], [6, 1, 30], [7, 1, 359], [7, 6, 105], [8, 0, 2], [8, 1, 2],
+  [9, 1, 31], [9, 5, 6], [10, 0, 32], [10, 5, 17], [11, 0, 1], [11, 1, 1], [12, 0, 1], [12, 5, 1],
+  [13, 0, 1], [13, 5, 2], [14, 1, 16], [14, 5, 1], [15, 0, 11], [15, 1, 63], [15, 2, 12], [15, 3, 44], [15, 5, 186],
+  [16, 1, 5], [17, 0, 5], [17, 1, 6], [18, 2, 10], [18, 3, 25], [18, 6, 3], [19, 0, 1], [19, 5, 6],
+  [20, 1, 76], [21, 1, 4], [21, 4, 26], [22, 0, 1], [23, 0, 16], [23, 4, 28], [24, 0, 1], [24, 1, 1], [24, 4, 1],
+  [25, 0, 1], [25, 5, 1], [26, 1, 4], [26, 4, 4], [27, 0, 2], [27, 5, 3], [28, 1, 99], [29, 0, 6], [29, 5, 6],
+  [30, 0, 1], [30, 5, 1], [31, 0, 10], [31, 2, 5], [31, 3, 5], [31, 5, 10], [32, 0, 41], [32, 2, 6], [32, 3, 15], [32, 5, 15],
+  [33, 0, 1], [33, 4, 5], [34, 0, 21], [34, 1, 17], [34, 6, 2], [35, 0, 2], [35, 1, 16], [36, 0, 4], [36, 5, 3],
+  [37, 0, 1], [37, 1, 1], [37, 5, 12], [38, 0, 1], [38, 5, 1], [39, 0, 1], [39, 1, 1], [40, 0, 38], [40, 4, 2], [40, 5, 82],
+  [41, 0, 1], [41, 1, 1], [42, 1, 1], [42, 5, 6], [43, 1, 10], [44, 1, 3], [44, 5, 2], [45, 5, 2], [45, 6, 1],
+  [46, 6, 11], [47, 0, 5], [47, 1, 8], [47, 4, 10], [47, 5, 2], [48, 1, 1], [48, 5, 1], [49, 4, 17], [50, 1, 1], [50, 5, 1],
+  [51, 2, 0], [51, 3, 0], [52, 0, 2], [52, 1, 1], [52, 5, 6], [53, 0, 4], [53, 4, 2], [54, 0, 6], [55, 1, 84],
+  [56, 0, 2], [56, 5, 2], [57, 1, 3], [57, 5, 1], [58, 0, 7], [58, 5, 6], [59, 1, 2], [59, 4, 2], [60, 0, 2], [60, 1, 3], [60, 5, 0],
+  [61, 1, 15], [61, 5, 0], [62, 0, 6], [62, 5, 4], [63, 0, 3], [63, 5, 6], [64, 0, 21], [64, 2, 2], [64, 5, 7],
+  [65, 0, 1], [65, 5, 1], [66, 1, 20], [66, 5, 5], [67, 0, 1], [67, 1, 6], [68, 0, 1], [68, 5, 1], [69, 1, 53],
+  [70, 6, 1], [71, 0, 1], [71, 1, 3], [72, 0, 5], [72, 5, 6], [73, 1, 12], [74, 6, 1], [75, 0, 31], [75, 5, 18],
+  [76, 0, 1], [76, 5, 2], [77, 0, 8], [77, 4, 6], [77, 5, 1], [78, 0, 1], [79, 1, 4], [79, 6, 1], [80, 0, 6], [80, 5, 3],
+  [81, 0, 5], [81, 2, 10], [81, 3, 8], [81, 4, 8], [82, 1, 17], [83, 1, 13], [83, 5, 5], [84, 0, 15], [84, 1, 25],
+  [85, 4, 2], [85, 7, 1], [86, 0, 17], [86, 1, 3], [86, 5, 16], [87, 1, 1], [87, 5, 2], [88, 1, 49], [89, 1, 15],
+  [90, 1, 20], [91, 0, 3], [91, 1, 1], [91, 5, 2], [92, 1, 15], [93, 0, 1], [93, 1, 1], [93, 5, 1], [94, 1, 3], [94, 4, 4],
+  [95, 0, 4], [96, 1, 1], [97, 4, 3], [98, 0, 26], [98, 5, 1], [99, 6, 9], [100, 1, 0], [101, 1, 82],
+  [102, 0, 12], [102, 4, 14], [103, 0, 2], [103, 4, 1], [103, 5, 1], [104, 6, 2], [105, 0, 7], [105, 1, 10],
+  [106, 0, 31], [106, 5, 14], [107, 0, 5], [107, 1, 5], [107, 4, 3], [107, 5, 1], [108, 0, 3], [108, 1, 2], [108, 3, 4], [108, 5, 13],
+  [109, 1, 18], [110, 2, 5], [110, 3, 5], [111, 2, 2], [111, 4, 1], [111, 6, 1], [111, 7, 4], [112, 2, 1], [112, 3, 10], [112, 6, 10],
+  [113, 1, 5], [113, 5, 6], [114, 0, 2], [114, 5, 2], [115, 0, 4], [115, 5, 2], [116, 2, 14], [116, 3, 11], [117, 5, 3],
+  [118, 0, 1], [119, 1, 10], [120, 1, 3], [120, 5, 2], [121, 5, 2], [122, 0, 8], [122, 1, 1], [122, 5, 7], [123, 1, 7]
+];
+
+const data = {
+  clientes: rawClients.map(([id, name]) => ({
+    id,
+    name,
+    city: "Ecuador",
+    ruc_id: `ID-${id.toString().padStart(3, '0')}`,
+    contact: "No registrado"
+  })),
+  consumos: rawConsumos.map(([cid, sIdx, qty], index) => ({
+    id: index + 1,
+    client_id: cid,
+    order_date: "2025-01-01",
+    quantity: qty,
+    size: sizes[sIdx],
+    batch_number: `B-${cid}-${sIdx}`,
+    expiry_date: "2026-12-31"
+  }))
+};
+
+export default data;

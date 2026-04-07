@@ -1,0 +1,10083 @@
+import React, { useState, useMemo, useEffect, createContext, useContext } from 'react';
+import { 
+  Search, Plus, Hospital, History, TrendingDown, TrendingUp, 
+  AlertCircle, Package, Calendar, MapPin, User, ChevronRight, Filter,
+  Edit2, X, Save, Trash2, LayoutDashboard, Users, BarChart3, PieChart,
+  Sun, Moon, Printer, Download, Upload, FileText, CheckCircle2, AlertTriangle,
+  Bell, Target, Brain, ShieldAlert, Zap, Trophy, ChevronDown, ChevronUp,
+  Clock, PhoneCall, ArrowRight, Boxes, Layers, LogOut, Shield, Eye, UserCheck,
+  Check as CheckIcon
+} from 'lucide-react';
+import { 
+  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, 
+  Tooltip, ResponsiveContainer, Cell, AreaChart, Area,
+} from 'recharts';
+import { format, isAfter } from 'date-fns';
+import * as XLSX from 'xlsx';
+import { cn } from './lib/utils';
+import { db } from './firebase';
+import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import { 
+  collection, 
+  onSnapshot, 
+  setDoc, 
+  addDoc,
+  doc, 
+  deleteDoc, 
+  query, 
+  getDocs,
+  writeBatch,
+  updateDoc,
+  getDoc
+} from 'firebase/firestore';
+
+// ── AUTH TYPES & CONTEXT ─────────────────────────────────────────────────────
+type UserRole = 'admin' | 'financiero' | 'vendedor' | 'asistente' | 'gerencia';
+interface AppUser { uid: string; email: string; nombre: string; role: UserRole; activo: boolean; }
+
+interface AuthContextType {
+  appUser: AppUser | null;
+  role: UserRole | null;
+  authLoading: boolean;
+  login: (email: string, password: string) => Promise<void>;
+  logout: () => Promise<void>;
+}
+const AuthContext = createContext<AuthContextType | null>(null);
+const useAuth = () => { const ctx = useContext(AuthContext); if (!ctx) throw new Error('No AuthContext'); return ctx; };
+
+const _auth = getAuth();
+
+function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [appUser, setAppUser] = useState<AppUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(_auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        try {
+          const snap = await getDoc(doc(db, 'users', firebaseUser.uid));
+          if (snap.exists()) {
+            const data = snap.data() as AppUser;
+            if (data.activo) { setAppUser(data); }
+            else { await signOut(_auth); setAppUser(null); }
+          } else { await signOut(_auth); setAppUser(null); }
+        } catch { setAppUser(null); }
+      } else { setAppUser(null); }
+      setAuthLoading(false);
+    });
+    return unsub;
+  }, []);
+
+  const login = async (email: string, password: string) => {
+    await signInWithEmailAndPassword(_auth, email, password);
+  };
+  const logout = async () => { await signOut(_auth); };
+
+  return <AuthContext.Provider value={{ appUser, role: appUser?.role ?? null, authLoading, login, logout }}>{children}</AuthContext.Provider>;
+}
+
+// ── LOGIN PAGE ───────────────────────────────────────────────────────────────
+function LoginPage({ darkMode }: { darkMode: boolean }) {
+  const { login } = useAuth();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPass, setShowPass] = useState(false);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [forgotMode, setForgotMode] = useState(false);
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetSent, setResetSent] = useState(false);
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetError, setResetError] = useState('');
+
+  const handleSubmit = async () => {
+    if (!email || !password) return;
+    setError(''); setLoading(true);
+    try { await login(email, password); }
+    catch (err: any) {
+      const code = err?.code;
+      if (code === 'auth/user-not-found' || code === 'auth/wrong-password' || code === 'auth/invalid-credential') setError('Correo o contraseña incorrectos.');
+      else if (code === 'auth/too-many-requests') setError('Demasiados intentos. Intenta más tarde.');
+      else setError('Error al iniciar sesión.');
+    } finally { setLoading(false); }
+  };
+
+  const handleResetPassword = async () => {
+    if (!resetEmail) return;
+    setResetError(''); setResetLoading(true);
+    try {
+      const { sendPasswordResetEmail } = await import('firebase/auth');
+      await sendPasswordResetEmail(_auth, resetEmail.trim().toLowerCase());
+      setResetSent(true);
+    } catch (err: any) {
+      const code = err?.code;
+      if (code === 'auth/user-not-found' || code === 'auth/invalid-email') setResetError('No existe una cuenta con ese correo.');
+      else setResetError('Error al enviar. Intenta de nuevo.');
+    } finally { setResetLoading(false); }
+  };
+
+  if (forgotMode) {
+    return (
+      <div className={cn("w-screen h-screen flex items-center justify-center", darkMode ? "bg-[#0F0F11]" : "bg-[#F4F5F7]")} style={{ fontFamily: "'DM Sans', 'Inter', system-ui, sans-serif" }}>
+        <div className={cn("w-full max-w-sm rounded-2xl p-8 shadow-2xl border", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/80")}>
+          <div className="flex flex-col items-center gap-3 mb-8">
+            <div className="w-12 h-12 bg-[#ED1C24] rounded-2xl flex items-center justify-center shadow-lg shadow-red-500/30">
+              <Package className="text-white w-6 h-6" />
+            </div>
+            <div className="text-center">
+              <h1 className="text-base font-black tracking-tight">Recuperar contraseña</h1>
+              <p className={cn("text-[9px] font-semibold uppercase tracking-[0.15em] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>Orimec · Sistema de Gestión</p>
+            </div>
+          </div>
+
+          {resetSent ? (
+            <div className="flex flex-col items-center gap-4 text-center">
+              <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
+                <CheckIcon className="w-6 h-6 text-emerald-500" />
+              </div>
+              <div>
+                <p className={cn("text-xs font-bold", darkMode ? "text-white" : "text-gray-900")}>Correo enviado</p>
+                <p className={cn("text-[10px] mt-1 leading-relaxed", darkMode ? "text-gray-500" : "text-gray-400")}>
+                  Revisa tu bandeja de entrada en <span className="font-semibold">{resetEmail}</span> y sigue las instrucciones para restablecer tu contraseña.
+                </p>
+              </div>
+              <button onClick={() => { setForgotMode(false); setResetSent(false); setResetEmail(''); }}
+                className="w-full bg-[#ED1C24] text-white py-2.5 rounded-xl text-xs font-bold hover:bg-[#D11920] shadow-md shadow-red-500/20 transition-all">
+                Volver al inicio de sesión
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3">
+              <p className={cn("text-[10px] leading-relaxed mb-1", darkMode ? "text-gray-500" : "text-gray-500")}>
+                Ingresa tu correo y te enviaremos un enlace para restablecer tu contraseña.
+              </p>
+              <div>
+                <label className={cn("text-[10px] font-semibold uppercase tracking-wider mb-1.5 block", darkMode ? "text-gray-500" : "text-gray-500")}>Correo electrónico</label>
+                <input type="email" value={resetEmail} onChange={e => setResetEmail(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleResetPassword()} placeholder="usuario@orimec.com" autoComplete="email"
+                  className={cn("w-full px-3.5 py-2.5 rounded-xl text-xs font-medium outline-none transition-all", darkMode ? "bg-white/5 text-white placeholder:text-gray-600 focus:ring-1 focus:ring-[#ED1C24]/40 border border-white/8" : "bg-gray-100 text-gray-800 placeholder:text-gray-400 focus:bg-white focus:ring-2 focus:ring-[#ED1C24]/20 border border-transparent")} />
+              </div>
+              {resetError && <p className="text-[11px] text-red-500 font-medium text-center">{resetError}</p>}
+              <button onClick={handleResetPassword} disabled={resetLoading || !resetEmail}
+                className="mt-1 w-full bg-[#ED1C24] text-white py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-[#D11920] shadow-md shadow-red-500/20 transition-all disabled:opacity-50">
+                {resetLoading ? <><span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />Enviando...</> : 'Enviar enlace de recuperación'}
+              </button>
+              <button onClick={() => { setForgotMode(false); setResetError(''); }}
+                className={cn("w-full py-2 rounded-xl text-xs font-semibold transition-colors", darkMode ? "bg-white/5 hover:bg-white/8 text-gray-400" : "bg-gray-100 hover:bg-gray-200 text-gray-500")}>
+                ← Volver
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={cn("w-screen h-screen flex items-center justify-center", darkMode ? "bg-[#0F0F11]" : "bg-[#F4F5F7]")} style={{ fontFamily: "'DM Sans', 'Inter', system-ui, sans-serif" }}>
+      <div className={cn("w-full max-w-sm rounded-2xl p-8 shadow-2xl border", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/80")}>
+        <div className="flex flex-col items-center gap-3 mb-8">
+          <div className="w-12 h-12 bg-[#ED1C24] rounded-2xl flex items-center justify-center shadow-lg shadow-red-500/30">
+            <Package className="text-white w-6 h-6" />
+          </div>
+          <div className="text-center">
+            <h1 className="text-base font-black tracking-tight">FUJIFILM <span className="text-[#ED1C24]">DI-HT · DI-HL</span></h1>
+            <p className={cn("text-[9px] font-semibold uppercase tracking-[0.15em] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>Orimec · Sistema de Gestión</p>
+          </div>
+        </div>
+        <div className="flex flex-col gap-3">
+          <div>
+            <label className={cn("text-[10px] font-semibold uppercase tracking-wider mb-1.5 block", darkMode ? "text-gray-500" : "text-gray-500")}>Correo electrónico</label>
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSubmit()} placeholder="usuario@orimec.com" autoComplete="email"
+              className={cn("w-full px-3.5 py-2.5 rounded-xl text-xs font-medium outline-none transition-all", darkMode ? "bg-white/5 text-white placeholder:text-gray-600 focus:ring-1 focus:ring-[#ED1C24]/40 border border-white/8" : "bg-gray-100 text-gray-800 placeholder:text-gray-400 focus:bg-white focus:ring-2 focus:ring-[#ED1C24]/20 border border-transparent")} />
+          </div>
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className={cn("text-[10px] font-semibold uppercase tracking-wider", darkMode ? "text-gray-500" : "text-gray-500")}>Contraseña</label>
+              <button type="button" onClick={() => { setForgotMode(true); setResetEmail(email); }}
+                className={cn("text-[10px] font-semibold transition-colors hover:underline", darkMode ? "text-gray-600 hover:text-gray-400" : "text-gray-400 hover:text-[#ED1C24]")}>
+                ¿Olvidaste tu contraseña?
+              </button>
+            </div>
+            <div className="relative">
+              <input type={showPass ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSubmit()} placeholder="••••••••" autoComplete="current-password"
+                className={cn("w-full pl-3.5 pr-10 py-2.5 rounded-xl text-xs font-medium outline-none transition-all", darkMode ? "bg-white/5 text-white placeholder:text-gray-600 focus:ring-1 focus:ring-[#ED1C24]/40 border border-white/8" : "bg-gray-100 text-gray-800 placeholder:text-gray-400 focus:bg-white focus:ring-2 focus:ring-[#ED1C24]/20 border border-transparent")} />
+              <button type="button" onClick={() => setShowPass(v => !v)} className={cn("absolute right-3 top-1/2 -translate-y-1/2", darkMode ? "text-gray-600 hover:text-gray-400" : "text-gray-400 hover:text-gray-600")}>
+                {showPass ? <Eye className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5 opacity-50" />}
+              </button>
+            </div>
+          </div>
+          {error && <p className="text-[11px] text-red-500 font-medium text-center">{error}</p>}
+          <button onClick={handleSubmit} disabled={loading || !email || !password}
+            className="mt-2 w-full bg-[#ED1C24] text-white py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-[#D11920] shadow-md shadow-red-500/20 transition-all disabled:opacity-50">
+            {loading ? <><span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />Ingresando...</> : <><LogOut className="w-3.5 h-3.5 rotate-180" />Iniciar sesión</>}
+          </button>
+        </div>
+        <p className={cn("text-[9px] text-center mt-6 font-medium", darkMode ? "text-gray-700" : "text-gray-400")}>Acceso restringido a usuarios autorizados</p>
+      </div>
+    </div>
+  );
+}
+
+// ── USERS PANEL ──────────────────────────────────────────────────────────────
+const ROLE_LABELS: Record<UserRole, string> = { admin: 'Admin', financiero: 'Financiero', vendedor: 'Vendedor', asistente: 'Asistente', gerencia: 'Gerencia' };
+const ROLE_COLORS: Record<UserRole, string> = {
+  admin: 'text-[#ED1C24] bg-[#ED1C24]/10 border-[#ED1C24]/20',
+  financiero: 'text-emerald-500 bg-emerald-500/10 border-emerald-500/20',
+  vendedor: 'text-blue-500 bg-blue-500/10 border-blue-500/20',
+  asistente: 'text-violet-500 bg-violet-500/10 border-violet-500/20',
+  gerencia: 'text-amber-500 bg-amber-500/10 border-amber-500/20',
+};
+const ROLE_ICONS: Record<UserRole, React.ElementType> = { admin: Shield, financiero: UserCheck, vendedor: Eye, asistente: Eye, gerencia: BarChart3 };
+
+function UsersPanel({ darkMode }: { darkMode: boolean }) {
+  const [panelUsers, setPanelUsers] = useState<AppUser[]>([]);
+  const [showForm, setShowForm] = useState(false);
+  const [editingUser, setEditingUser] = useState<AppUser | null>(null);
+  const [form, setForm] = useState({ uid: '', email: '', nombre: '', role: 'vendedor' as UserRole });
+  const [saving, setSaving] = useState(false);
+  const [successMsg, setSuccessMsg] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'users'), snap => {
+      setPanelUsers(snap.docs.map(d => d.data() as AppUser).sort((a, b) => a.nombre.localeCompare(b.nombre)));
+    });
+    return unsub;
+  }, []);
+
+  const resetForm = () => { setForm({ uid: '', email: '', nombre: '', role: 'vendedor' }); setEditingUser(null); setShowForm(false); setErrorMsg(''); };
+
+  const handleSave = async () => {
+    if (!form.uid.trim() || !form.email.trim() || !form.nombre.trim()) { setErrorMsg('Todos los campos son obligatorios.'); return; }
+    setSaving(true); setErrorMsg('');
+    try {
+      const userData: AppUser = { uid: form.uid.trim(), email: form.email.trim().toLowerCase(), nombre: form.nombre.trim(), role: form.role, activo: true };
+      await setDoc(doc(db, 'users', userData.uid), userData);
+      setSuccessMsg(editingUser ? 'Usuario actualizado.' : 'Usuario creado. Créalo también en Firebase Auth si es nuevo.');
+      setTimeout(() => setSuccessMsg(''), 4000);
+      resetForm();
+    } catch { setErrorMsg('Error al guardar. Verifica el UID.'); }
+    finally { setSaving(false); }
+  };
+
+  const handleToggleActive = async (u: AppUser) => { await updateDoc(doc(db, 'users', u.uid), { activo: !u.activo }); };
+
+  return (
+    <div className="flex flex-col gap-4 h-full overflow-y-auto custom-scrollbar pr-1">
+      <div className="flex items-center justify-between shrink-0">
+        <div>
+          <h2 className={cn("text-sm font-black", darkMode ? "text-white" : "text-gray-900")}>Gestión de Usuarios</h2>
+          <p className={cn("text-[10px] mt-0.5", darkMode ? "text-gray-500" : "text-gray-400")}>{panelUsers.length} usuario{panelUsers.length !== 1 ? 's' : ''} registrado{panelUsers.length !== 1 ? 's' : ''}</p>
+        </div>
+        <button onClick={() => { resetForm(); setShowForm(true); }} className="bg-[#ED1C24] text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 hover:bg-[#D11920] shadow-md shadow-red-500/20 transition-all">
+          <Plus className="w-3.5 h-3.5" /> Nuevo Usuario
+        </button>
+      </div>
+
+      {successMsg && (
+        <div className="px-4 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 text-xs font-medium flex items-center gap-2">
+          <CheckIcon className="w-3.5 h-3.5 shrink-0" /> {successMsg}
+        </div>
+      )}
+
+      {showForm && (
+        <div className={cn("rounded-2xl border p-5 flex flex-col gap-4", darkMode ? "bg-white/3 border-white/8" : "bg-white border-gray-200/80 shadow-sm")}>
+          <div className="flex items-center justify-between">
+            <p className={cn("text-xs font-bold", darkMode ? "text-white" : "text-gray-800")}>{editingUser ? 'Editar usuario' : 'Nuevo usuario'}</p>
+            <button onClick={resetForm} className={cn("p-1 rounded-lg", darkMode ? "hover:bg-white/8 text-gray-500" : "hover:bg-gray-100 text-gray-400")}><X className="w-3.5 h-3.5" /></button>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <label className={cn("text-[10px] font-semibold uppercase tracking-wider mb-1 block", darkMode ? "text-gray-500" : "text-gray-500")}>UID de Firebase Auth *</label>
+              <input type="text" value={form.uid} onChange={e => setForm(f => ({ ...f, uid: e.target.value }))} disabled={!!editingUser} placeholder="Copia el UID desde Firebase Console → Authentication"
+                className={cn("w-full px-3 py-2 rounded-xl text-xs font-medium outline-none transition-all", darkMode ? "bg-white/5 text-white placeholder:text-gray-600 focus:ring-1 focus:ring-[#ED1C24]/40 border border-white/8 disabled:opacity-40" : "bg-gray-100 text-gray-800 placeholder:text-gray-400 focus:bg-white focus:ring-2 focus:ring-[#ED1C24]/20 border border-transparent disabled:opacity-50")} />
+            </div>
+            <div>
+              <label className={cn("text-[10px] font-semibold uppercase tracking-wider mb-1 block", darkMode ? "text-gray-500" : "text-gray-500")}>Nombre</label>
+              <input type="text" value={form.nombre} onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))} placeholder="Nombre completo"
+                className={cn("w-full px-3 py-2 rounded-xl text-xs font-medium outline-none transition-all", darkMode ? "bg-white/5 text-white placeholder:text-gray-600 focus:ring-1 focus:ring-[#ED1C24]/40 border border-white/8" : "bg-gray-100 text-gray-800 placeholder:text-gray-400 focus:bg-white focus:ring-2 focus:ring-[#ED1C24]/20 border border-transparent")} />
+            </div>
+            <div>
+              <label className={cn("text-[10px] font-semibold uppercase tracking-wider mb-1 block", darkMode ? "text-gray-500" : "text-gray-500")}>Correo</label>
+              <input type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder="correo@orimec.com"
+                className={cn("w-full px-3 py-2 rounded-xl text-xs font-medium outline-none transition-all", darkMode ? "bg-white/5 text-white placeholder:text-gray-600 focus:ring-1 focus:ring-[#ED1C24]/40 border border-white/8" : "bg-gray-100 text-gray-800 placeholder:text-gray-400 focus:bg-white focus:ring-2 focus:ring-[#ED1C24]/20 border border-transparent")} />
+            </div>
+            <div className="col-span-2">
+              <label className={cn("text-[10px] font-semibold uppercase tracking-wider mb-1.5 block", darkMode ? "text-gray-500" : "text-gray-500")}>Rol</label>
+              <div className="flex gap-2">
+                {(['admin', 'financiero', 'vendedor', 'asistente', 'gerencia'] as UserRole[]).map(r => {
+                  const Icon = ROLE_ICONS[r];
+                  return (
+                    <button key={r} onClick={() => setForm(f => ({ ...f, role: r }))}
+                      className={cn("flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-[11px] font-bold border transition-all",
+                        form.role === r ? ROLE_COLORS[r] : (darkMode ? "bg-white/3 border-white/8 text-gray-500 hover:bg-white/6" : "bg-gray-50 border-gray-200 text-gray-400 hover:bg-gray-100"))}>
+                      <Icon className="w-3 h-3" />{ROLE_LABELS[r]}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+          {errorMsg && <p className="text-[11px] text-red-500 font-medium">{errorMsg}</p>}
+          <div className="flex gap-2 pt-1">
+            <button onClick={resetForm} className={cn("flex-1 py-2 rounded-xl text-xs font-semibold", darkMode ? "bg-white/6 hover:bg-white/10 text-gray-400" : "bg-gray-100 hover:bg-gray-200 text-gray-500")}>Cancelar</button>
+            <button onClick={handleSave} disabled={saving} className="flex-1 py-2 rounded-xl text-xs font-bold bg-[#ED1C24] text-white hover:bg-[#D11920] transition-all disabled:opacity-50 shadow-sm shadow-red-500/20">
+              {saving ? 'Guardando...' : editingUser ? 'Actualizar' : 'Crear usuario'}
+            </button>
+          </div>
+          {!editingUser && <p className={cn("text-[9px] leading-relaxed", darkMode ? "text-gray-600" : "text-gray-400")}>⚠️ Debes crear el usuario primero en <span className="font-semibold">Firebase Console → Authentication → Add user</span>, copiar el UID y pegarlo aquí.</p>}
+        </div>
+      )}
+
+      <div className="flex flex-col gap-2">
+        {panelUsers.map(u => {
+          const Icon = ROLE_ICONS[u.role];
+          return (
+            <div key={u.uid} className={cn("flex items-center gap-4 px-4 py-3 rounded-2xl border transition-all", darkMode ? "bg-white/3 border-white/8 hover:bg-white/5" : "bg-white border-gray-200/80 shadow-sm", !u.activo && "opacity-50")}>
+              <div className={cn("w-8 h-8 rounded-xl flex items-center justify-center shrink-0 text-xs font-black border", ROLE_COLORS[u.role])}>{u.nombre.charAt(0).toUpperCase()}</div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <p className={cn("text-xs font-bold truncate", darkMode ? "text-white" : "text-gray-900")}>{u.nombre}</p>
+                  <span className={cn("inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold border shrink-0", ROLE_COLORS[u.role])}><Icon className="w-2.5 h-2.5" />{ROLE_LABELS[u.role]}</span>
+                  {!u.activo && <span className={cn("px-2 py-0.5 rounded-full text-[9px] font-bold border shrink-0", darkMode ? "text-gray-600 bg-white/3 border-white/8" : "text-gray-400 bg-gray-50 border-gray-200")}>Inactivo</span>}
+                </div>
+                <p className={cn("text-[10px] truncate mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{u.email}</p>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button onClick={() => { setEditingUser(u); setForm({ uid: u.uid, email: u.email, nombre: u.nombre, role: u.role }); setShowForm(true); }} title="Editar" className={cn("p-1.5 rounded-lg transition-colors", darkMode ? "hover:bg-white/8 text-gray-600 hover:text-gray-300" : "hover:bg-gray-100 text-gray-400 hover:text-gray-600")}><Edit2 className="w-3 h-3" /></button>
+                <button onClick={() => handleToggleActive(u)} title={u.activo ? 'Desactivar' : 'Activar'} className={cn("p-1.5 rounded-lg transition-colors", u.activo ? (darkMode ? "hover:bg-red-500/10 text-gray-600 hover:text-red-400" : "hover:bg-red-50 text-gray-400 hover:text-red-500") : (darkMode ? "hover:bg-emerald-500/10 text-gray-600 hover:text-emerald-400" : "hover:bg-emerald-50 text-gray-400 hover:text-emerald-500"))}>
+                  {u.activo ? <X className="w-3 h-3" /> : <CheckIcon className="w-3 h-3" />}
+                </button>
+              </div>
+            </div>
+          );
+        })}
+        {panelUsers.length === 0 && !showForm && (
+          <div className={cn("text-center py-12 rounded-2xl border", darkMode ? "border-white/8 text-gray-600" : "border-gray-200 text-gray-400")}>
+            <Shield className="w-8 h-8 mx-auto mb-3 opacity-30" />
+            <p className="text-xs font-semibold">No hay usuarios registrados</p>
+            <p className="text-[10px] mt-1 opacity-70">Crea el primer usuario con el botón de arriba</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Importación de la base de datos local
+import fujifilmData from './data.js';
+
+// --- TIPOS ---
+interface PrinterInfo {
+  id: string;
+  type: string;
+  trays: string;
+  installDate: string;
+  serial: string;
+  location?: string;
+}
+
+interface Client {
+  id: number;
+  name: string;
+  province: string;
+  ruc_id: string;
+  contact: string;
+  client_code: string;
+  alt_codes?: string[];
+  salesperson: string;
+  printers?: PrinterInfo[];
+}
+
+interface StockEntry {
+  id: string;
+  date: string;
+  size: string;
+  quantity: number;
+  batch_number: string;
+  expiry_date: string;
+  unit_cost: number;
+  supplier_invoice: string;
+  notes: string;
+  film_type?: 'DIHT' | 'DIHL';
+  is_opening?: boolean;
+}
+
+interface StockMinimum {
+  size: string;
+  minimum: number;
+}
+
+interface ConsumptionRecord {
+  id: number;
+  client_id: number;
+  order_date: string;
+  invoice_number?: string;
+  quantity: number;
+  size: string;
+  batch_number: string;
+  expiry_date: string;
+  unit_cost?: number;
+  film_type?: 'DIHT' | 'DIHL' | string;
+  is_return?: boolean;
+}
+
+function App() {
+  const { appUser, role, logout } = useAuth();
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+  const [allConsumos, setAllConsumos] = useState<ConsumptionRecord[]>([]);
+  const [allClients, setAllClients] = useState<Client[]>([]);
+  const [altNames, setAltNames] = useState<Record<number, string>>({});
+  const [view, setView] = useState<'clients' | 'dashboard' | 'inventory' | 'intelligence' | 'imager' | 'usuarios'>('dashboard');
+  const [loading, setLoading] = useState(true);
+  const [darkMode, setDarkMode] = useState(() => {
+    const saved = localStorage.getItem('orimec_theme');
+    return saved === 'dark';
+  });
+  const [zoomLevel, setZoomLevel] = useState(1);
+  const [dashboardStartDate, setDashboardStartDate] = useState('');
+  const [dashboardEndDate, setDashboardEndDate] = useState('');
+  const [sizeChartFilter, setSizeChartFilter] = useState<'all' | 'DIHT' | 'DIHL'>('all');
+  const [clientSizeFilter, setClientSizeFilter] = useState('Todas');
+  const [clientFilmFilter, setClientFilmFilter] = useState('Todos');
+  const [invoiceSearchTerm, setInvoiceSearchTerm] = useState('');
+  const [clientToDelete, setClientToDelete] = useState<Client | null>(null);
+  const [showPrinters, setShowPrinters] = useState(false);
+  const [editingPrinters, setEditingPrinters] = useState<PrinterInfo[]>([]);
+  const [isEditingPrinters, setIsEditingPrinters] = useState(false);
+  const csvUpdatePerformed = React.useRef(false);
+
+  // ── Real-time sync: stock_film_data & transit from Firestore ──────────────
+  useEffect(() => {
+    const unsubFilm = onSnapshot(doc(db, 'settings', 'stock_film_data'), (snap) => {
+      if (!snap.exists()) return;
+      try {
+        const parsed = JSON.parse(snap.data().data);
+        if (parsed && typeof parsed === 'object') {
+          setStockFilmData(parsed);
+          localStorage.setItem('stock_film_data', JSON.stringify(parsed));
+          localStorage.setItem('stock_film_data_version', '2');
+        }
+      } catch (e) { console.warn('Firestore stock_film_data sync failed:', e); }
+    }, e => console.warn('Firestore stock_film_data listener error:', e));
+
+    const unsubTransit = onSnapshot(doc(db, 'settings', 'stock_film_transit'), (snap) => {
+      if (!snap.exists()) return;
+      try {
+        const parsed = JSON.parse(snap.data().data);
+        if (parsed && typeof parsed === 'object') {
+          setStockFilmTransit(parsed);
+          localStorage.setItem('stock_film_transit', JSON.stringify(parsed));
+        }
+      } catch (e) { console.warn('Firestore transit sync failed:', e); }
+    }, e => console.warn('Firestore transit listener error:', e));
+
+    return () => { unsubFilm(); unsubTransit(); };
+  }, []);
+
+  useEffect(() => {
+    if (selectedClient) {
+      setEditingPrinters(selectedClient.printers || []);
+      setShowPrinters(false);
+      setIsEditingPrinters(false);
+    }
+  }, [selectedClient]);
+
+  useEffect(() => {
+    localStorage.setItem('orimec_theme', darkMode ? 'dark' : 'light');
+  }, [darkMode]);
+
+  useEffect(() => {
+    const handleWheel = (e: WheelEvent) => {
+      if (e.ctrlKey) {
+        e.preventDefault();
+        if (e.deltaY > 0) {
+          setZoomLevel(prev => Math.max(0.5, prev - 0.05));
+        } else {
+          setZoomLevel(prev => Math.min(2, prev + 0.05));
+        }
+      }
+    };
+
+    window.addEventListener('wheel', handleWheel, { passive: false });
+    return () => window.removeEventListener('wheel', handleWheel);
+  }, []);
+
+  // Sync with Firestore
+  useEffect(() => {
+    const unsubClients = onSnapshot(collection(db, "clientes"), (snapshot) => {
+      const docs = snapshot.docs.map(doc => doc.data() as Client);
+      // Only seed if there are NO clients at all AND we haven't seeded yet
+      // We use a local storage flag to remember if we've seeded
+      const hasSeeded = localStorage.getItem('orimec_seeded') === 'true';
+      
+      if (snapshot.empty && fujifilmData.clientes.length > 0 && !hasSeeded) {
+        const seedClients = async () => {
+          const batch = writeBatch(db);
+          fujifilmData.clientes.forEach(client => {
+            const docRef = doc(db, "clientes", client.id.toString());
+            batch.set(docRef, client);
+          });
+          await batch.commit();
+          localStorage.setItem('orimec_seeded', 'true');
+        };
+        seedClients();
+      } else {
+        setAllClients(docs.sort((a, b) => a.name.localeCompare(b.name)));
+      }
+    });
+
+    const unsubConsumos = onSnapshot(collection(db, "consumos"), (snapshot) => {
+      const docs = snapshot.docs.map(doc => doc.data() as ConsumptionRecord);
+      
+      const hasSeededConsumos = localStorage.getItem('orimec_seeded_consumos') === 'true';
+      
+      // Seed if empty
+      if (snapshot.empty && fujifilmData.consumos.length > 0 && !hasSeededConsumos) {
+        const seedData = async () => {
+          const batch = writeBatch(db);
+          fujifilmData.consumos.forEach(record => {
+            const docRef = doc(db, "consumos", record.id.toString());
+            batch.set(docRef, record);
+          });
+          await batch.commit();
+          localStorage.setItem('orimec_seeded_consumos', 'true');
+        };
+        seedData();
+      } else {
+        setAllConsumos(docs);
+      }
+      setLoading(false);
+    });
+
+    // One-time CSV Update Utility
+    const runCsvUpdate = async () => {
+      if (localStorage.getItem('orimec_scanner_update_done') === 'true') return;
+      
+      const newConsumos = [
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "14x17", invoice_number: "001001000070734", order_date: "2025-06-19", batch_number: "72512", quantity: 1, unit_cost: 78.04 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "14x17", invoice_number: "001001000070891", order_date: "2025-07-15", batch_number: "72512", quantity: 6, unit_cost: 78.043769 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "14x17", invoice_number: "001001000071136", order_date: "2025-09-02", batch_number: "72513", quantity: 4, unit_cost: 77.98 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000070739", order_date: "2025-06-19", batch_number: "72620", quantity: 1, unit_cost: 25.92 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000070734", order_date: "2025-06-19", batch_number: "72620", quantity: 3, unit_cost: 25.92 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000070756", order_date: "2025-06-23", batch_number: "72620", quantity: 6, unit_cost: 25.92 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000070757", order_date: "2025-06-23", batch_number: "72620", quantity: 6, unit_cost: 25.92 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000070891", order_date: "2025-07-15", batch_number: "72620", quantity: 6, unit_cost: 25.921764 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000070963", order_date: "2025-07-30", batch_number: "72620", quantity: 1, unit_cost: 25.921764 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000070994", order_date: "2025-08-05", batch_number: "72908", quantity: 2, unit_cost: 25.80 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000070996", order_date: "2025-08-05", batch_number: "72908", quantity: 2, unit_cost: 25.80 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000071137", order_date: "2025-09-02", batch_number: "73439", quantity: 5, unit_cost: 38.52 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000071136", order_date: "2025-09-02", batch_number: "73439", quantity: 10, unit_cost: 38.52 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000071242", order_date: "2025-09-22", batch_number: "73439", quantity: 10, unit_cost: 36.90 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000071325", order_date: "2025-10-07", batch_number: "76439", quantity: 6, unit_cost: 36.90 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000071529", order_date: "2025-11-17", batch_number: "76439", quantity: 5, unit_cost: 30.12 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x14", invoice_number: "001001000071142", order_date: "2025-09-02", batch_number: "67221", quantity: 1, unit_cost: 113.74 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x14", invoice_number: "001001000071336", order_date: "2025-10-09", batch_number: "67221", quantity: 1, unit_cost: 113.74 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x14", invoice_number: "001001000071529", order_date: "2025-11-17", batch_number: "60356", quantity: 5, unit_cost: 115.54 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x14", invoice_number: "001001000071530", order_date: "2025-11-17", batch_number: "60356", quantity: 5, unit_cost: 115.54 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "14x17", invoice_number: "001001000071142", order_date: "2025-09-02", batch_number: "44941", quantity: 8, unit_cost: 121.93 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "14x17", invoice_number: "001001000071326", order_date: "2025-10-07", batch_number: "46331", quantity: 8, unit_cost: 121.93 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "14x17", invoice_number: "001001000071325", order_date: "2025-10-07", batch_number: "46143", quantity: 8, unit_cost: 121.93 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "14x17", invoice_number: "001001000071545", order_date: "2025-11-19", batch_number: "49547", quantity: 10, unit_cost: 123.70 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "14x17", invoice_number: "001001000071547", order_date: "2025-11-19", batch_number: "49547", quantity: 10, unit_cost: 123.70 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000070739", order_date: "2025-06-19", batch_number: "72523", quantity: 1, unit_cost: 38.89 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000070734", order_date: "2025-06-19", batch_number: "72523", quantity: 4, unit_cost: 38.89 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000070756", order_date: "2025-06-23", batch_number: "72522", quantity: 10, unit_cost: 38.89 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000070757", order_date: "2025-06-23", batch_number: "72522", quantity: 10, unit_cost: 38.89 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000070891", order_date: "2025-07-15", batch_number: "72523", quantity: 15, unit_cost: 38.884303 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000070892", order_date: "2025-07-15", batch_number: "72523", quantity: 15, unit_cost: 38.884303 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000070963", order_date: "2025-07-30", batch_number: "72523", quantity: 1, unit_cost: 38.884303 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000070994", order_date: "2025-08-05", batch_number: "72523", quantity: 15, unit_cost: 38.88 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000070996", order_date: "2025-08-05", batch_number: "72523", quantity: 5, unit_cost: 38.88 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000071137", order_date: "2025-09-02", batch_number: "72523", quantity: 15, unit_cost: 38.87 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000071136", order_date: "2025-09-02", batch_number: "72523", quantity: 15, unit_cost: 38.87 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000071324", order_date: "2025-10-07", batch_number: "72523", quantity: 20, unit_cost: 38.86 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000071325", order_date: "2025-10-07", batch_number: "72523", quantity: 20, unit_cost: 38.86 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000071529", order_date: "2025-11-17", batch_number: "73359", quantity: 20, unit_cost: 39.34 },
+        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000071530", order_date: "2025-11-17", batch_number: "73359", quantity: 20, unit_cost: 39.34 },
+      ];
+
+      if (allClients.length > 0 && allConsumos.length > 0) {
+        const batch = writeBatch(db);
+        let updates = 0;
+
+        // Get the highest existing consumption ID
+        let nextId = Math.max(0, ...allConsumos.map(r => r.id)) + 1;
+
+        newConsumos.forEach(item => {
+          const client = allClients.find(c => c.name.toUpperCase() === item.clientName.toUpperCase());
+          if (client) {
+            // Check if this exact record already exists to prevent duplicates
+            const exists = allConsumos.some(r => 
+              r.client_id === client.id && 
+              r.invoice_number === item.invoice_number &&
+              r.size === item.size &&
+              r.quantity === item.quantity
+            );
+
+            if (!exists) {
+              const newRecord: ConsumptionRecord = {
+                id: nextId++,
+                client_id: client.id,
+                order_date: item.order_date,
+                invoice_number: item.invoice_number,
+                quantity: item.quantity,
+                size: item.size,
+                batch_number: item.batch_number,
+                expiry_date: "2026-12-31", // Default expiry
+                unit_cost: item.unit_cost
+              };
+              
+              const consumoRef = doc(db, "consumos", newRecord.id.toString());
+              batch.set(consumoRef, newRecord);
+              updates++;
+            }
+          }
+        });
+
+        if (updates > 0) {
+          try {
+            await batch.commit();
+            localStorage.setItem('orimec_scanner_update_done', 'true');
+            console.log(`Successfully added ${updates} new records for Corporacion Scanner.`);
+          } catch (err) {
+            console.error("Error committing batch update:", err);
+          }
+        } else {
+           localStorage.setItem('orimec_scanner_update_done', 'true');
+        }
+      }
+    };
+
+    if (!loading && allClients.length > 0 && allConsumos.length > 0) {
+      runCsvUpdate();
+    }
+
+    const unsubAltNames = onSnapshot(collection(db, "altNames"), (snapshot) => {
+      const names: Record<number, string> = {};
+      snapshot.docs.forEach(doc => {
+        names[parseInt(doc.id)] = doc.data().name;
+      });
+      setAltNames(names);
+    });
+
+    const unsubStock = onSnapshot(collection(db, "stock_entries"), (snapshot) => {
+      const entries: StockEntry[] = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as StockEntry));
+      entries.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      setStockEntries(entries);
+    });
+
+    return () => {
+      unsubClients();
+      unsubConsumos();
+      unsubAltNames();
+      unsubStock();
+    };
+  }, []);
+
+  // Modal State
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isClientModalOpen, setIsClientModalOpen] = useState(false);
+  const [editingRecord, setEditingRecord] = useState<Partial<ConsumptionRecord> | null>(null);
+  const [newClient, setNewClient] = useState<Partial<Client>>({
+    name: '',
+    province: '',
+    ruc_id: '',
+    contact: '',
+    client_code: '',
+    salesperson: ''
+  });
+  const [isAltNameModalOpen, setIsAltNameModalOpen] = useState(false);
+  const [tempAltName, setTempAltName] = useState('');
+  const [selectedPrinterType, setSelectedPrinterType] = useState<string | null>(null);
+
+  // --- CSV IMPORT STATE ---
+  const [selectedSalesperson, setSelectedSalesperson] = useState<string | null>(null);
+  const [stockEntries, setStockEntries] = useState<StockEntry[]>([]);
+  const [stockMinimums, setStockMinimums] = useState<Record<string, number>>(() => {
+    try { return JSON.parse(localStorage.getItem('stock_minimums') || '{}'); } catch { return {}; }
+  });
+  const [isStockEntryModalOpen, setIsStockEntryModalOpen] = useState(false);
+  const [newStockEntry, setNewStockEntry] = useState<Partial<StockEntry>>({});
+  const [inventoryTab, setInventoryTab] = useState<'overview' | 'movements' | 'stock-film' | 'stock-tiempo'>('overview');
+
+  // ── IMAGER PRODUCTS — from Fujifilm Planning Imager Excel ─────────────────
+  const IMAGER_PRODUCTS = [
+    {
+      key: 'drypix_lite',
+      label: 'DRYPIX LITE',
+      sublabel: 'MAIN UNIT, DRYPIX LITE : E',
+      category: 'Impresora Principal',
+      stockDec25: 49,
+      openingStock: 48,   // in-hand stock Jan 26
+      inTransit: 0,
+      ordersActive: 180,  // FJ-2002
+      avgSalesMonthly: 14.67, // Apr-Dec25 average
+      avgSalesJan26: 1,
+      coverageMonths: 3.27,
+    },
+    {
+      key: 'dpx_feeder',
+      label: 'DPX LITE FEEDER',
+      sublabel: 'DPX LITE FEEDER : E',
+      category: 'Accesorio LITE',
+      stockDec25: 1,
+      openingStock: 0,
+      inTransit: 20,      // FJ-2026 in transit
+      ordersActive: 120,  // FJ-2002 + FJ-2026
+      avgSalesMonthly: 11,
+      avgSalesJan26: 1,
+      coverageMonths: 1.82,
+    },
+    {
+      key: 'dpx_magazine_l',
+      label: 'DPX LITE MAGAZINE L',
+      sublabel: 'DPX LITE MAGAZINE L : E',
+      category: 'Accesorio LITE',
+      stockDec25: 10,
+      openingStock: 9,
+      inTransit: 20,
+      ordersActive: 120,
+      avgSalesMonthly: 10,
+      avgSalesJan26: 1,
+      coverageMonths: 2.9,
+    },
+    {
+      key: 'dpx_magazine_s',
+      label: 'DPX LITE MAGAZINE S',
+      sublabel: 'DPX LITE MAGAZINE S : E',
+      category: 'Accesorio LITE',
+      stockDec25: 33,
+      openingStock: 32,
+      inTransit: 0,
+      ordersActive: 180,
+      avgSalesMonthly: 16.33,
+      avgSalesJan26: 1,
+      coverageMonths: 1.96,
+    },
+    {
+      key: 'drypix_smart',
+      label: 'DRYPIX SMART',
+      sublabel: 'DRYPIX SMART : E',
+      category: 'Impresora Principal',
+      stockDec25: 12,
+      openingStock: 12,
+      inTransit: 0,
+      ordersActive: 16,   // FJ-2008 + FJ-2010
+      avgSalesMonthly: 1.11,
+      avgSalesJan26: 0,
+      coverageMonths: 10.8,
+    },
+    {
+      key: 'drypix_plus',
+      label: 'DRYPIX PLUS 100',
+      sublabel: 'MAIN UNIT DRYPIX PLUS 100 2T',
+      category: 'Impresora Principal',
+      stockDec25: 2,
+      openingStock: 2,
+      inTransit: 0,
+      ordersActive: 2,
+      avgSalesMonthly: 0,
+      avgSalesJan26: 0,
+      coverageMonths: 0,
+    },
+    {
+      key: 'drypix_edge',
+      label: 'DRYPIX EDGE 3T',
+      sublabel: 'MAIN UNIT DRYPIX EDGE 3T',
+      category: 'Impresora Principal',
+      stockDec25: 2,
+      openingStock: 2,
+      inTransit: 0,
+      ordersActive: 3,
+      avgSalesMonthly: 0.11,
+      avgSalesJan26: 0,
+      coverageMonths: 18,
+    },
+  ] as const;
+  const [intelligenceTab, setIntelligenceTab] = useState<'health' | 'seasonality' | 'potential' | 'provinces' | 'anomalies' | 'profitability' | 'projection' | 'comparativo'>('projection');
+  const [comparativo2026Mode, setComparativo2026Mode] = useState<'real' | 'proyectado'>('proyectado');
+
+  // Imager stock state — localStorage persisted, editable monthly IN/OUT
+  const IMAGER_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'] as const;
+  const [imagerData, setImagerData] = useState<Record<string, { openingStock: number; months: Record<string, { inUnits: number; outUnits: number }> }>>(() => {
+    try {
+      const saved = localStorage.getItem('imager_data');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    const defaults = {} as Record<string, { openingStock: number; months: Record<string, { inUnits: number; outUnits: number }> }>;
+    IMAGER_PRODUCTS.forEach(p => {
+      defaults[p.key] = {
+        openingStock: p.openingStock,
+        months: Object.fromEntries(IMAGER_MONTHS.map(m => [m, { inUnits: 0, outUnits: 0 }])),
+      };
+    });
+    return defaults;
+  });
+
+  const updateImagerCell = (key: string, month: string, field: 'inUnits' | 'outUnits', value: number) => {
+    setImagerData(prev => {
+      const updated = JSON.parse(JSON.stringify(prev));
+      if (!updated[key]) updated[key] = { openingStock: 0, months: {} };
+      if (!updated[key].months[month]) updated[key].months[month] = { inUnits: 0, outUnits: 0 };
+      updated[key].months[month][field] = value;
+      localStorage.setItem('imager_data', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
+  const updateImagerOpening = (key: string, value: number) => {
+    setImagerData(prev => {
+      const updated = JSON.parse(JSON.stringify(prev));
+      if (!updated[key]) updated[key] = { openingStock: value, months: {} };
+      else updated[key].openingStock = value;
+      localStorage.setItem('imager_data', JSON.stringify(updated));
+      return updated;
+    });
+  };
+  const [globalFilmFilter, setGlobalFilmFilter] = useState<'all' | 'DIHT' | 'DIHL' | 'DIML'>('DIHT');
+  const [expandedSize, setExpandedSize] = useState<string | null>(null);
+  const [showDemandProjection, setShowDemandProjection] = useState(false);
+  const [healthGradeFilter, setHealthGradeFilter] = useState<string | null>(null);
+  const [riskLevelFilter, setRiskLevelFilter] = useState<string | null>(null);
+  const [isMergeModalOpen, setIsMergeModalOpen] = useState(false);
+  const [mergeSearchQuery, setMergeSearchQuery] = useState('');
+  const [mergeTarget, setMergeTarget] = useState<Client | null>(null);
+  const [isMerging, setIsMerging] = useState(false);
+  const [isMigratingFilmType, setIsMigratingFilmType] = useState(false);
+  const [migrationProgress, setMigrationProgress] = useState(0);
+  const [openingStockEdit, setOpeningStockEdit] = useState<Record<string, string>>({}); // key: "size-filmType" → qty string
+  const [isSavingOpening, setIsSavingOpening] = useState(false);
+  const [salespersonGoals, setSalespersonGoals] = useState<Record<string, number>>(() => {
+    try { return JSON.parse(localStorage.getItem('sp_goals') || '{}'); } catch { return {}; }
+  });
+
+  // ── STOCK FILM PLANNING ───────────────────────────────────────────────────
+  // Structure: { year: { filmKey: { month: { inBoxes, inM2, outBoxes, outM2 } } } }
+  // filmKey examples: 'DIHT_8x10', 'DIHT_10x12', etc.
+  const STOCK_FILM_PRODUCTS = [
+    { key: 'DIHT_8x10',  label: 'DI/HT 8" × 10" × 100',  type: 'DIHT', size: '8x10',  m2box: 5.16 },
+    { key: 'DIHT_10x12', label: 'DI-HT 10" × 12" × 100', type: 'DIHT', size: '10x12', m2box: 7.50 },
+    { key: 'DIHT_10x14', label: 'DI/HT 10" × 14" × 100', type: 'DIHT', size: '10x14', m2box: 9.03 },
+    { key: 'DIHT_14x17', label: 'DI/HT 14" × 17" × 100', type: 'DIHT', size: '14x17', m2box: 15.38 },
+    { key: 'DIHL_8x10',  label: 'DI/HL 8" × 10" × 150',  type: 'DIHL', size: '8x10',  m2box: 7.74 },
+    { key: 'DIHL_10x14', label: 'DI/HL 10" × 14" × 150', type: 'DIHL', size: '10x14', m2box: 13.55 },
+    { key: 'DIHL_14x17', label: 'DI/HL 14" × 17" × 100', type: 'DIHL', size: '14x17', m2box: 15.38 },
+    { key: 'DIML_8x10',  label: 'DI/ML 8" × 10" × 150',  type: 'DIML', size: '8x10',  m2box: 7.74 },
+    { key: 'DIML_10x14', label: 'DI/ML 10" × 14" × 150', type: 'DIML', size: '10x14', m2box: 13.55 },
+  ] as const;
+  const STOCK_FILM_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  // Initial data from Excel (2025 sheet) - Dec stock + Jan movements
+  const STOCK_FILM_DEFAULT_2025: Record<string, { openingBoxes: number; openingM2: number; months: Record<string, { inBoxes: number; outBoxes: number }> }> = {
+    DIHT_8x10:  { openingBoxes: 0, openingM2: 0, months: { Jan: { inBoxes: 0, outBoxes: 0 }, Feb: { inBoxes: 0, outBoxes: 0 }, Mar: { inBoxes: 0, outBoxes: 0 }, Apr: { inBoxes: 0, outBoxes: 0 }, May: { inBoxes: 0, outBoxes: 0 }, Jun: { inBoxes: 0, outBoxes: 0 }, Jul: { inBoxes: 0, outBoxes: 0 }, Aug: { inBoxes: 0, outBoxes: 0 }, Sep: { inBoxes: 0, outBoxes: 0 }, Oct: { inBoxes: 0, outBoxes: 0 }, Nov: { inBoxes: 0, outBoxes: 0 }, Dec: { inBoxes: 0, outBoxes: 0 } } },
+    DIHT_10x12: { openingBoxes: 0, openingM2: 0, months: { Jan: { inBoxes: 0, outBoxes: 0 }, Feb: { inBoxes: 0, outBoxes: 0 }, Mar: { inBoxes: 0, outBoxes: 0 }, Apr: { inBoxes: 0, outBoxes: 0 }, May: { inBoxes: 0, outBoxes: 0 }, Jun: { inBoxes: 0, outBoxes: 0 }, Jul: { inBoxes: 0, outBoxes: 0 }, Aug: { inBoxes: 0, outBoxes: 0 }, Sep: { inBoxes: 0, outBoxes: 0 }, Oct: { inBoxes: 0, outBoxes: 0 }, Nov: { inBoxes: 0, outBoxes: 0 }, Dec: { inBoxes: 0, outBoxes: 0 } } },
+    DIHT_10x14: { openingBoxes: 0, openingM2: 0, months: { Jan: { inBoxes: 0, outBoxes: 0 }, Feb: { inBoxes: 0, outBoxes: 0 }, Mar: { inBoxes: 0, outBoxes: 0 }, Apr: { inBoxes: 0, outBoxes: 0 }, May: { inBoxes: 0, outBoxes: 0 }, Jun: { inBoxes: 0, outBoxes: 0 }, Jul: { inBoxes: 0, outBoxes: 0 }, Aug: { inBoxes: 0, outBoxes: 0 }, Sep: { inBoxes: 0, outBoxes: 0 }, Oct: { inBoxes: 0, outBoxes: 0 }, Nov: { inBoxes: 0, outBoxes: 0 }, Dec: { inBoxes: 0, outBoxes: 0 } } },
+    DIHT_14x17: { openingBoxes: 0, openingM2: 0, months: { Jan: { inBoxes: 0, outBoxes: 0 }, Feb: { inBoxes: 0, outBoxes: 0 }, Mar: { inBoxes: 0, outBoxes: 0 }, Apr: { inBoxes: 0, outBoxes: 0 }, May: { inBoxes: 0, outBoxes: 0 }, Jun: { inBoxes: 0, outBoxes: 0 }, Jul: { inBoxes: 0, outBoxes: 0 }, Aug: { inBoxes: 0, outBoxes: 0 }, Sep: { inBoxes: 0, outBoxes: 0 }, Oct: { inBoxes: 0, outBoxes: 0 }, Nov: { inBoxes: 0, outBoxes: 0 }, Dec: { inBoxes: 0, outBoxes: 0 } } },
+    DIHL_8x10:  { openingBoxes: 0, openingM2: 0, months: { Jan: { inBoxes: 0, outBoxes: 0 }, Feb: { inBoxes: 0, outBoxes: 0 }, Mar: { inBoxes: 0, outBoxes: 0 }, Apr: { inBoxes: 0, outBoxes: 0 }, May: { inBoxes: 0, outBoxes: 0 }, Jun: { inBoxes: 0, outBoxes: 0 }, Jul: { inBoxes: 0, outBoxes: 0 }, Aug: { inBoxes: 0, outBoxes: 0 }, Sep: { inBoxes: 0, outBoxes: 0 }, Oct: { inBoxes: 0, outBoxes: 0 }, Nov: { inBoxes: 0, outBoxes: 0 }, Dec: { inBoxes: 0, outBoxes: 0 } } },
+    DIHL_10x14: { openingBoxes: 0, openingM2: 0, months: { Jan: { inBoxes: 0, outBoxes: 0 }, Feb: { inBoxes: 0, outBoxes: 0 }, Mar: { inBoxes: 0, outBoxes: 0 }, Apr: { inBoxes: 0, outBoxes: 0 }, May: { inBoxes: 0, outBoxes: 0 }, Jun: { inBoxes: 0, outBoxes: 0 }, Jul: { inBoxes: 0, outBoxes: 0 }, Aug: { inBoxes: 0, outBoxes: 0 }, Sep: { inBoxes: 0, outBoxes: 0 }, Oct: { inBoxes: 0, outBoxes: 0 }, Nov: { inBoxes: 0, outBoxes: 0 }, Dec: { inBoxes: 0, outBoxes: 0 } } },
+    DIHL_14x17: { openingBoxes: 0, openingM2: 0, months: { Jan: { inBoxes: 0, outBoxes: 0 }, Feb: { inBoxes: 0, outBoxes: 0 }, Mar: { inBoxes: 0, outBoxes: 0 }, Apr: { inBoxes: 0, outBoxes: 0 }, May: { inBoxes: 0, outBoxes: 0 }, Jun: { inBoxes: 0, outBoxes: 0 }, Jul: { inBoxes: 0, outBoxes: 0 }, Aug: { inBoxes: 0, outBoxes: 0 }, Sep: { inBoxes: 0, outBoxes: 0 }, Oct: { inBoxes: 0, outBoxes: 0 }, Nov: { inBoxes: 0, outBoxes: 0 }, Dec: { inBoxes: 0, outBoxes: 0 } } },
+    DIML_8x10:  { openingBoxes: 0, openingM2: 0, months: { Jan: { inBoxes: 0, outBoxes: 0 }, Feb: { inBoxes: 0, outBoxes: 0 }, Mar: { inBoxes: 0, outBoxes: 0 }, Apr: { inBoxes: 0, outBoxes: 0 }, May: { inBoxes: 0, outBoxes: 0 }, Jun: { inBoxes: 0, outBoxes: 0 }, Jul: { inBoxes: 0, outBoxes: 0 }, Aug: { inBoxes: 0, outBoxes: 0 }, Sep: { inBoxes: 0, outBoxes: 0 }, Oct: { inBoxes: 0, outBoxes: 0 }, Nov: { inBoxes: 0, outBoxes: 0 }, Dec: { inBoxes: 0, outBoxes: 0 } } },
+    DIML_10x14: { openingBoxes: 0, openingM2: 0, months: { Jan: { inBoxes: 0, outBoxes: 0 }, Feb: { inBoxes: 0, outBoxes: 0 }, Mar: { inBoxes: 0, outBoxes: 0 }, Apr: { inBoxes: 0, outBoxes: 0 }, May: { inBoxes: 0, outBoxes: 0 }, Jun: { inBoxes: 0, outBoxes: 0 }, Jul: { inBoxes: 0, outBoxes: 0 }, Aug: { inBoxes: 0, outBoxes: 0 }, Sep: { inBoxes: 0, outBoxes: 0 }, Oct: { inBoxes: 0, outBoxes: 0 }, Nov: { inBoxes: 0, outBoxes: 0 }, Dec: { inBoxes: 0, outBoxes: 0 } } },
+  };
+
+  const [stockFilmYear, setStockFilmYear] = useState<2024 | 2025 | 2026>(() => {
+    const y = new Date().getFullYear();
+    return (y >= 2026 ? 2026 : y >= 2025 ? 2025 : 2024) as 2024 | 2025 | 2026;
+  });
+  const [stockFilmData, setStockFilmData] = useState<Record<string, typeof STOCK_FILM_DEFAULT_2025>>(() => {
+    try {
+      // ── Version-based migration: if data was saved before v2, reset it ──
+      const dataVersion = localStorage.getItem('stock_film_data_version');
+      if (dataVersion !== '2') {
+        localStorage.removeItem('stock_film_data');
+        localStorage.setItem('stock_film_data_version', '2');
+        throw new Error('version_reset');
+      }
+      const saved = localStorage.getItem('stock_film_data');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // Ensure 2024 key exists for older saves
+        if (!parsed['2024']) parsed['2024'] = {
+          DIHT_8x10:  { openingBoxes: 0, openingM2: 0, months: { Jan:{inBoxes:0,outBoxes:0},Feb:{inBoxes:0,outBoxes:0},Mar:{inBoxes:0,outBoxes:0},Apr:{inBoxes:0,outBoxes:0},May:{inBoxes:0,outBoxes:0},Jun:{inBoxes:0,outBoxes:0},Jul:{inBoxes:0,outBoxes:0},Aug:{inBoxes:0,outBoxes:0},Sep:{inBoxes:0,outBoxes:0},Oct:{inBoxes:0,outBoxes:0},Nov:{inBoxes:0,outBoxes:0},Dec:{inBoxes:0,outBoxes:0} } },
+          DIHT_10x12: { openingBoxes: 0, openingM2: 0, months: { Jan:{inBoxes:0,outBoxes:0},Feb:{inBoxes:0,outBoxes:0},Mar:{inBoxes:0,outBoxes:0},Apr:{inBoxes:0,outBoxes:0},May:{inBoxes:0,outBoxes:0},Jun:{inBoxes:0,outBoxes:0},Jul:{inBoxes:0,outBoxes:0},Aug:{inBoxes:0,outBoxes:0},Sep:{inBoxes:0,outBoxes:0},Oct:{inBoxes:0,outBoxes:0},Nov:{inBoxes:0,outBoxes:0},Dec:{inBoxes:0,outBoxes:0} } },
+          DIHT_10x14: { openingBoxes: 0, openingM2: 0, months: { Jan:{inBoxes:0,outBoxes:0},Feb:{inBoxes:0,outBoxes:0},Mar:{inBoxes:0,outBoxes:0},Apr:{inBoxes:0,outBoxes:0},May:{inBoxes:0,outBoxes:0},Jun:{inBoxes:0,outBoxes:0},Jul:{inBoxes:0,outBoxes:0},Aug:{inBoxes:0,outBoxes:0},Sep:{inBoxes:0,outBoxes:0},Oct:{inBoxes:0,outBoxes:0},Nov:{inBoxes:0,outBoxes:0},Dec:{inBoxes:0,outBoxes:0} } },
+          DIHT_14x17: { openingBoxes: 0, openingM2: 0, months: { Jan:{inBoxes:0,outBoxes:0},Feb:{inBoxes:0,outBoxes:0},Mar:{inBoxes:0,outBoxes:0},Apr:{inBoxes:0,outBoxes:0},May:{inBoxes:0,outBoxes:0},Jun:{inBoxes:0,outBoxes:0},Jul:{inBoxes:0,outBoxes:0},Aug:{inBoxes:0,outBoxes:0},Sep:{inBoxes:0,outBoxes:0},Oct:{inBoxes:0,outBoxes:0},Nov:{inBoxes:0,outBoxes:0},Dec:{inBoxes:0,outBoxes:0} } },
+          DIHL_8x10:  { openingBoxes: 0, openingM2: 0, months: { Jan:{inBoxes:0,outBoxes:0},Feb:{inBoxes:0,outBoxes:0},Mar:{inBoxes:0,outBoxes:0},Apr:{inBoxes:0,outBoxes:0},May:{inBoxes:0,outBoxes:0},Jun:{inBoxes:0,outBoxes:0},Jul:{inBoxes:0,outBoxes:0},Aug:{inBoxes:0,outBoxes:0},Sep:{inBoxes:0,outBoxes:0},Oct:{inBoxes:0,outBoxes:0},Nov:{inBoxes:0,outBoxes:0},Dec:{inBoxes:0,outBoxes:0} } },
+          DIHL_10x14: { openingBoxes: 0, openingM2: 0, months: { Jan:{inBoxes:0,outBoxes:0},Feb:{inBoxes:0,outBoxes:0},Mar:{inBoxes:0,outBoxes:0},Apr:{inBoxes:0,outBoxes:0},May:{inBoxes:0,outBoxes:0},Jun:{inBoxes:0,outBoxes:0},Jul:{inBoxes:0,outBoxes:0},Aug:{inBoxes:0,outBoxes:0},Sep:{inBoxes:0,outBoxes:0},Oct:{inBoxes:0,outBoxes:0},Nov:{inBoxes:0,outBoxes:0},Dec:{inBoxes:0,outBoxes:0} } },
+          DIHL_14x17: { openingBoxes: 0, openingM2: 0, months: { Jan:{inBoxes:0,outBoxes:0},Feb:{inBoxes:0,outBoxes:0},Mar:{inBoxes:0,outBoxes:0},Apr:{inBoxes:0,outBoxes:0},May:{inBoxes:0,outBoxes:0},Jun:{inBoxes:0,outBoxes:0},Jul:{inBoxes:0,outBoxes:0},Aug:{inBoxes:0,outBoxes:0},Sep:{inBoxes:0,outBoxes:0},Oct:{inBoxes:0,outBoxes:0},Nov:{inBoxes:0,outBoxes:0},Dec:{inBoxes:0,outBoxes:0} } },
+          DIML_8x10:  { openingBoxes: 0, openingM2: 0, months: { Jan:{inBoxes:0,outBoxes:0},Feb:{inBoxes:0,outBoxes:0},Mar:{inBoxes:0,outBoxes:0},Apr:{inBoxes:0,outBoxes:0},May:{inBoxes:0,outBoxes:0},Jun:{inBoxes:0,outBoxes:0},Jul:{inBoxes:0,outBoxes:0},Aug:{inBoxes:0,outBoxes:0},Sep:{inBoxes:0,outBoxes:0},Oct:{inBoxes:0,outBoxes:0},Nov:{inBoxes:0,outBoxes:0},Dec:{inBoxes:0,outBoxes:0} } },
+          DIML_10x14: { openingBoxes: 0, openingM2: 0, months: { Jan:{inBoxes:0,outBoxes:0},Feb:{inBoxes:0,outBoxes:0},Mar:{inBoxes:0,outBoxes:0},Apr:{inBoxes:0,outBoxes:0},May:{inBoxes:0,outBoxes:0},Jun:{inBoxes:0,outBoxes:0},Jul:{inBoxes:0,outBoxes:0},Aug:{inBoxes:0,outBoxes:0},Sep:{inBoxes:0,outBoxes:0},Oct:{inBoxes:0,outBoxes:0},Nov:{inBoxes:0,outBoxes:0},Dec:{inBoxes:0,outBoxes:0} } },
+        };
+        // Ensure TXE keys exist in 2024 with historical data pre-loaded
+        if (!parsed['2024']['TXE_8x10']) {
+          parsed['2024']['TXE_8x10']  = { openingBoxes: 0, openingM2: 0, months: { Jan:{inBoxes:0,outBoxes:128}, Feb:{inBoxes:0,outBoxes:168}, Mar:{inBoxes:0,outBoxes:129}, Apr:{inBoxes:0,outBoxes:156}, May:{inBoxes:0,outBoxes:73},  Jun:{inBoxes:0,outBoxes:134}, Jul:{inBoxes:0,outBoxes:135}, Aug:{inBoxes:0,outBoxes:190}, Sep:{inBoxes:0,outBoxes:119}, Oct:{inBoxes:0,outBoxes:127}, Nov:{inBoxes:0,outBoxes:82},  Dec:{inBoxes:0,outBoxes:0} } };
+          parsed['2024']['TXE_10x12'] = { openingBoxes: 0, openingM2: 0, months: { Jan:{inBoxes:0,outBoxes:112}, Feb:{inBoxes:0,outBoxes:32},  Mar:{inBoxes:0,outBoxes:85},  Apr:{inBoxes:0,outBoxes:53},  May:{inBoxes:0,outBoxes:239}, Jun:{inBoxes:0,outBoxes:42},  Jul:{inBoxes:0,outBoxes:135}, Aug:{inBoxes:0,outBoxes:93},  Sep:{inBoxes:0,outBoxes:85},  Oct:{inBoxes:0,outBoxes:77},  Nov:{inBoxes:0,outBoxes:29},  Dec:{inBoxes:0,outBoxes:0} } };
+          parsed['2024']['TXE_11x14'] = { openingBoxes: 0, openingM2: 0, months: { Jan:{inBoxes:0,outBoxes:21},  Feb:{inBoxes:0,outBoxes:51},  Mar:{inBoxes:0,outBoxes:41},  Apr:{inBoxes:0,outBoxes:40},  May:{inBoxes:0,outBoxes:11},  Jun:{inBoxes:0,outBoxes:35},  Jul:{inBoxes:0,outBoxes:14},  Aug:{inBoxes:0,outBoxes:17},  Sep:{inBoxes:0,outBoxes:23},  Oct:{inBoxes:0,outBoxes:42},  Nov:{inBoxes:0,outBoxes:20},  Dec:{inBoxes:0,outBoxes:0} } };
+          parsed['2024']['TXE_14x17'] = { openingBoxes: 0, openingM2: 0, months: { Jan:{inBoxes:0,outBoxes:80},  Feb:{inBoxes:0,outBoxes:105}, Mar:{inBoxes:0,outBoxes:135}, Apr:{inBoxes:0,outBoxes:99},  May:{inBoxes:0,outBoxes:232}, Jun:{inBoxes:0,outBoxes:76},  Jul:{inBoxes:0,outBoxes:105}, Aug:{inBoxes:0,outBoxes:106}, Sep:{inBoxes:0,outBoxes:75},  Oct:{inBoxes:0,outBoxes:57},  Nov:{inBoxes:0,outBoxes:85},  Dec:{inBoxes:0,outBoxes:0} } };
+        }
+        return parsed;
+      }
+    } catch {}
+    const empty2024 = {
+      DIHT_8x10:  { openingBoxes: 0, openingM2: 0, months: { Jan:{inBoxes:0,outBoxes:0},Feb:{inBoxes:0,outBoxes:0},Mar:{inBoxes:0,outBoxes:0},Apr:{inBoxes:0,outBoxes:0},May:{inBoxes:0,outBoxes:0},Jun:{inBoxes:0,outBoxes:0},Jul:{inBoxes:0,outBoxes:0},Aug:{inBoxes:0,outBoxes:0},Sep:{inBoxes:0,outBoxes:0},Oct:{inBoxes:0,outBoxes:0},Nov:{inBoxes:0,outBoxes:0},Dec:{inBoxes:0,outBoxes:0} } },
+      DIHT_10x12: { openingBoxes: 0, openingM2: 0, months: { Jan:{inBoxes:0,outBoxes:0},Feb:{inBoxes:0,outBoxes:0},Mar:{inBoxes:0,outBoxes:0},Apr:{inBoxes:0,outBoxes:0},May:{inBoxes:0,outBoxes:0},Jun:{inBoxes:0,outBoxes:0},Jul:{inBoxes:0,outBoxes:0},Aug:{inBoxes:0,outBoxes:0},Sep:{inBoxes:0,outBoxes:0},Oct:{inBoxes:0,outBoxes:0},Nov:{inBoxes:0,outBoxes:0},Dec:{inBoxes:0,outBoxes:0} } },
+      DIHT_10x14: { openingBoxes: 0, openingM2: 0, months: { Jan:{inBoxes:0,outBoxes:0},Feb:{inBoxes:0,outBoxes:0},Mar:{inBoxes:0,outBoxes:0},Apr:{inBoxes:0,outBoxes:0},May:{inBoxes:0,outBoxes:0},Jun:{inBoxes:0,outBoxes:0},Jul:{inBoxes:0,outBoxes:0},Aug:{inBoxes:0,outBoxes:0},Sep:{inBoxes:0,outBoxes:0},Oct:{inBoxes:0,outBoxes:0},Nov:{inBoxes:0,outBoxes:0},Dec:{inBoxes:0,outBoxes:0} } },
+      DIHT_14x17: { openingBoxes: 0, openingM2: 0, months: { Jan:{inBoxes:0,outBoxes:0},Feb:{inBoxes:0,outBoxes:0},Mar:{inBoxes:0,outBoxes:0},Apr:{inBoxes:0,outBoxes:0},May:{inBoxes:0,outBoxes:0},Jun:{inBoxes:0,outBoxes:0},Jul:{inBoxes:0,outBoxes:0},Aug:{inBoxes:0,outBoxes:0},Sep:{inBoxes:0,outBoxes:0},Oct:{inBoxes:0,outBoxes:0},Nov:{inBoxes:0,outBoxes:0},Dec:{inBoxes:0,outBoxes:0} } },
+      DIHL_8x10:  { openingBoxes: 0, openingM2: 0, months: { Jan:{inBoxes:0,outBoxes:0},Feb:{inBoxes:0,outBoxes:0},Mar:{inBoxes:0,outBoxes:0},Apr:{inBoxes:0,outBoxes:0},May:{inBoxes:0,outBoxes:0},Jun:{inBoxes:0,outBoxes:0},Jul:{inBoxes:0,outBoxes:0},Aug:{inBoxes:0,outBoxes:0},Sep:{inBoxes:0,outBoxes:0},Oct:{inBoxes:0,outBoxes:0},Nov:{inBoxes:0,outBoxes:0},Dec:{inBoxes:0,outBoxes:0} } },
+      DIHL_10x14: { openingBoxes: 0, openingM2: 0, months: { Jan:{inBoxes:0,outBoxes:0},Feb:{inBoxes:0,outBoxes:0},Mar:{inBoxes:0,outBoxes:0},Apr:{inBoxes:0,outBoxes:0},May:{inBoxes:0,outBoxes:0},Jun:{inBoxes:0,outBoxes:0},Jul:{inBoxes:0,outBoxes:0},Aug:{inBoxes:0,outBoxes:0},Sep:{inBoxes:0,outBoxes:0},Oct:{inBoxes:0,outBoxes:0},Nov:{inBoxes:0,outBoxes:0},Dec:{inBoxes:0,outBoxes:0} } },
+      DIHL_14x17: { openingBoxes: 0, openingM2: 0, months: { Jan:{inBoxes:0,outBoxes:0},Feb:{inBoxes:0,outBoxes:0},Mar:{inBoxes:0,outBoxes:0},Apr:{inBoxes:0,outBoxes:0},May:{inBoxes:0,outBoxes:0},Jun:{inBoxes:0,outBoxes:0},Jul:{inBoxes:0,outBoxes:0},Aug:{inBoxes:0,outBoxes:0},Sep:{inBoxes:0,outBoxes:0},Oct:{inBoxes:0,outBoxes:0},Nov:{inBoxes:0,outBoxes:0},Dec:{inBoxes:0,outBoxes:0} } },
+      DIML_8x10:  { openingBoxes: 0, openingM2: 0, months: { Jan:{inBoxes:0,outBoxes:0},Feb:{inBoxes:0,outBoxes:0},Mar:{inBoxes:0,outBoxes:0},Apr:{inBoxes:0,outBoxes:0},May:{inBoxes:0,outBoxes:0},Jun:{inBoxes:0,outBoxes:0},Jul:{inBoxes:0,outBoxes:0},Aug:{inBoxes:0,outBoxes:0},Sep:{inBoxes:0,outBoxes:0},Oct:{inBoxes:0,outBoxes:0},Nov:{inBoxes:0,outBoxes:0},Dec:{inBoxes:0,outBoxes:0} } },
+      DIML_10x14: { openingBoxes: 0, openingM2: 0, months: { Jan:{inBoxes:0,outBoxes:0},Feb:{inBoxes:0,outBoxes:0},Mar:{inBoxes:0,outBoxes:0},Apr:{inBoxes:0,outBoxes:0},May:{inBoxes:0,outBoxes:0},Jun:{inBoxes:0,outBoxes:0},Jul:{inBoxes:0,outBoxes:0},Aug:{inBoxes:0,outBoxes:0},Sep:{inBoxes:0,outBoxes:0},Oct:{inBoxes:0,outBoxes:0},Nov:{inBoxes:0,outBoxes:0},Dec:{inBoxes:0,outBoxes:0} } },
+    };
+    localStorage.setItem('stock_film_data_version', '2');
+    return { '2024': empty2024, '2025': STOCK_FILM_DEFAULT_2025, '2026': JSON.parse(JSON.stringify(STOCK_FILM_DEFAULT_2025)) };
+  });
+  const [stockFilmGroupFilter, setStockFilmGroupFilter] = useState<'all' | 'DIHT' | 'DIHL' | 'DIML' | 'TXE'>('all');
+
+  // ── TXE (Trimax) products — historical + ongoing stock planning ───────────
+  const TXE_PRODUCTS = [
+    { key: 'TXE_8x10',  label: 'TXE CE 20×25cm (8×10in)',  type: 'TXE', size: '8x10',  m2box: 6.45  },
+    { key: 'TXE_10x12', label: 'TXE CE 25×30cm (10×12in)', type: 'TXE', size: '10x12', m2box: 9.77  },
+    { key: 'TXE_11x14', label: 'TXE CE 28×35cm (11×14in)', type: 'TXE', size: '11x14', m2box: 12.42 },
+    { key: 'TXE_14x17', label: 'TXE CE 35×43cm (14×17in)', type: 'TXE', size: '14x17', m2box: 19.19 },
+  ] as const;
+
+  // Default TXE 2024 data from historical sales report
+  const TXE_DEFAULT_2024 = {
+    TXE_8x10:  { openingBoxes: 0, openingM2: 0, months: { Jan:{inBoxes:0,outBoxes:128}, Feb:{inBoxes:0,outBoxes:168}, Mar:{inBoxes:0,outBoxes:129}, Apr:{inBoxes:0,outBoxes:156}, May:{inBoxes:0,outBoxes:73},  Jun:{inBoxes:0,outBoxes:134}, Jul:{inBoxes:0,outBoxes:135}, Aug:{inBoxes:0,outBoxes:190}, Sep:{inBoxes:0,outBoxes:119}, Oct:{inBoxes:0,outBoxes:127}, Nov:{inBoxes:0,outBoxes:82},  Dec:{inBoxes:0,outBoxes:0} } },
+    TXE_10x12: { openingBoxes: 0, openingM2: 0, months: { Jan:{inBoxes:0,outBoxes:112}, Feb:{inBoxes:0,outBoxes:32},  Mar:{inBoxes:0,outBoxes:85},  Apr:{inBoxes:0,outBoxes:53},  May:{inBoxes:0,outBoxes:239}, Jun:{inBoxes:0,outBoxes:42},  Jul:{inBoxes:0,outBoxes:135}, Aug:{inBoxes:0,outBoxes:93},  Sep:{inBoxes:0,outBoxes:85},  Oct:{inBoxes:0,outBoxes:77},  Nov:{inBoxes:0,outBoxes:29},  Dec:{inBoxes:0,outBoxes:0} } },
+    TXE_11x14: { openingBoxes: 0, openingM2: 0, months: { Jan:{inBoxes:0,outBoxes:21},  Feb:{inBoxes:0,outBoxes:51},  Mar:{inBoxes:0,outBoxes:41},  Apr:{inBoxes:0,outBoxes:40},  May:{inBoxes:0,outBoxes:11},  Jun:{inBoxes:0,outBoxes:35},  Jul:{inBoxes:0,outBoxes:14},  Aug:{inBoxes:0,outBoxes:17},  Sep:{inBoxes:0,outBoxes:23},  Oct:{inBoxes:0,outBoxes:42},  Nov:{inBoxes:0,outBoxes:20},  Dec:{inBoxes:0,outBoxes:0} } },
+    TXE_14x17: { openingBoxes: 0, openingM2: 0, months: { Jan:{inBoxes:0,outBoxes:80},  Feb:{inBoxes:0,outBoxes:105}, Mar:{inBoxes:0,outBoxes:135}, Apr:{inBoxes:0,outBoxes:99},  May:{inBoxes:0,outBoxes:232}, Jun:{inBoxes:0,outBoxes:76},  Jul:{inBoxes:0,outBoxes:105}, Aug:{inBoxes:0,outBoxes:106}, Sep:{inBoxes:0,outBoxes:75},  Oct:{inBoxes:0,outBoxes:57},  Nov:{inBoxes:0,outBoxes:85},  Dec:{inBoxes:0,outBoxes:0} } },
+  };
+
+  // ── Transit boxes per product per year — editable, separate from IN ──────
+  // Structure: { '2025': { 'DIHT_8x10': { Jan: 700, Feb: 0, ... }, ... } }
+  const [stockFilmTransit, setStockFilmTransit] = useState<Record<string, Record<string, Record<string, number>>>>(() => {
+    try {
+      const saved = localStorage.getItem('stock_film_transit');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return {};
+  });
+
+  const updateStockFilmTransit = (year: number, filmKey: string, month: string, value: number) => {
+    setStockFilmTransit(prev => {
+      const updated = JSON.parse(JSON.stringify(prev));
+      const y = String(year);
+      if (!updated[y]) updated[y] = {};
+      if (!updated[y][filmKey]) updated[y][filmKey] = {};
+      updated[y][filmKey][month] = value;
+      localStorage.setItem('stock_film_transit', JSON.stringify(updated));
+      setDoc(doc(db, 'settings', 'stock_film_transit'), { data: JSON.stringify(updated), updatedAt: new Date().toISOString() })
+        .catch(e => console.warn('Firestore transit save failed:', e));
+      return updated;
+    });
+  };
+  const [stockTiempoYear, setStockTiempoYear] = useState<number | 'all'>('all');
+  const [stockTiempoModal, setStockTiempoModal] = useState<{
+    ft: string; sz: string; year: number; month: number; monthLabel: string;
+    boxes: number; m2: number;
+    clients: { name: string; salesperson: string; province: string; boxes: number; m2: number; invoices: string[] }[];
+  } | null>(null);
+  const [stockTiempoModalClient, setStockTiempoModalClient] = useState<string | null>(null);
+  const [projectionPeriod, setProjectionPeriod] = useState<1 | 3 | 6 | 12>(1);
+
+  const saveStockFilmData = (data: typeof stockFilmData) => {
+    setStockFilmData(data);
+    localStorage.setItem('stock_film_data', JSON.stringify(data));
+    // Sync to Firestore
+    setDoc(doc(db, 'settings', 'stock_film_data'), { data: JSON.stringify(data), updatedAt: new Date().toISOString() })
+      .catch(e => console.warn('Firestore stock_film_data save failed:', e));
+  };
+
+  const updateStockFilmCell = (year: number, filmKey: string, month: string, field: 'inBoxes' | 'outBoxes', value: number) => {
+    const y = String(year);
+    const updated = JSON.parse(JSON.stringify(stockFilmData));
+    if (!updated[y]) updated[y] = y === '2025' ? JSON.parse(JSON.stringify(STOCK_FILM_DEFAULT_2025)) : Object.fromEntries(Object.keys(STOCK_FILM_DEFAULT_2025).map(k => [k, { openingBoxes: 0, openingM2: 0, months: Object.fromEntries(['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].map(m => [m,{inBoxes:0,outBoxes:0}])) }]));
+    if (!updated[y][filmKey]) updated[y][filmKey] = { openingBoxes: 0, openingM2: 0, months: {} };
+    if (!updated[y][filmKey].months[month]) updated[y][filmKey].months[month] = { inBoxes: 0, outBoxes: 0 };
+    updated[y][filmKey].months[month][field] = value;
+    saveStockFilmData(updated);
+  };
+
+  // ── Auto-sync: Dec balance of year N → opening of year N+1 ──────────────
+  useEffect(() => {
+    const years = [2024, 2025] as const; // source years (2026 would feed 2027)
+    let changed = false;
+    const updated = JSON.parse(JSON.stringify(stockFilmData));
+
+    years.forEach(srcYear => {
+      const nextYear = String(srcYear + 1);
+      STOCK_FILM_PRODUCTS.forEach(prod => {
+        // Compute Dec balance for srcYear
+        const yd = stockFilmData[String(srcYear)]?.[prod.key] || { openingBoxes: 0, openingM2: 0, months: {} };
+        let running = yd.openingBoxes || 0;
+        STOCK_FILM_MONTHS.forEach((month, mi) => {
+          const inB = yd.months?.[month]?.inBoxes || 0;
+          const outB = allConsumos.reduce((s, r) => {
+            const d = new Date(r.order_date);
+            if (d.getFullYear() !== srcYear || d.getMonth() !== mi) return s;
+            if (r.size !== prod.size) return s;
+            const rft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type === 'DIHL' ? 'DIHL' : r.film_type === 'DIML' ? 'DIML' : 'DIHT';
+            if (rft !== prod.type) return s;
+            return s + (r.is_return ? -r.quantity : r.quantity);
+          }, 0);
+          running = running + inB - outB;
+        });
+        const decBalance = Math.max(0, running);
+        const decBalanceM2 = parseFloat((decBalance * prod.m2box).toFixed(2));
+
+        // Only update next year opening if it differs (avoid infinite loop)
+        if (!updated[nextYear]) updated[nextYear] = {};
+        if (!updated[nextYear][prod.key]) updated[nextYear][prod.key] = { openingBoxes: 0, openingM2: 0, months: Object.fromEntries(STOCK_FILM_MONTHS.map(m => [m, { inBoxes: 0, outBoxes: 0 }])) };
+        
+        if (updated[nextYear][prod.key].openingBoxes !== decBalance) {
+          updated[nextYear][prod.key].openingBoxes = decBalance;
+          updated[nextYear][prod.key].openingM2 = decBalanceM2;
+          changed = true;
+        }
+      });
+    });
+
+    if (changed) {
+      setStockFilmData(updated);
+      localStorage.setItem('stock_film_data', JSON.stringify(updated));
+    }
+  }, [stockFilmData, allConsumos]);
+  const computeStockFilmBalances = (year: number, filmKey: string) => {
+    const y = String(year);
+    const prod = STOCK_FILM_PRODUCTS.find(p => p.key === filmKey);
+    const m2box = prod?.m2box ?? 0;
+    const yearData = stockFilmData[y]?.[filmKey] || (y === '2025' ? STOCK_FILM_DEFAULT_2025[filmKey as keyof typeof STOCK_FILM_DEFAULT_2025] : null) || { openingBoxes: 0, openingM2: 0, months: {} };
+    let runningBoxes = yearData.openingBoxes || 0;
+    return STOCK_FILM_MONTHS.map(month => {
+      const mv = yearData.months?.[month] || { inBoxes: 0, outBoxes: 0 };
+      runningBoxes = runningBoxes + mv.inBoxes - mv.outBoxes;
+      return {
+        month,
+        inBoxes: mv.inBoxes,
+        outBoxes: mv.outBoxes,
+        balanceBoxes: Math.max(0, runningBoxes),
+        inM2: parseFloat((mv.inBoxes * m2box).toFixed(2)),
+        outM2: parseFloat((mv.outBoxes * m2box).toFixed(2)),
+        balanceM2: parseFloat((Math.max(0, runningBoxes) * m2box).toFixed(2)),
+      };
+    });
+  };
+  const [editingGoal, setEditingGoal] = useState<{ name: string; value: string } | null>(null);
+  const [selectedDuplicateSerial, setSelectedDuplicateSerial] = useState<{ serial: string; clients: string[] } | null>(null);
+  const [stockFilmCellDetail, setStockFilmCellDetail] = useState<{
+    prod: { label: string; type: string; size: string; m2box: number };
+    month: string;
+    year: number;
+    clients: { name: string; salesperson: string; province: string; boxes: number; m2: number; invoices: string[] }[];
+    totalBoxes: number;
+    totalM2: number;
+  } | null>(null);
+  const [stockFilmSelectedClient, setStockFilmSelectedClient] = useState<string | null>(null);
+  const [comparativoCellDetail, setComparativoCellDetail] = useState<{
+    ft: string; sz: string; year: number;
+    clients: { name: string; salesperson: string; province: string; boxes: number; m2: number; invoices: string[] }[];
+    totalBoxes: number; totalM2: number;
+  } | null>(null);
+  const [comparativoSelectedClient, setComparativoSelectedClient] = useState<string | null>(null);
+  const [stockLevels, setStockLevels] = useState<Record<string, number>>(() => {
+    try { return JSON.parse(localStorage.getItem('stock_levels') || '{}'); } catch { return {}; }
+  });
+  const [isCsvModalOpen, setIsCsvModalOpen] = useState(false);
+  const [csvImportStatus, setCsvImportStatus] = useState<'idle' | 'preview' | 'importing' | 'done' | 'error'>('idle');
+  const [csvImportError, setCsvImportError] = useState<string>('');
+  const [csvPreviewRows, setCsvPreviewRows] = useState<any[]>([]);
+  const [csvImportResults, setCsvImportResults] = useState<{
+    matched: { row: any; clientName: string }[];
+    toCreate: { row: any; clientName: string; province: string; clientCode: string; salesperson: string }[];
+    duplicates: any[];
+    isDihlOnly: boolean;
+    replaceCount: number;
+  }>({ matched: [], toCreate: [], duplicates: [], isDihlOnly: false, replaceCount: 0 });
+  const [csvImportProgress, setCsvImportProgress] = useState(0);
+  const [csvImportSummary, setCsvImportSummary] = useState({ records: 0, newClients: 0 });
+  const csvFileInputRef = React.useRef<HTMLInputElement>(null);
+
+  // --- CSV IMPORT LOGIC ---
+  const parseCSV = (text: string): any[] => {
+    // Normalize line endings and strip BOM
+    const normalized = text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const lines = normalized.trim().split('\n').filter(l => l.trim());
+    if (lines.length < 2) return [];
+    // Auto-detect separator: semicolon, tab, or comma
+    const firstLine = lines[0];
+    const sep = firstLine.includes('\t') ? '\t' : firstLine.split(';').length > firstLine.split(',').length ? ';' : ',';
+    const headers = firstLine.split(sep).map(h => h.trim().replace(/^"|"$/g, '').replace(/^\uFEFF/, '').toLowerCase());
+    return lines.slice(1).filter(l => l.trim()).map(line => {
+      const values: string[] = [];
+      let cur = '', inQ = false;
+      for (let i = 0; i < line.length; i++) {
+        if (line[i] === '"') { inQ = !inQ; }
+        else if (line[i] === sep && !inQ) { values.push(cur.trim()); cur = ''; }
+        else { cur += line[i]; }
+      }
+      values.push(cur.trim());
+      const obj: any = {};
+      headers.forEach((h, i) => { obj[h] = (values[i] ?? '').replace(/\r/g, '').trim(); });
+      return obj;
+    }).filter(obj => Object.values(obj).some(v => String(v).trim() !== ''));
+  };
+
+  const norm = (s: string) => (s || '').toUpperCase().trim().replace(/\s+/g, ' ');
+  // Returns negative quantity for returns so they subtract from totals automatically
+  const effectiveQty = (r: ConsumptionRecord) => r.is_return ? -r.quantity : r.quantity;
+
+  // m² por caja según medida y tipo de película (datos de Fujifilm DI-HT/DI-HL)
+  // DI-HT: 100 hojas/caja | DI-HL: 150 hojas/caja
+  const FILM_M2_PER_BOX: Record<string, Record<string, number>> = {
+    'DIHT': { '8x10': 5.16, '10x12': 7.50, '10x14': 9.03, '14x17': 15.38 },
+    'DIHL': { '8x10': 7.74, '10x12': 7.50, '10x14': 13.55, '14x17': 15.38 },
+    'DIML': { '8x10': 7.74, '10x14': 13.55 },
+  };
+
+  // ── TRIMAX HISTORICAL DATA 2024 — previously sold product (now discontinued) ──
+  // Source: Sales report image provided by user · Used for combined m² metrics only
+  const TRIMAX_2024 = {
+    totalBoxes: 3893,
+    totalM2: 44879,
+    bySize: {
+      '8x10':  { boxes: 1441, m2: 9296,  m2PerBox: 6.45 },
+      '10x12': { boxes: 982,  m2: 9503,  m2PerBox: 9.77 },
+      '14x17': { boxes: 1155, m2: 22168, m2PerBox: 19.19 },
+      '11x14': { boxes: 315,  m2: 3912,  m2PerBox: 12.42 },
+    },
+    byMonth: {
+      Jan: { boxes: 341,  m2: Math.round((128*6.45 + 112*9.77 + 80*19.19 + 21*12.42)) },
+      Feb: { boxes: 356,  m2: Math.round((168*6.45 + 32*9.77  + 105*19.19 + 51*12.42)) },
+      Mar: { boxes: 390,  m2: Math.round((129*6.45 + 85*9.77  + 135*19.19 + 41*12.42)) },
+      Apr: { boxes: 348,  m2: Math.round((156*6.45 + 53*9.77  + 99*19.19  + 40*12.42)) },
+      May: { boxes: 555,  m2: Math.round((73*6.45  + 239*9.77 + 232*19.19 + 11*12.42)) },
+      Jun: { boxes: 287,  m2: Math.round((134*6.45 + 42*9.77  + 76*19.19  + 35*12.42)) },
+      Jul: { boxes: 389,  m2: Math.round((135*6.45 + 135*9.77 + 105*19.19 + 14*12.42)) },
+      Aug: { boxes: 406,  m2: Math.round((190*6.45 + 93*9.77  + 106*19.19 + 17*12.42)) },
+      Sep: { boxes: 300,  m2: Math.round((119*6.45 + 85*9.77  + 75*19.19  + 23*12.42)) },
+      Oct: { boxes: 303,  m2: Math.round((127*6.45 + 77*9.77  + 57*19.19  + 42*12.42)) },
+      Nov: { boxes: 216,  m2: Math.round((82*6.45  + 29*9.77  + 85*19.19  + 20*12.42)) },
+      Dec: { boxes: 0,    m2: 0 },
+    },
+  } as const;
+  // Source: Planning Film sheet · Stock as of 26-Jan-2026
+  const FUJI_PLANNING: Record<string, {
+    inTransit: number;       // TTL Transit (boxes en camino)
+    stockBodega: number;     // Stock físico en bodega
+    totalAvailable: number;  // Transit + Stock
+    salesJan26: number;      // Ventas reales Enero 2026
+    avgMayDec25: number;     // Promedio mensual May-Dic 2025
+    coverageCurrentM: number;  // Meses cobertura con ritmo Jan26
+    coverageHistoricM: number; // Meses cobertura con promedio histórico
+    safetyStock: number;     // Stock de seguridad recomendado por Fujifilm
+    orders: string[];        // Órdenes activas Fujifilm
+  }> = {
+    'DIHT_8x10':  { inTransit: 0,  stockBodega: 250, totalAvailable: 950, salesJan26: 183, avgMayDec25: 179.6, coverageCurrentM: 5.19,  coverageHistoricM: 5.29,  safetyStock: 50,  orders: ['FJ-2001','FJ-2007','FJ-2025','FJ-2028'] },
+    'DIHT_10x12': { inTransit: 0,  stockBodega: 192, totalAvailable: 522, salesJan26: 84,  avgMayDec25: 80.5,  coverageCurrentM: 3.93,  coverageHistoricM: 6.48,  safetyStock: 154, orders: ['FJ-2001','FJ-2019','FJ-2025'] },
+    'DIHT_10x14': { inTransit: 70,   stockBodega: 57,  totalAvailable: 127, salesJan26: 22,  avgMayDec25: 17.6,  coverageCurrentM: 3.18,  coverageHistoricM: 7.21,  safetyStock: 47,  orders: ['FJ-2001','FJ-2025'] },
+    'DIHT_14x17': { inTransit: 0,  stockBodega: 411, totalAvailable: 751, salesJan26: 52,  avgMayDec25: 57.1,  coverageCurrentM: 6.54,  coverageHistoricM: 13.15, safetyStock: 336, orders: ['FJ-2001','FJ-2025','FJ-2028'] },
+    'DIHL_8x10':  { inTransit: 0,    stockBodega: 257, totalAvailable: 257, salesJan26: 0,   avgMayDec25: 2.25,  coverageCurrentM: 114.2, coverageHistoricM: 114.2, safetyStock: 259, orders: ['FJ-2007','FJ-2019','FJ-2025'] },
+    'DIHL_10x14': { inTransit: 0,  stockBodega: 52,  totalAvailable: 152, salesJan26: 1,   avgMayDec25: 8.375, coverageCurrentM: 100,   coverageHistoricM: 18.15, safetyStock: 2,   orders: ['FJ-2007','FJ-2009','FJ-2025'] },
+    'DIHL_14x17': { inTransit: 0,  stockBodega: 29,  totalAvailable: 129, salesJan26: 36,  avgMayDec25: 15.6,  coverageCurrentM: 2.78,  coverageHistoricM: 8.26,  safetyStock: 23,  orders: ['FJ-2007','FJ-2019','FJ-2025'] },
+    'DIML_8x10':  { inTransit: 0,    stockBodega: 39,  totalAvailable: 39,  salesJan26: 0,   avgMayDec25: 0.125, coverageCurrentM: 312,   coverageHistoricM: 312,   safetyStock: 0,   orders: ['FJ-2007'] },
+    'DIML_10x14': { inTransit: 0,    stockBodega: 0,   totalAvailable: 0,   salesJan26: 0,   avgMayDec25: 0,     coverageCurrentM: 0,     coverageHistoricM: 0,     safetyStock: 0,   orders: [] },
+  };
+  const getM2PerBox = (size: string, filmType?: string): number => {
+    const ft = filmType === 'DIHL' ? 'DIHL' : 'DIHT';
+    return FILM_M2_PER_BOX[ft]?.[size] ?? 0;
+  };
+  const getTotalM2 = (quantity: number, size: string, filmType?: string): number => {
+    return parseFloat((quantity * getM2PerBox(size, filmType)).toFixed(2));
+  };
+  // Normalize invoice numbers for comparison — strips leading zeros so "001001000071109" === "1001001000071109" === "71109"
+  const normInvoice = (s: string) => (s || '').replace(/^0+/, '').trim();
+
+  // Fix scientific notation numbers (e.g. "1,001E+12" → "001001000071772")
+  const fixInvoiceNumber = (raw: string): string => {
+    if (!raw) return '';
+    const s = raw.trim();
+    // Scientific notation: 1.001E+12 or 1,001E+12
+    if (/^[\d.,]+[eE][+\-]\d+$/.test(s)) {
+      const normalized = s.replace(',', '.');
+      const num = parseFloat(normalized);
+      if (!isNaN(num)) return Math.round(num).toString();
+    }
+    return s;
+  };
+
+  const findClientForRow = (row: any): Client | null => {
+    const rowKeys = Object.keys(row);
+    const clientNameCols = ['cliente', 'client', 'nombre cliente', 'nombre_cliente', 'razón social', 'razon social', 'name', 'nombre'];
+    const rucCols = ['ruc', 'ruc/id', 'ruc_id', 'cedula', 'identificacion'];
+    // COD CLIENTE is the primary deduplication key — match exact column names first
+    const codeCols = ['cod cliente', 'codigo2', 'codigo cliente', 'código cliente', 'codcliente', 'client_code', 'client code', 'cod', 'codigo', 'código'];
+
+    let clientNameVal = '';
+    let rucVal = '';
+    let codeVal = '';
+
+    rowKeys.forEach(k => {
+      const kn = norm(k);
+      // Prioritize exact matches for code columns (avoid false positives from "codigo" matching "codigo2")
+      if (!codeVal) {
+        // Try exact match first
+        if (codeCols.some(c => kn === norm(c))) codeVal = norm(row[k]);
+        // Then partial match if still empty
+        else if (codeCols.some(c => kn.includes(norm(c)))) codeVal = norm(row[k]);
+      }
+      if (!rucVal && rucCols.some(c => kn === norm(c))) rucVal = norm(row[k]);
+      if (!clientNameVal && clientNameCols.some(c => kn === norm(c) || kn.includes(norm(c)))) clientNameVal = norm(row[k]);
+    });
+
+    // 1. Exact match by COD CLIENTE (highest priority — unique identifier)
+    if (codeVal) {
+      const found = allClients.find(c =>
+        norm(c.client_code) === codeVal ||
+        (c.alt_codes || []).some(ac => norm(ac) === codeVal)
+      );
+      if (found) return found;
+    }
+    // 2. Exact match by RUC
+    if (rucVal) {
+      const found = allClients.find(c => norm(c.ruc_id) === rucVal);
+      if (found) return found;
+    }
+    // 3. Exact name match
+    if (clientNameVal) {
+      const found = allClients.find(c => norm(c.name) === clientNameVal || norm(altNames[c.id] || '') === clientNameVal);
+      if (found) return found;
+    }
+    // 4. Partial name match
+    if (clientNameVal) {
+      const found = allClients.find(c =>
+        norm(c.name).includes(clientNameVal) ||
+        clientNameVal.includes(norm(c.name)) ||
+        (altNames[c.id] && (norm(altNames[c.id]).includes(clientNameVal) || clientNameVal.includes(norm(altNames[c.id]))))
+      );
+      if (found) return found;
+    }
+    return null;
+  };
+
+  // Extract size from ARTICULO field if size column is empty
+  const extractSizeFromArticulo = (articulo: string): string => {
+    if (!articulo) return '';
+    const patterns = [
+      /\b(35[xX×]43|35x43)\b/i,   // → 14x17
+      /\b(26[xX×]36|26x36)\b/i,   // → 10x14
+      /\b(25[xX×]30|25x30)\b/i,   // → 10x12
+      /\b(20[xX×]25|20x25)\b/i,   // → 8x10
+      /\b(14[xX×]17)\b/i,
+      /\b(10[xX×]14)\b/i,
+      /\b(10[xX×]12)\b/i,
+      /\b(8[xX×]10)\b/i,
+    ];
+    const cmToInch: Record<string, string> = {
+      '35X43': '14x17', '35x43': '14x17',
+      '26X36': '10x14', '26x36': '10x14',
+      '25X30': '10x12', '25x30': '10x12',
+      '20X25': '8x10',  '20x25': '8x10',
+    };
+    for (const pat of patterns) {
+      const m = articulo.match(pat);
+      if (m) {
+        const val = m[0].toUpperCase().replace('×', 'X');
+        return cmToInch[val] || m[0].toLowerCase().replace('×', 'x');
+      }
+    }
+    return '';
+  };
+
+  const mapRowToRecord = (row: any, clientId: number, nextId: number): ConsumptionRecord => {
+    const rowKeys = Object.keys(row);
+    const get = (candidates: string[]) => {
+      for (const c of candidates) {
+        const key = rowKeys.find(k => norm(k) === norm(c) || norm(k).includes(norm(c)));
+        if (key && row[key] !== undefined && row[key] !== '') return String(row[key]);
+      }
+      return '';
+    };
+
+    // Date parsing
+    const rawDate = get(['fecha pedido', 'fecha_pedido', 'order_date', 'fecha', 'date', 'fecha de pedido', 'fecha venta']);
+    let orderDate = rawDate;
+    if (rawDate) {
+      // DD/MM/YYYY
+      const m1 = rawDate.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+      if (m1) {
+        const [, d, mo, y] = m1;
+        const year = y.length === 2 ? `20${y}` : y;
+        orderDate = `${year}-${mo.padStart(2,'0')}-${d.padStart(2,'0')}`;
+      }
+      // YYYY-MM-DD already fine, but might have time
+      const m2 = rawDate.match(/^(\d{4})[\/\-](\d{2})[\/\-](\d{2})/);
+      if (m2) orderDate = `${m2[1]}-${m2[2]}-${m2[3]}`;
+    }
+
+    // Expiry date
+    const rawExpiry = get(['fecha expiración', 'fecha expiracion', 'expiry_date', 'vencimiento', 'expiry', 'fecha venc']);
+    let expiryDate = '2099-12-31';
+    if (rawExpiry) {
+      const m1 = rawExpiry.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+      if (m1) {
+        const [, d, mo, y] = m1;
+        const year = y.length === 2 ? `20${y}` : y;
+        expiryDate = `${year}-${mo.padStart(2,'0')}-${d.padStart(2,'0')}`;
+      }
+      const m2 = rawExpiry.match(/^(\d{4})[\/\-](\d{2})[\/\-](\d{2})/);
+      if (m2) expiryDate = `${m2[1]}-${m2[2]}-${m2[3]}`;
+    }
+
+    // Size: try explicit column first, then extract from ARTICULO
+    let size = get(['medida', 'size', 'talla', 'formato', 'articulo medida']);
+    if (!size) {
+      const articulo = get(['articulo', 'producto', 'article', 'descripcion', 'description']);
+      size = extractSizeFromArticulo(articulo);
+    }
+
+    // Cost: handle "1.237,00" (European) and "1237.00" (US) formats
+    // Check if we have an explicit unit cost column
+    const unitCostRaw = get(['costo unitario', 'costo_unitario', 'unit_cost', 'c/u', 'precio unitario', 'valor unitario']);
+    const totalCostRaw = get(['costo total', 'costo_total', 'total']);
+    const costRaw = unitCostRaw || totalCostRaw;
+    const isUnitCost = !!unitCostRaw;
+    let unitCost: number | undefined;
+    if (costRaw) {
+      let cleaned = costRaw.replace(/\s/g, '');
+      // European format: 1.237,00 → remove dots, replace comma
+      if (/\d\.\d{3},\d{2}/.test(cleaned)) {
+        cleaned = cleaned.replace(/\./g, '').replace(',', '.');
+      } else {
+        cleaned = cleaned.replace(',', '.');
+      }
+      const parsed = parseFloat(cleaned);
+      if (!isNaN(parsed)) unitCost = parsed;
+    }
+
+    // Quantity — negative = return
+    const qtyRaw = get(['cantidad', 'quantity', 'qty', 'cajas', 'boxes']);
+    const qtyParsed = parseInt(qtyRaw) || 1;
+    const isReturn = qtyParsed < 0;
+    const qty = Math.abs(qtyParsed) || 1;
+
+    // If we got total cost (not unit cost), divide by qty to get unit cost
+    const finalCost = unitCost
+      ? (isUnitCost ? Math.abs(unitCost) : (qty > 1 ? parseFloat((Math.abs(unitCost) / qty).toFixed(4)) : Math.abs(unitCost)))
+      : undefined;
+
+    // Invoice: fix scientific notation
+    const rawInvoice = get(['factura', 'invoice', 'invoice_number', 'n° factura', 'numero factura', 'nro factura', 'nro. factura']);
+
+    // Film type: extract DIHT, DIHL or TXE from articulo name or explicit column
+    const articuloRaw = get(['articulo', 'producto', 'article', 'descripcion', 'description']);
+    let filmType: string | undefined;
+    // Check explicit film_type column first
+    const explicitFilmType = get(['film_type', 'tipo pelicula', 'tipo película', 'tipo de pelicula', 'tipo de película']);
+    if (explicitFilmType) {
+      const ft = explicitFilmType.toUpperCase().trim();
+      if (ft === 'DIHL' || ft === 'DI-HL') filmType = 'DIHL';
+      else if (ft === 'DIML' || ft === 'DI-ML') filmType = 'DIML';
+      else if (ft === 'TXE') filmType = 'TXE';
+      else filmType = 'DIHT';
+    } else if (articuloRaw) {
+      const art = articuloRaw.toUpperCase();
+      if (art.includes('DI-HL') || art.includes('DIHL')) filmType = 'DIHL';
+      else if (art.includes('DI-HT') || art.includes('DIHT')) filmType = 'DIHT';
+      else if (art.includes('TXE') || art.includes('TXM') || art.includes('TRIMAX')) filmType = 'TXE';
+    }
+
+    return {
+      id: nextId,
+      client_id: clientId,
+      order_date: orderDate || new Date().toISOString().split('T')[0],
+      invoice_number: fixInvoiceNumber(rawInvoice) || undefined,
+      quantity: qty,
+      size,
+      batch_number: get(['lote', 'batch', 'batch_number', 'n° lote', 'nro lote']) || '',
+      expiry_date: expiryDate,
+      unit_cost: finalCost,
+      film_type: filmType,
+      is_return: isReturn || undefined,
+    };
+  };
+
+  // Extract client info from CSV row for new client creation
+  const extractClientInfoFromRow = (row: any): { name: string; province: string; clientCode: string; salesperson: string } => {
+    const rowKeys = Object.keys(row);
+    const getExact = (candidates: string[]) => {
+      for (const c of candidates) {
+        // Try exact match (case-insensitive)
+        const key = rowKeys.find(k => norm(k) === norm(c));
+        if (key && row[key] !== undefined && row[key] !== '') return String(row[key]).trim();
+      }
+      // Fallback: partial match
+      for (const c of candidates) {
+        const key = rowKeys.find(k => norm(k).includes(norm(c)) || norm(c).includes(norm(k)));
+        if (key && row[key] !== undefined && row[key] !== '') return String(row[key]).trim();
+      }
+      return '';
+    };
+    return {
+      name: getExact(['cliente', 'client', 'nombre cliente', 'nombre', 'name']) || 'Sin nombre',
+      province: getExact(['provincia', 'province', 'ciudad', 'city']) || '',
+      // COD CLIENTE is the exact column name in our CSV; CODIGO2 is the raw Excel column name
+      clientCode: getExact(['cod cliente', 'codigo2', 'codigo cliente', 'código cliente', 'client_code', 'cod', 'codigo']) || '',
+      salesperson: getExact(['vendedor', 'salesperson', 'asesor', 'representante']) || '',
+    };
+  };
+
+  const handleCsvFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const processText = (text: string) => {
+      try {
+      // Strip BOM if present
+      const clean = text.replace(/^\uFEFF/, '');
+      const rows = parseCSV(clean);
+      if (!rows.length) { setCsvImportError('El archivo no tiene filas válidas o el separador no fue reconocido. Columnas detectadas: ' + (Object.keys(rows[0] ?? {}).join(', ') || 'ninguna')); setCsvImportStatus('error'); return; }
+      setCsvPreviewRows(rows.slice(0, 5));
+
+      const matched: { row: any; clientName: string }[] = [];
+      const toCreate: { row: any; clientName: string; province: string; clientCode: string; salesperson: string }[] = [];
+      const duplicates: any[] = [];
+
+      // Track codes already resolved to EXISTING clients (so same code doesn't appear as new client)
+      const resolvedCodes = new Map<string, string>(); // normCode → clientName (existing)
+      // Track new clients being created in this CSV
+      const newClientByCode = new Map<string, string>(); // normCode → canonicalName
+      const newClientByName = new Map<string, string>(); // normName → canonicalName
+
+      rows.forEach(row => {
+        const info = extractClientInfoFromRow(row);
+        const normCode = norm(info.clientCode);
+
+        // If this code was already resolved to an existing client, use that client directly
+        if (normCode && resolvedCodes.has(normCode)) {
+          const clientName = resolvedCodes.get(normCode)!;
+          const client = allClients.find(c => c.name === clientName)!;
+          const tempRecord = mapRowToRecord(row, client.id, 0);
+          const existingRec = allConsumos.find(r =>
+            r.client_id === client.id &&
+            r.invoice_number && tempRecord.invoice_number &&
+            normInvoice(r.invoice_number) === normInvoice(tempRecord.invoice_number) &&
+            r.size === tempRecord.size &&
+            r.quantity === tempRecord.quantity
+          );
+          const isDup = !!existingRec;
+          if (isDup) {
+            // If existing record lacks film_type but new import has it → queue for update
+            if (tempRecord.film_type && !existingRec!.film_type) {
+              matched.push({ row, clientName, _updateId: existingRec!.id } as any);
+            } else {
+              duplicates.push({ row, clientName });
+            }
+          }
+          else matched.push({ row, clientName });
+          return;
+        }
+
+        const client = findClientForRow(row);
+        if (!client) {
+          const normName = norm(info.name);
+          if (!normName || normName === 'SIN NOMBRE') return;
+
+          let canonical: string | undefined;
+          if (normCode) canonical = newClientByCode.get(normCode);
+          if (!canonical) canonical = newClientByName.get(normName);
+
+          if (!canonical) {
+            canonical = info.name;
+            if (normCode) newClientByCode.set(normCode, canonical);
+            newClientByName.set(normName, canonical);
+          }
+
+          toCreate.push({ row, clientName: canonical, province: info.province, clientCode: info.clientCode, salesperson: info.salesperson });
+          return;
+        }
+
+        // Existing client found — register their code so subsequent rows with same code find them
+        if (normCode) resolvedCodes.set(normCode, client.name);
+
+        const tempRecord2 = mapRowToRecord(row, client.id, 0);
+        const existingRec2 = allConsumos.find(r =>
+          r.client_id === client.id &&
+          r.invoice_number && tempRecord2.invoice_number &&
+          normInvoice(r.invoice_number) === normInvoice(tempRecord2.invoice_number) &&
+          r.size === tempRecord2.size &&
+          r.quantity === tempRecord2.quantity
+        );
+        const isDup2 = !!existingRec2;
+        if (isDup2) {
+          if (tempRecord2.film_type && !existingRec2!.film_type) {
+            matched.push({ row, clientName: client.name, _updateId: existingRec2!.id } as any);
+          } else {
+            duplicates.push({ row, clientName: client.name });
+          }
+        } else { matched.push({ row, clientName: client.name }); }
+      });
+
+      // Detect if this is a DIHL-only import (all rows have DI-HL in ARTICULO)
+      const isDihlOnly = rows.length > 0 && rows.every((row: any) => {
+        const art = String(row['ARTICULO'] || row['articulo'] || row['Articulo'] || '').toUpperCase();
+        return art.includes('DI-HL') || art.includes('DIHL');
+      });
+
+      // In DIHL-only mode: toCreate rows should be treated as film_type updates only, not new clients
+      // Move all toCreate into matched as _updateId = -1 (meaning: find by invoice+size+qty and update)
+      if (isDihlOnly) {
+        // In DIHL mode: rescue any "duplicates" that are actually DIHT records → they should be replaced
+        const rescuedFromDuplicates: any[] = [];
+        const trueDuplicates: any[] = [];
+        duplicates.forEach(item => {
+          const temp = mapRowToRecord(item.row, 0, 0);
+          const existing = allConsumos.find(r =>
+            r.invoice_number && temp.invoice_number &&
+            normInvoice(r.invoice_number) === normInvoice(temp.invoice_number) &&
+            r.size === temp.size &&
+            r.quantity === temp.quantity
+          );
+          if (existing && existing.film_type !== 'DIHL') {
+            // Was incorrectly classified as duplicate — it's a DIHT to replace
+            rescuedFromDuplicates.push({ row: item.row, clientName: item.clientName, _replaceId: existing.id });
+          } else {
+            trueDuplicates.push(item);
+          }
+        });
+
+        // Re-check toCreate rows against allConsumos by invoice+size+qty regardless of client
+        const reMatched: any[] = [];
+        const stillNew: any[] = [];
+        toCreate.forEach(item => {
+          const temp = mapRowToRecord(item.row, 0, 0);
+          const existing = allConsumos.find(r =>
+            r.invoice_number && temp.invoice_number &&
+            normInvoice(r.invoice_number) === normInvoice(temp.invoice_number) &&
+            r.size === temp.size &&
+            r.quantity === temp.quantity
+          );
+          if (existing && existing.film_type === 'DIHL') {
+            trueDuplicates.push({ row: item.row, clientName: item.clientName });
+          } else if (existing && existing.film_type !== 'DIHL') {
+            reMatched.push({ row: item.row, clientName: item.clientName, _replaceId: existing.id });
+          } else {
+            stillNew.push(item);
+          }
+        });
+
+        // Re-check matched rows for DIHT replacements
+        const finalMatched: any[] = [];
+        matched.forEach(item => {
+          if ((item as any)._updateId) { finalMatched.push(item); return; }
+          const temp = mapRowToRecord(item.row, 0, 0);
+          const existing = allConsumos.find(r =>
+            r.invoice_number && temp.invoice_number &&
+            normInvoice(r.invoice_number) === normInvoice(temp.invoice_number) &&
+            r.size === temp.size &&
+            r.quantity === temp.quantity
+          );
+          if (existing && existing.film_type === 'DIHL') {
+            trueDuplicates.push({ row: item.row, clientName: item.clientName });
+          } else if (existing && existing.film_type !== 'DIHL') {
+            finalMatched.push({ ...item, _replaceId: existing.id });
+          } else {
+            finalMatched.push(item);
+          }
+        });
+
+        const allMatched = [...finalMatched, ...reMatched, ...rescuedFromDuplicates];
+        const replaceCount = allMatched.filter((x: any) => x._replaceId).length;
+        setCsvImportResults({ matched: allMatched, toCreate: stillNew, duplicates: trueDuplicates, isDihlOnly, replaceCount });
+      } else {
+        setCsvImportResults({ matched, toCreate, duplicates, isDihlOnly: false });
+      }
+      setCsvImportStatus('preview');
+      } catch(err: any) {
+        console.error('CSV processText error:', err);
+        setCsvImportError(String(err?.message || err || 'Error desconocido'));
+        setCsvImportStatus('error');
+      }
+    };
+
+    // Try UTF-8 first, fallback to latin-1 if result looks garbled
+    const readerUtf8 = new FileReader();
+    readerUtf8.onload = (ev) => {
+      const text = ev.target?.result as string;
+      if (text.includes('\uFFFD')) {
+        const readerLatin = new FileReader();
+        readerLatin.onload = (ev2) => processText(ev2.target?.result as string);
+        readerLatin.onerror = () => setCsvImportStatus('error');
+        readerLatin.readAsText(file, 'latin-1');
+      } else {
+        processText(text);
+      }
+    };
+    readerUtf8.onerror = () => setCsvImportStatus('error');
+    readerUtf8.readAsText(file, 'UTF-8');
+    e.target.value = '';
+  };
+
+  const handleConfirmCsvImport = async () => {
+    setCsvImportStatus('importing');
+    setCsvImportProgress(0);
+    const { matched, toCreate, isDihlOnly } = csvImportResults;
+    const totalOps = matched.length + toCreate.length;
+    if (!totalOps) { setCsvImportStatus('done'); return; }
+
+    try {
+      let nextRecordId = Math.max(0, ...allConsumos.map(r => r.id)) + 1;
+      let nextClientId = Math.max(0, ...allClients.map(c => c.id)) + 1;
+      let processed = 0;
+
+      // In DIHL-only mode: replace DIHT records + insert new ones, all as DIHL
+      if (isDihlOnly) {
+        // Step A: delete DIHT records that are being replaced, then insert as DIHL
+        const toReplace = matched.filter((x: any) => x._replaceId);
+        const toUpdateOnly = matched.filter((x: any) => x._updateId); // already DIHL, just update type
+        const toInsertFresh = matched.filter((x: any) => !x._replaceId && !x._updateId);
+
+        // Delete DIHT records in batches
+        for (let i = 0; i < toReplace.length; i += 400) {
+          const chunk = toReplace.slice(i, i + 400);
+          const batch = writeBatch(db);
+          chunk.forEach(({ _replaceId }: any) => {
+            batch.delete(doc(db, 'consumos', (_replaceId as number).toString()));
+          });
+          await batch.commit();
+        }
+
+        // Update film_type on records that were already untagged (no film_type set)
+        for (let i = 0; i < toUpdateOnly.length; i += 400) {
+          const chunk = toUpdateOnly.slice(i, i + 400);
+          const batch = writeBatch(db);
+          chunk.forEach(({ _updateId }: any) => {
+            batch.update(doc(db, 'consumos', (_updateId as number).toString()), { film_type: 'DIHL' });
+          });
+          await batch.commit();
+        }
+
+        // Step B: create new clients if needed
+        const dihlNewClients = new Map<string, { canonicalName: string; province: string; clientCode: string; salesperson: string }>();
+        toCreate.forEach(({ clientName, province, clientCode, salesperson }) => {
+          const key = norm(clientCode) || norm(clientName);
+          if (!dihlNewClients.has(key)) dihlNewClients.set(key, { canonicalName: clientName, province, clientCode, salesperson });
+        });
+        const dihlClientMap = new Map<string, number>();
+        for (const [, info] of dihlNewClients) {
+          const newClient: Client = { id: nextClientId, name: info.canonicalName, province: info.province, ruc_id: '', contact: '', client_code: info.clientCode, salesperson: info.salesperson.toUpperCase().trim(), printers: [] };
+          await setDoc(doc(db, 'clientes', nextClientId.toString()), newClient);
+          dihlClientMap.set(info.canonicalName, nextClientId);
+          nextClientId++;
+        }
+
+        // Step C: insert replaced + fresh + toCreate rows all as DIHL
+        const dihlToInsert = [
+          ...toReplace.map(({ row, clientName }: any) => ({
+            row, clientId: allClients.find(c => c.name === clientName)?.id ?? dihlClientMap.get(clientName)
+          })),
+          ...toInsertFresh.map(({ row, clientName }: any) => ({
+            row, clientId: allClients.find(c => c.name === clientName)?.id ?? dihlClientMap.get(clientName)
+          })),
+          ...toCreate.map(({ row, clientName }: any) => ({
+            row, clientId: dihlClientMap.get(clientName) ?? allClients.find(c => c.name === clientName)?.id
+          })),
+        ].filter(x => x.clientId != null);
+
+        for (let i = 0; i < dihlToInsert.length; i += 400) {
+          const chunk = dihlToInsert.slice(i, i + 400);
+          const batch = writeBatch(db);
+          chunk.forEach(({ row, clientId }) => {
+            const record = mapRowToRecord(row, clientId!, nextRecordId++);
+            batch.set(doc(db, 'consumos', record.id.toString()), { ...record, film_type: 'DIHL' });
+          });
+          await batch.commit();
+          processed += chunk.length;
+          setCsvImportProgress(Math.round((processed / totalOps) * 100));
+        }
+
+        setCsvImportSummary({ records: toReplace.length + toInsertFresh.length + toCreate.length, newClients: dihlNewClients.size });
+        setCsvImportStatus('done');
+        return;
+      }
+
+      // Step 0: For existing clients matched by name (not code), update their client_code if empty
+      const codeUpdates = new Map<number, string>(); // clientId → clientCode from CSV
+      matched.forEach(({ row, clientName }) => {
+        const client = allClients.find(c => c.name === clientName);
+        if (!client) return;
+        if (client.client_code && client.client_code.trim() !== '') return; // already has code
+        const info = extractClientInfoFromRow(row);
+        if (info.clientCode) codeUpdates.set(client.id, info.clientCode);
+      });
+      for (const [clientId, clientCode] of codeUpdates) {
+        await updateDoc(doc(db, 'clientes', clientId.toString()), { client_code: clientCode });
+      }
+
+      // Step 1: Create new clients — deduplicate by clientCode (primary) then by canonical name
+      const createdClientMap = new Map<string, number>(); // canonicalName → new clientId
+      const uniqueNewClients = new Map<string, { canonicalName: string; province: string; clientCode: string; salesperson: string }>();
+      toCreate.forEach(({ clientName, province, clientCode, salesperson }) => {
+        // Use normCode as key when available — this is the definitive dedup key
+        const key = norm(clientCode) || norm(clientName);
+        if (!uniqueNewClients.has(key)) {
+          uniqueNewClients.set(key, { canonicalName: clientName, province, clientCode, salesperson });
+        }
+      });
+
+      for (const [, info] of uniqueNewClients) {
+        const newClient: Client = {
+          id: nextClientId,
+          name: info.canonicalName,
+          province: info.province,
+          ruc_id: '',
+          contact: '',
+          client_code: info.clientCode,
+          salesperson: info.salesperson.toUpperCase().trim(),
+          printers: [],
+        };
+        await setDoc(doc(db, 'clientes', nextClientId.toString()), newClient);
+        createdClientMap.set(info.canonicalName, nextClientId);
+        nextClientId++;
+      }
+
+      // Step 2: Import all records (existing + new clients) in batches
+      // Split matched into new inserts vs film_type updates
+      const toInsert: { row: any; clientId: number }[] = [];
+      const toUpdateFilmType: { row: any; clientId: number; _updateId: number }[] = [];
+
+      matched.forEach(({ row, clientName, _updateId }: any) => {
+        const clientId = allClients.find(c => c.name === clientName)?.id ?? createdClientMap.get(clientName);
+        if (!clientId) return;
+        if (_updateId) toUpdateFilmType.push({ row, clientId, _updateId });
+        else toInsert.push({ row, clientId });
+      });
+      toCreate.forEach(({ row, clientName }) => {
+        const clientId = createdClientMap.get(clientName);
+        if (clientId) toInsert.push({ row, clientId });
+      });
+
+      // Update film_type on existing records
+      for (const { row, clientId, _updateId } of toUpdateFilmType) {
+        const record = mapRowToRecord(row, clientId, 0);
+        if (record.film_type) {
+          await updateDoc(doc(db, 'consumos', _updateId.toString()), { film_type: record.film_type });
+        }
+        processed++;
+        setCsvImportProgress(Math.round((processed / totalOps) * 100));
+      }
+
+      const batchSize = 400;
+      for (let i = 0; i < toInsert.length; i += batchSize) {
+        const chunk = toInsert.slice(i, i + batchSize);
+        const batch = writeBatch(db);
+        chunk.forEach(({ row, clientId }) => {
+          const record = mapRowToRecord(row, clientId, nextRecordId++);
+          batch.set(doc(db, 'consumos', record.id.toString()), record);
+        });
+        await batch.commit();
+        processed += chunk.length;
+        setCsvImportProgress(Math.round((processed / totalOps) * 100));
+      }
+
+      setCsvImportSummary({ records: toInsert.length + toUpdateFilmType.length, newClients: uniqueNewClients.size });
+      setCsvImportStatus('done');
+    } catch (err) {
+      console.error('CSV import error:', err);
+      setCsvImportStatus('error');
+    }
+  };
+
+  const handleOpenCsvImport = () => {
+    setCsvImportStatus('idle');
+    setCsvImportError('');
+    setCsvPreviewRows([]);
+    setCsvImportResults({ matched: [], toCreate: [], duplicates: [] });
+    setCsvImportProgress(0);
+    setCsvImportSummary({ records: 0, newClients: 0 });
+    setIsCsvModalOpen(true);
+  };
+
+  const handleCloseCsvModal = () => {
+    setIsCsvModalOpen(false);
+    setCsvImportStatus('idle');
+    setCsvImportError('');
+    if (csvFileInputRef.current) csvFileInputRef.current.value = '';
+  };
+
+  const handleExportExcel = () => {
+    // 1. Exportar Clientes
+    const clientsData = allClients.map(client => ({
+      ID: client.id,
+      Nombre: client.name,
+      'Nombre Alternativo': altNames[client.id] || '',
+      Provincia: client.province,
+      'RUC/ID': client.ruc_id,
+      Contacto: client.contact,
+      'Código Cliente': client.client_code,
+      Vendedor: client.salesperson,
+      'Total Impresoras': client.printers?.length || 0
+    }));
+
+    // 2. Exportar Consumos
+    const consumosData = allConsumos.map(record => {
+      const client = allClients.find(c => c.id === record.client_id);
+      return {
+        ID: record.id,
+        'ID Cliente': record.client_id,
+        'Nombre Cliente': client?.name || 'Desconocido',
+        'Fecha Pedido': record.order_date,
+        Factura: record.invoice_number || '',
+        Medida: record.size,
+        Cantidad: record.quantity,
+        'Costo Unitario': record.unit_cost || 0,
+        'Costo Total': (record.quantity * (record.unit_cost || 0)).toFixed(2),
+        Lote: record.batch_number,
+        'Fecha Expiración': record.expiry_date
+      };
+    });
+
+    // 3. Exportar Impresoras
+    const printersData: any[] = [];
+    allClients.forEach(client => {
+      if (client.printers && client.printers.length > 0) {
+        client.printers.forEach(printer => {
+          printersData.push({
+            'ID Cliente': client.id,
+            'Nombre Cliente': client.name,
+            'Provincia': client.province || '',
+            'Tipo Impresora': printer.type,
+            Trays: printer.trays,
+            'Fecha Instalación': printer.installDate,
+            Serial: printer.serial,
+            'Sucursal / Ciudad': printer.location || ''
+          });
+        });
+      }
+    });
+
+    // Crear el libro de trabajo
+    const wb = XLSX.utils.book_new();
+    
+    // Añadir hojas
+    const wsClients = XLSX.utils.json_to_sheet(clientsData);
+    XLSX.utils.book_append_sheet(wb, wsClients, "Clientes");
+    
+    const wsConsumos = XLSX.utils.json_to_sheet(consumosData);
+    XLSX.utils.book_append_sheet(wb, wsConsumos, "Consumos");
+    
+    if (printersData.length > 0) {
+      const wsPrinters = XLSX.utils.json_to_sheet(printersData);
+      XLSX.utils.book_append_sheet(wb, wsPrinters, "Impresoras");
+    }
+
+    // Descargar el archivo
+    XLSX.writeFile(wb, `Orimec_Data_${format(new Date(), 'yyyy-MM-dd_HH-mm')}.xlsx`);
+  };
+
+  // Filtrado de la lista lateral
+  const filteredClients = useMemo(() => {
+    return allClients.filter(c => {
+      const searchLower = searchTerm.toLowerCase();
+      const nameMatch = String(c.name).toLowerCase().includes(searchLower);
+      const rucMatch = String(c.ruc_id).includes(searchTerm);
+      const altName = altNames[c.id] || '';
+      const altNameMatch = altName.toLowerCase().includes(searchLower);
+      const provinceMatch = String(c.province || '').toLowerCase().includes(searchLower);
+      const clientCodeMatch = String(c.client_code || '').toLowerCase().includes(searchLower);
+      const salespersonMatch = String(c.salesperson || '').toLowerCase().includes(searchLower);
+      
+      const hasInvoiceMatch = allConsumos.some(r => 
+        r.client_id === c.id && 
+        r.invoice_number && 
+        String(r.invoice_number).toLowerCase().includes(searchLower)
+      );
+
+      const hasPrinterSerialMatch = c.printers?.some(p => 
+        p.serial && String(p.serial).toLowerCase().includes(searchLower)
+      ) || false;
+      
+      return nameMatch || rucMatch || altNameMatch || provinceMatch || clientCodeMatch || salespersonMatch || hasInvoiceMatch || hasPrinterSerialMatch;
+    });
+  }, [searchTerm, altNames, allClients, allConsumos]);
+
+  // Consumo específico del cliente seleccionado
+  const currentConsumption = useMemo(() => {
+    if (!selectedClient) return [];
+    return allConsumos.filter(r => r.client_id === selectedClient.id)
+      .sort((a, b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime());
+  }, [selectedClient, allConsumos]);
+
+  // Consumo filtrado por medida y factura (para métricas, tendencia y tabla)
+  const filteredClientConsumption = useMemo(() => {
+    let filtered = currentConsumption;
+    
+    if (clientSizeFilter !== 'Todas') {
+      filtered = filtered.filter(r => r.size === clientSizeFilter);
+    }
+
+    if (clientFilmFilter !== 'Todos') {
+      filtered = filtered.filter(r => r.film_type === clientFilmFilter);
+    }
+    
+    if (invoiceSearchTerm.trim() !== '') {
+      const searchLower = invoiceSearchTerm.toLowerCase();
+      filtered = filtered.filter(r => 
+        r.invoice_number && String(r.invoice_number).toLowerCase().includes(searchLower)
+      );
+    }
+    
+    return filtered;
+  }, [currentConsumption, clientSizeFilter, clientFilmFilter, invoiceSearchTerm]);
+
+  // Resetear el filtro cuando se cambia de cliente
+  useEffect(() => {
+    setClientSizeFilter('Todas');
+    setClientFilmFilter('Todos');
+    setInvoiceSearchTerm('');
+  }, [selectedClient]);
+
+  // Handlers
+  const handleOpenNewRecord = () => {
+    setEditingRecord({
+      client_id: selectedClient?.id || 0,
+      order_date: format(new Date(), 'yyyy-MM-dd'),
+      invoice_number: '',
+      quantity: 1,
+      size: '14x17',
+      batch_number: '',
+      expiry_date: format(new Date(new Date().setFullYear(new Date().getFullYear() + 1)), 'yyyy-MM-dd'),
+      unit_cost: 0
+    });
+    setIsModalOpen(true);
+  };
+
+  const handleOpenNewClient = () => {
+    setNewClient({
+      name: '',
+      province: '',
+      ruc_id: '',
+      contact: '',
+      client_code: '',
+      salesperson: ''
+    });
+    setIsClientModalOpen(true);
+  };
+
+  const handleSaveClient = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newClient.name) return;
+
+    try {
+      let finalClient: Client;
+      const clientToSave = {
+        ...newClient,
+        salesperson: newClient.salesperson ? newClient.salesperson.toUpperCase().trim() : ''
+      };
+
+      if (clientToSave.id) {
+        finalClient = clientToSave as Client;
+      } else {
+        const nextId = Math.max(0, ...allClients.map(c => c.id)) + 1;
+        finalClient = {
+          ...clientToSave,
+          id: nextId
+        } as Client;
+      }
+      
+      await setDoc(doc(db, "clientes", finalClient.id.toString()), finalClient);
+      setIsClientModalOpen(false);
+      setSelectedClient(finalClient);
+    } catch (error) {
+      console.error("Error saving client:", error);
+      alert("Error al guardar el cliente.");
+    }
+  };
+
+  const handleEditClient = () => {
+    if (!selectedClient) return;
+    setNewClient(selectedClient);
+    setIsClientModalOpen(true);
+  };
+
+  const handleDeleteClient = async () => {
+    if (!clientToDelete) return;
+
+    try {
+      // 1. Delete client document
+      await deleteDoc(doc(db, "clientes", clientToDelete.id.toString()));
+      
+      // 2. Delete associated altName if exists
+      if (altNames[clientToDelete.id]) {
+        try {
+          await deleteDoc(doc(db, "altNames", clientToDelete.id.toString()));
+        } catch (e) {
+          console.warn("Could not delete altName, might not exist", e);
+        }
+      }
+
+      // 3. Delete all consumption records for this client
+      const recordsToDelete = allConsumos.filter(r => r.client_id === clientToDelete.id);
+      
+      // Delete records in parallel for better performance
+      await Promise.all(
+        recordsToDelete.map(record => 
+          deleteDoc(doc(db, "consumos", record.id.toString()))
+            .catch(e => console.warn(`Failed to delete record ${record.id}`, e))
+        )
+      );
+
+      // 4. Update local state
+      setSelectedClient(null);
+      setClientToDelete(null);
+      
+    } catch (error) {
+      console.error("Error deleting client:", error);
+      alert(`Error al eliminar el cliente: ${error instanceof Error ? error.message : 'Error desconocido'}`);
+    }
+  };
+
+  // ── MIGRATION: Mark all existing records without film_type as DIHT ──────────
+  const handleMigrateAllToDIHT = async () => {
+    const toMigrate = allConsumos.filter(r => !r.film_type);
+    if (!toMigrate.length) return;
+    setIsMigratingFilmType(true);
+    setMigrationProgress(0);
+    try {
+      const batchSize = 400;
+      let done = 0;
+      for (let i = 0; i < toMigrate.length; i += batchSize) {
+        const chunk = toMigrate.slice(i, i + batchSize);
+        const batch = writeBatch(db);
+        chunk.forEach(r => {
+          batch.update(doc(db, 'consumos', r.id.toString()), { film_type: 'DIHT' });
+        });
+        await batch.commit();
+        done += chunk.length;
+        setMigrationProgress(Math.round((done / toMigrate.length) * 100));
+      }
+    } catch (e) {
+      console.error('Migration error:', e);
+      alert('Error en la migración. Intente de nuevo.');
+    } finally {
+      setIsMigratingFilmType(false);
+      setMigrationProgress(0);
+    }
+  };
+
+  const handleMergeClients = async () => {
+    if (!selectedClient || !mergeTarget) return;
+    setIsMerging(true);
+    try {
+      // 1. Move all consumos from mergeTarget → selectedClient
+      const targetConsumos = allConsumos.filter(r => r.client_id === mergeTarget.id);
+      await Promise.all(
+        targetConsumos.map(record =>
+          updateDoc(doc(db, 'consumos', record.id.toString()), { client_id: selectedClient.id })
+            .catch(e => console.warn(`Failed to move record ${record.id}`, e))
+        )
+      );
+
+      // 2. Merge alt_codes: accumulate both codes
+      const existingAltCodes: string[] = selectedClient.alt_codes || [];
+      const codesToAdd: string[] = [];
+      if (mergeTarget.client_code && !existingAltCodes.includes(mergeTarget.client_code) && mergeTarget.client_code !== selectedClient.client_code) {
+        codesToAdd.push(mergeTarget.client_code);
+      }
+      // Also absorb any alt_codes the duplicate had
+      (mergeTarget.alt_codes || []).forEach(c => {
+        if (c && !existingAltCodes.includes(c) && c !== selectedClient.client_code) codesToAdd.push(c);
+      });
+      const newAltCodes = [...existingAltCodes, ...codesToAdd];
+
+      // 3. Merge printers: absorb any printers the duplicate had (avoid serial duplicates)
+      const existingSerials = new Set((selectedClient.printers || []).map(p => p.serial));
+      const newPrinters = [
+        ...(selectedClient.printers || []),
+        ...(mergeTarget.printers || []).filter(p => !existingSerials.has(p.serial))
+      ];
+
+      // 4. Merge altNames
+      const existingAlt = altNames[selectedClient.id] || '';
+      const targetName = mergeTarget.name;
+      if (!existingAlt.toLowerCase().includes(targetName.toLowerCase())) {
+        const newAlt = existingAlt ? `${existingAlt} / ${targetName}` : targetName;
+        await setDoc(doc(db, 'altNames', selectedClient.id.toString()), { name: newAlt });
+      }
+
+      // 5. Update principal client with merged alt_codes and printers
+      await updateDoc(doc(db, 'clientes', selectedClient.id.toString()), {
+        alt_codes: newAltCodes,
+        printers: newPrinters,
+      });
+
+      // 6. Delete mergeTarget's altName doc
+      if (altNames[mergeTarget.id]) {
+        await deleteDoc(doc(db, 'altNames', mergeTarget.id.toString())).catch(() => {});
+      }
+
+      // 7. Delete the duplicate client
+      await deleteDoc(doc(db, 'clientes', mergeTarget.id.toString()));
+
+      // 8. Close and reset
+      setIsMergeModalOpen(false);
+      setMergeTarget(null);
+      setMergeSearchQuery('');
+    } catch (error) {
+      console.error('Error fusionando clientes:', error);
+      alert('Error al fusionar clientes. Intente de nuevo.');
+    } finally {
+      setIsMerging(false);
+    }
+  };
+
+  const handleOpenAltName = () => {
+    if (!selectedClient) return;
+    setTempAltName(altNames[selectedClient.id] || '');
+    setIsAltNameModalOpen(true);
+  };
+
+  const handleSaveAltName = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedClient) return;
+    
+    try {
+      await setDoc(doc(db, "altNames", selectedClient.id.toString()), {
+        name: tempAltName
+      });
+      setIsAltNameModalOpen(false);
+    } catch (error) {
+      console.error("Error saving alt name:", error);
+      alert("Error al guardar la denominación alternativa.");
+    }
+  };
+
+  const handleEditRecord = (record: ConsumptionRecord) => {
+    setEditingRecord(record);
+    setIsModalOpen(true);
+  };
+
+  const handleSaveRecord = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingRecord) return;
+    if (!editingRecord.client_id) {
+      alert("Por favor, seleccione un cliente.");
+      return;
+    }
+
+    try {
+      let finalRecord: ConsumptionRecord;
+      if (editingRecord.id) {
+        finalRecord = editingRecord as ConsumptionRecord;
+      } else {
+        const nextId = Math.max(0, ...allConsumos.map(r => r.id)) + 1;
+        finalRecord = {
+          ...editingRecord,
+          id: nextId
+        } as ConsumptionRecord;
+      }
+      
+      await setDoc(doc(db, "consumos", finalRecord.id.toString()), finalRecord);
+      setIsModalOpen(false);
+      setEditingRecord(null);
+    } catch (error) {
+      console.error("Error saving record:", error);
+      alert("Error al guardar el registro.");
+    }
+  };
+
+  const handleDeleteRecord = async (id: number) => {
+    if (window.confirm("¿Está seguro de eliminar este registro?")) {
+      try {
+        await deleteDoc(doc(db, "consumos", id.toString()));
+      } catch (error) {
+        console.error("Error deleting record:", error);
+        alert("Error al eliminar el registro.");
+      }
+    }
+  };
+
+  // Métricas de Fidelidad Calculadas
+  const metrics = useMemo(() => {
+    if (!filteredClientConsumption.length) return { avg: 0, total: 0, totalCost: 0, trend: 0, loyalty: 0, status: { label: 'Sin Datos', color: 'bg-gray-50 text-gray-400', darkColor: 'bg-white/5 text-gray-500 border-white/10' } };
+    
+    const total = filteredClientConsumption.reduce((acc, curr) => acc + effectiveQty(curr), 0);
+    const totalCost = filteredClientConsumption.reduce((acc, curr) => {
+      if (curr.unit_cost) return acc + (curr.unit_cost * curr.quantity);
+      return acc;
+    }, 0);
+    
+    // Fechas para cálculos
+    const currentDate = new Date();
+    const firstOrderDate = new Date(filteredClientConsumption[filteredClientConsumption.length - 1].order_date);
+    const lastOrderDate = new Date(filteredClientConsumption[0].order_date);
+    
+    // Meses transcurridos desde el primer pedido hasta HOY (inclusivo)
+    let monthsElapsed = (currentDate.getFullYear() - firstOrderDate.getFullYear()) * 12 + (currentDate.getMonth() - firstOrderDate.getMonth()) + 1;
+    if (monthsElapsed <= 0) monthsElapsed = 1;
+    
+    // Promedio real considerando el tiempo total desde su primer pedido
+    const avg = total / monthsElapsed;
+    
+    // Tendencia: comparamos el promedio de los últimos 3 meses vs el promedio histórico
+    const threeMonthsAgo = new Date();
+    threeMonthsAgo.setMonth(currentDate.getMonth() - 3);
+    
+    const recentTotal = filteredClientConsumption
+      .filter(r => new Date(r.order_date) >= threeMonthsAgo)
+      .reduce((acc, curr) => acc + effectiveQty(curr), 0);
+      
+    const recentAvg = recentTotal / 3;
+    // Only calculate trend if historical avg is meaningful (>=0.5 boxes/month)
+    // and there's enough history to compare against
+    const trend = (avg < 0.5 || monthsElapsed < 4) ? null : ((recentAvg - avg) / avg) * 100;
+    // Cap trend at ±500% to avoid absurd display values
+    const trendCapped = trend === null ? null : Math.max(-500, Math.min(500, trend));
+    
+    // Meses de inactividad (desde el último pedido hasta HOY)
+    const monthsSinceLastOrder = (currentDate.getFullYear() - lastOrderDate.getFullYear()) * 12 + (currentDate.getMonth() - lastOrderDate.getMonth());
+    
+    // Cálculo de Fidelidad (0-100%)
+    // Usamos un benchmark de 5 cajas por mes como el 100% para "Socio Estratégico"
+    let loyaltyScore = Math.min(100, Math.round((avg / 5) * 100));
+    
+    // Penalización por inactividad: restamos 15% por cada mes sin comprar (después del primer mes de gracia)
+    if (monthsSinceLastOrder > 1) {
+      loyaltyScore = Math.max(0, loyaltyScore - ((monthsSinceLastOrder - 1) * 15));
+    }
+    
+    let status = { label: 'Ocasional', color: 'bg-slate-100 text-slate-600 border-slate-200', darkColor: 'bg-slate-900/50 text-slate-400 border-slate-800' };
+    if (loyaltyScore >= 90) {
+      status = { label: 'Socio Estratégico', color: 'bg-amber-50 text-amber-700 border-amber-200 shadow-lg shadow-amber-100 ring-1 ring-amber-400/20', darkColor: 'bg-amber-900/20 text-amber-400 border-amber-800/50 shadow-lg shadow-amber-900/20 ring-1 ring-amber-500/20' };
+    } else if (loyaltyScore >= 70) {
+      status = { label: 'Fiel / Recurrente', color: 'bg-emerald-50 text-emerald-700 border-emerald-200', darkColor: 'bg-emerald-900/20 text-emerald-400 border-emerald-800/50' };
+    } else if (loyaltyScore >= 40) {
+      status = { label: 'En Crecimiento', color: 'bg-blue-50 text-blue-700 border-blue-200', darkColor: 'bg-blue-900/20 text-blue-400 border-blue-800/50' };
+    } else if (loyaltyScore === 0 && monthsSinceLastOrder > 3) {
+      status = { label: 'En Riesgo / Perdido', color: 'bg-red-50 text-red-700 border-red-200', darkColor: 'bg-red-900/20 text-red-400 border-red-800/50' };
+    }
+
+    return {
+      avg: avg.toFixed(1),
+      total,
+      totalCost,
+      trend: trendCapped === null ? null : trendCapped.toFixed(1),
+      loyalty: loyaltyScore,
+      status
+    };
+  }, [filteredClientConsumption]);
+
+
+  // Distribución por medida para el gráfico de barras
+  const sizeDistribution = useMemo(() => {
+    const dist: Record<string, number> = {};
+    currentConsumption.forEach(r => {
+      dist[r.size] = (dist[r.size] || 0) + effectiveQty(r);
+    });
+    return Object.entries(dist).map(([name, value]) => ({ name, value }));
+  }, [currentConsumption]);
+
+  // Métricas Globales para el Dashboard
+  const globalMetrics = useMemo(() => {
+    let filteredConsumos = allConsumos;
+    
+    if (dashboardStartDate) {
+      filteredConsumos = filteredConsumos.filter(r => new Date(r.order_date) >= new Date(dashboardStartDate));
+    }
+    if (dashboardEndDate) {
+      filteredConsumos = filteredConsumos.filter(r => new Date(r.order_date) <= new Date(dashboardEndDate));
+    }
+
+    const totalConsumption = filteredConsumos.reduce((acc, curr) => acc + effectiveQty(curr), 0);
+    const totalRevenue = filteredConsumos.reduce((acc, curr) => acc + (effectiveQty(curr) * (curr.unit_cost || 0)), 0);
+    const totalClients = allClients.length;
+
+    // ── m² calculations ──
+    const totalM2 = parseFloat(filteredConsumos.reduce((acc, curr) => acc + getTotalM2(effectiveQty(curr), curr.size, curr.film_type), 0).toFixed(2));
+    
+    const sizeDist = {} as Record<string, number>;
+    const sizeDistM2: Record<string, number> = {};
+    const clientDist: Record<number, number> = {};
+    const clientDistM2: Record<number, number> = {};
+    const salespersonDist: Record<string, { quantity: number, m2: number, revenue: number }> = {};
+    
+    filteredConsumos.forEach(r => {
+      const qty = effectiveQty(r);
+      const m2 = getTotalM2(qty, r.size, r.film_type);
+      sizeDist[r.size] = (sizeDist[r.size] || 0) + qty;
+      sizeDistM2[r.size] = parseFloat(((sizeDistM2[r.size] || 0) + m2).toFixed(2));
+      clientDist[r.client_id] = (clientDist[r.client_id] || 0) + qty;
+      clientDistM2[r.client_id] = parseFloat(((clientDistM2[r.client_id] || 0) + m2).toFixed(2));
+      
+      const client = allClients.find(c => c.id === r.client_id);
+      const salesperson = (client?.salesperson || 'Sin Vendedor').toUpperCase().trim();
+      
+      if (!salespersonDist[salesperson]) {
+        salespersonDist[salesperson] = { quantity: 0, m2: 0, revenue: 0 };
+      }
+      salespersonDist[salesperson].quantity += qty;
+      salespersonDist[salesperson].m2 = parseFloat((salespersonDist[salesperson].m2 + m2).toFixed(2));
+      salespersonDist[salesperson].revenue += qty * (r.unit_cost || 0);
+    });
+
+    const topClients = Object.entries(clientDistM2)
+      .map(([id, m2]) => ({
+        name: allClients.find(c => c.id === parseInt(id))?.name || 'Desconocido',
+        value: clientDist[parseInt(id)] || 0,
+        m2
+      }))
+      .sort((a, b) => b.m2 - a.m2)
+      .slice(0, 5);
+
+    const sizeData = Object.entries(sizeDistM2)
+      .map(([name, m2]) => ({ name, value: sizeDist[name] || 0, m2 }))
+      .sort((a, b) => b.m2 - a.m2);
+
+    // Medida con más m²
+    const topSizeByM2 = sizeData[0]?.name || '-';
+
+    const salespersonData = Object.entries(salespersonDist)
+      .map(([name, stats]) => ({
+        name,
+        quantity: stats.quantity,
+        m2: stats.m2,
+        revenue: stats.revenue
+      }))
+      .sort((a, b) => b.m2 - a.m2);
+
+    return {
+      totalConsumption,
+      totalRevenue,
+      totalClients,
+      totalM2,
+      topClients,
+      sizeData,
+      topSizeByM2,
+      salespersonData
+    };
+  }, [allConsumos, allClients, dashboardStartDate, dashboardEndDate, TRIMAX_2024]);
+
+  // ── FILTERED CONSUMOS for Inventory & Intelligence (by globalFilmFilter) ──
+  const filteredConsumosForView = useMemo(() => {
+    if (globalFilmFilter === 'all') return allConsumos;
+    if (globalFilmFilter === 'DIHT') return allConsumos.filter(r => !r.film_type || r.film_type === 'DIHT');
+    if (globalFilmFilter === 'DIML') return allConsumos.filter(r => r.film_type === 'DIML');
+    return allConsumos.filter(r => r.film_type === 'DIHL');
+  }, [allConsumos, globalFilmFilter]);
+
+  const filteredStockEntries = useMemo(() => {
+    if (globalFilmFilter === 'all') return stockEntries;
+    if (globalFilmFilter === 'DIHT') return stockEntries.filter(e => !e.film_type || e.film_type === 'DIHT');
+    if (globalFilmFilter === 'DIML') return stockEntries.filter(e => e.film_type === 'DIML');
+    return stockEntries.filter(e => e.film_type === 'DIHL');
+  }, [stockEntries, globalFilmFilter]);
+
+  // ── INTELLIGENCE: Reorder Alerts ──────────────────────────────────────────
+  const reorderAlerts = useMemo(() => {
+    const now = new Date();
+    return allClients.map(client => {
+      const consumos = filteredConsumosForView
+        .filter(r => r.client_id === client.id)
+        .sort((a, b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime());
+      if (consumos.length < 2) return null;
+
+      const lastOrder = new Date(consumos[0].order_date);
+      const firstOrder = new Date(consumos[consumos.length - 1].order_date);
+      const monthsElapsed = Math.max(1,
+        (firstOrder.getFullYear() === lastOrder.getFullYear() && firstOrder.getMonth() === lastOrder.getMonth())
+          ? 1
+          : ((lastOrder.getFullYear() - firstOrder.getFullYear()) * 12 + (lastOrder.getMonth() - firstOrder.getMonth()) + 1)
+      );
+      const totalQty = consumos.reduce((s, r) => s + effectiveQty(r), 0);
+      const avgMonthly = totalQty / monthsElapsed;
+      if (avgMonthly < 0.5) return null;
+
+      // Days between last order and now
+      const daysSinceLast = Math.floor((now.getTime() - lastOrder.getTime()) / (1000 * 60 * 60 * 24));
+      const avgCycleDays = Math.round(30 / avgMonthly);
+      const daysUntilNext = Math.max(0, avgCycleDays - daysSinceLast);
+
+      // Size breakdown
+      const sizeDist = {} as Record<string, number>;
+      consumos.forEach(r => { sizeDist[r.size || 'N/A'] = (sizeDist[r.size || 'N/A'] || 0) + effectiveQty(r); });
+      const topSize = Object.entries(sizeDist).sort((a, b) => b[1] - a[1])[0]?.[0] || '';
+
+      let urgency: 'critical' | 'warning' | 'ok' = 'ok';
+      if (daysUntilNext <= 3) urgency = 'critical';
+      else if (daysUntilNext <= 10) urgency = 'warning';
+
+      return {
+        client,
+        avgMonthly: avgMonthly.toFixed(1),
+        lastOrder,
+        daysSinceLast,
+        daysUntilNext,
+        avgCycleDays,
+        topSize,
+        urgency,
+        totalQty,
+      };
+    }).filter(Boolean).sort((a, b) => a!.daysUntilNext - b!.daysUntilNext) as NonNullable<ReturnType<typeof allClients[0] extends never ? never : any>>[];
+  }, [filteredConsumosForView, allClients]);
+
+  // ── INTELLIGENCE: Demand Projection ──────────────────────────────────────
+  const demandProjection = useMemo(() => {
+    const now = new Date();
+    // Sizes depend on film type filter
+    const sizes = globalFilmFilter === 'DIML'
+      ? ['8x10', '10x14']
+      : ['8x10', '10x12', '10x14', '14x17'];
+    return sizes.map(size => {
+      // Per-client projections for this size
+      let totalProjected = 0;
+      const contributors: { name: string; projected: number }[] = [];
+      allClients.forEach(client => {
+        const consumos = filteredConsumosForView.filter(r => r.client_id === client.id && r.size === size);
+        if (!consumos.length) return;
+        const sorted = [...consumos].sort((a, b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime());
+        const first = new Date(sorted[sorted.length - 1].order_date);
+        const last = new Date(sorted[0].order_date);
+        const months = Math.max(1, (last.getFullYear() - first.getFullYear()) * 12 + (last.getMonth() - first.getMonth()) + 1);
+        const avg = consumos.reduce((s, r) => s + effectiveQty(r), 0) / months;
+        if (avg > 0) {
+          totalProjected += avg;
+          contributors.push({ name: client.name, projected: parseFloat(avg.toFixed(1)) });
+        }
+      });
+
+      // Historical last 6 months for chart
+      const history = Array.from({ length: 6 }, (_, i) => {
+        const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
+        const qty = filteredConsumosForView.filter(r => {
+          const rd = new Date(r.order_date);
+          return r.size === size && rd.getFullYear() === d.getFullYear() && rd.getMonth() === d.getMonth();
+        }).reduce((s, r) => s + effectiveQty(r), 0);
+        return { label: d.toLocaleDateString('es-EC', { month: 'short' }), qty, projected: false };
+      });
+
+      // Use Stock Film Planning as source of truth for current stock
+      // stockFromFilmPlanning may not be defined yet at this point (circular dep) — use lazy accessor
+      const filmStockBySize = (() => {
+        // Compute from stockFilmData directly (same logic as stockFromFilmPlanning)
+        const now2 = new Date();
+        // Use most recent year that has stock film data (may be behind current calendar year)
+        const availYears = Object.keys(stockFilmData).map(Number).filter(y => y <= now2.getFullYear()).sort((a,b) => b-a);
+        const cy = availYears[0] || now2.getFullYear();
+        const cm = cy === now2.getFullYear() ? now2.getMonth() : 11; // if past year, use Dec
+        let boxes = 0;
+        STOCK_FILM_PRODUCTS.forEach(prod => {
+          if (prod.size !== size) return;
+          // Only use film types matching the current global filter
+          if (globalFilmFilter === 'DIHT' && prod.type !== 'DIHT') return;
+          if (globalFilmFilter === 'DIHL' && prod.type !== 'DIHL') return;
+          if (globalFilmFilter === 'DIML' && prod.type !== 'DIML') return;
+          const yd = stockFilmData[String(cy)]?.[prod.key] || { openingBoxes: 0, openingM2: 0, months: {} };
+          let running = yd.openingBoxes || 0;
+          STOCK_FILM_MONTHS.forEach((month, mi) => {
+            if (mi > cm) return;
+            const inB = yd.months?.[month]?.inBoxes || 0;
+            const outB = allConsumos.reduce((s, r) => {
+              const d = new Date(r.order_date);
+              if (d.getFullYear() !== cy || d.getMonth() !== mi) return s;
+              if (r.size !== prod.size) return s;
+              const rft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type === 'DIHL' ? 'DIHL' : r.film_type === 'DIML' ? 'DIML' : 'DIHT';
+              if (rft !== prod.type) return s;
+              return s + (r.is_return ? -r.quantity : r.quantity);
+            }, 0);
+            running = running + inB - outB;
+          });
+          boxes += Math.max(0, running);
+        });
+        return boxes;
+      })();
+
+      const hasRealStock = filmStockBySize > 0 || STOCK_FILM_PRODUCTS.some(p => {
+        const availYrs = Object.keys(stockFilmData).map(Number).sort((a,b)=>b-a);
+        const yr = availYrs[0] || new Date().getFullYear();
+        return p.size === size && (stockFilmData[String(yr)]?.[p.key]?.openingBoxes || 0) > 0;
+      });
+      const currentStock = filmStockBySize > 0 ? filmStockBySize : (stockLevels[size] || 0);
+
+      const projected = Math.round(totalProjected);
+      const deficit = Math.max(0, projected - currentStock);
+      const surplus = Math.max(0, currentStock - projected);
+
+      return {
+        size,
+        projected,
+        currentStock,
+        hasRealStock,
+        deficit,
+        surplus,
+        history: [...history, { label: 'Próx.', qty: projected, projected: true }],
+        topContributors: contributors.sort((a, b) => b.projected - a.projected).slice(0, 5),
+      };
+    });
+  }, [filteredConsumosForView, allClients, stockLevels, filteredStockEntries, stockFilmData, allConsumos, globalFilmFilter]);
+
+  // ── INTELLIGENCE: At-Risk Clients ─────────────────────────────────────────
+  const atRiskClients = useMemo(() => {
+    const now = new Date();
+    return allClients.map(client => {
+      const consumos = filteredConsumosForView
+        .filter(r => r.client_id === client.id)
+        .sort((a, b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime());
+      if (consumos.length < 2) return null;
+
+      const lastOrder = new Date(consumos[0].order_date);
+      const monthsSinceLast = (now.getFullYear() - lastOrder.getFullYear()) * 12 + (now.getMonth() - lastOrder.getMonth());
+      const firstOrder = new Date(consumos[consumos.length - 1].order_date);
+      const monthsActive = Math.max(1, (lastOrder.getFullYear() - firstOrder.getFullYear()) * 12 + (lastOrder.getMonth() - firstOrder.getMonth()) + 1);
+      const totalQty = consumos.reduce((s, r) => s + effectiveQty(r), 0);
+      const avgMonthly = totalQty / monthsActive;
+      const lostRevenue = avgMonthly * monthsSinceLast * (consumos[0].unit_cost || 0);
+
+      // Risk score
+      let riskLevel: 'lost' | 'high' | 'medium' = 'medium';
+      if (monthsSinceLast >= 6) riskLevel = 'lost';
+      else if (monthsSinceLast >= 3) riskLevel = 'high';
+      else if (monthsSinceLast >= 2) riskLevel = 'medium';
+      else return null;
+
+      // Trend: compare last 3 months vs previous 3
+      const threeMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 3, 1);
+      const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6, 1);
+      const recent = consumos.filter(r => new Date(r.order_date) >= threeMonthsAgo).reduce((s, r) => s + effectiveQty(r), 0);
+      const previous = consumos.filter(r => new Date(r.order_date) >= sixMonthsAgo && new Date(r.order_date) < threeMonthsAgo).reduce((s, r) => s + effectiveQty(r), 0);
+      const trend = previous > 0 ? ((recent - previous) / previous) * 100 : 0;
+
+      return { client, monthsSinceLast, avgMonthly: avgMonthly.toFixed(1), totalQty, lostRevenue, riskLevel, trend: trend.toFixed(0), lastOrder };
+    }).filter(Boolean).sort((a, b) => b!.monthsSinceLast - a!.monthsSinceLast) as any[];
+  }, [filteredConsumosForView, allClients]);
+
+  // ── INTELLIGENCE: Salesperson Goals ──────────────────────────────────────
+  const salespersonPerformance = useMemo(() => {
+    const now = new Date();
+    const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
+
+    // Get ALL unique salespersons from allClients (not filtered by date)
+    const allSalespersons = [...new Set(
+      allClients
+        .map(c => (c.salesperson || '').toUpperCase().trim())
+        .filter(s => s && s !== '')
+    )].sort();
+
+    return allSalespersons.map(spName => {
+      const goal = salespersonGoals[spName] || 0;
+      const spConsumos = allConsumos.filter(r => {
+        const c = allClients.find(x => x.id === r.client_id);
+        return (c?.salesperson || '').toUpperCase().trim() === spName;
+      });
+
+      if (!spConsumos.length) return null;
+
+      const thisMonth = spConsumos.filter(r => new Date(r.order_date) >= currentMonthStart).reduce((s, r) => s + effectiveQty(r), 0);
+      const lastMonth = spConsumos.filter(r => {
+        const d = new Date(r.order_date);
+        return d >= lastMonthStart && d <= lastMonthEnd;
+      }).reduce((s, r) => s + effectiveQty(r), 0);
+
+      const monthlyRevenue = spConsumos.filter(r => new Date(r.order_date) >= currentMonthStart).reduce((s, r) => s + r.quantity * (r.unit_cost || 0), 0);
+
+      // Calculate monthly average from ALL history (not date-filtered)
+      const allDates = spConsumos.map(r => new Date(r.order_date));
+      const minDate = allDates.length ? new Date(Math.min(...allDates.map(d => d.getTime()))) : now;
+      const monthsActive = Math.max(1, (now.getFullYear() - minDate.getFullYear()) * 12 + (now.getMonth() - minDate.getMonth()) + 1);
+      const totalQty = spConsumos.reduce((s, r) => s + effectiveQty(r), 0);
+      const totalM2sp = parseFloat(spConsumos.reduce((s, r) => s + getTotalM2(effectiveQty(r), r.size, r.film_type), 0).toFixed(2));
+      const monthlyAvg = Math.round(totalQty / monthsActive);
+      const monthlyAvgM2 = parseFloat((totalM2sp / monthsActive).toFixed(2));
+
+      // This month m²
+      const thisMonthM2 = parseFloat(spConsumos.filter(r => new Date(r.order_date) >= currentMonthStart)
+        .reduce((s, r) => s + getTotalM2(effectiveQty(r), r.size, r.film_type), 0).toFixed(2));
+
+      // Total quantity in dashboard period (for the table "Cajas Vendidas" column)
+      let periodConsumos = allConsumos.filter(r => {
+        const c = allClients.find(x => x.id === r.client_id);
+        return (c?.salesperson || '').toUpperCase().trim() === spName;
+      });
+      if (dashboardStartDate) periodConsumos = periodConsumos.filter(r => new Date(r.order_date) >= new Date(dashboardStartDate));
+      if (dashboardEndDate) periodConsumos = periodConsumos.filter(r => new Date(r.order_date) <= new Date(dashboardEndDate));
+      const quantity = periodConsumos.reduce((s, r) => s + effectiveQty(r), 0);
+      const periodM2 = parseFloat(periodConsumos.reduce((s, r) => s + getTotalM2(effectiveQty(r), r.size, r.film_type), 0).toFixed(2));
+      // Total revenue respecting dashboard date filter
+      const revenue = periodConsumos.reduce((s, r) => s + (effectiveQty(r) * (r.unit_cost || 0)), 0);
+
+      // Last 6 months chart — show m²
+      const history = Array.from({ length: 6 }, (_, i) => {
+        const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
+        const monthConsumos = spConsumos.filter(r => {
+          const rd = new Date(r.order_date);
+          return rd.getFullYear() === d.getFullYear() && rd.getMonth() === d.getMonth();
+        });
+        const qty = monthConsumos.reduce((s, r) => s + effectiveQty(r), 0);
+        const m2 = parseFloat(monthConsumos.reduce((s, r) => s + getTotalM2(effectiveQty(r), r.size, r.film_type), 0).toFixed(2));
+        return { label: d.toLocaleDateString('es-EC', { month: 'short' }), qty, m2 };
+      });
+
+      const progressPct = goal > 0 ? Math.min(100, Math.round((thisMonth / goal) * 100)) : 0;
+      const growthVsLastMonth = lastMonth > 0 ? (((thisMonth - lastMonth) / lastMonth) * 100).toFixed(0) : null;
+
+      return { name: spName, quantity, periodM2, totalM2sp, revenue, goal, thisMonth, thisMonthM2, lastMonth, monthlyRevenue, monthlyAvg, monthlyAvgM2, history, progressPct, growthVsLastMonth };
+    }).filter(Boolean).sort((a, b) => (b!.quantity) - (a!.quantity)) as any[];
+  }, [salespersonGoals, allConsumos, allClients, dashboardStartDate, dashboardEndDate]);
+
+  // ── INTELLIGENCE: Client Health Score ────────────────────────────────────
+  const clientHealthScores = useMemo(() => {
+    const now = new Date();
+    return allClients.map(client => {
+      const consumos = filteredConsumosForView
+        .filter(r => r.client_id === client.id)
+        .sort((a, b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime());
+      if (consumos.length === 0) return null;
+
+      const lastOrder = new Date(consumos[0].order_date);
+      const monthsSinceLast = (now.getFullYear() - lastOrder.getFullYear()) * 12 + (now.getMonth() - lastOrder.getMonth());
+      const firstOrder = new Date(consumos[consumos.length - 1].order_date);
+      const monthsActive = Math.max(1, (lastOrder.getFullYear() - firstOrder.getFullYear()) * 12 + (lastOrder.getMonth() - firstOrder.getMonth()) + 1);
+      const totalQty = consumos.reduce((s, r) => s + effectiveQty(r), 0);
+      const avgMonthly = totalQty / monthsActive;
+
+      // Frequency score (0-25): how regularly they order
+      const orderDates = consumos.map(r => new Date(r.order_date).getTime());
+      const gaps: number[] = [];
+      for (let i = 0; i < orderDates.length - 1; i++) gaps.push((orderDates[i] - orderDates[i+1]) / (1000*60*60*24));
+      const avgGap = gaps.length ? gaps.reduce((s,g) => s+g, 0) / gaps.length : 999;
+      const freqScore = Math.max(0, Math.min(25, 25 - avgGap * 0.4));
+
+      // Recency score (0-25): how recently they ordered
+      const recencyScore = Math.max(0, 25 - monthsSinceLast * 5);
+
+      // Volume score (0-25): avg monthly vs all clients avg
+      const globalAvg = filteredConsumosForView.length / Math.max(1, allClients.length);
+      const volScore = Math.min(25, (avgMonthly / Math.max(1, globalAvg)) * 15);
+
+      // Trend score (0-25): last 3 months vs previous 3
+      const threeAgo = new Date(now.getFullYear(), now.getMonth() - 3, 1);
+      const sixAgo = new Date(now.getFullYear(), now.getMonth() - 6, 1);
+      const recent = consumos.filter(r => new Date(r.order_date) >= threeAgo).reduce((s, r) => s + effectiveQty(r), 0);
+      const previous = consumos.filter(r => new Date(r.order_date) >= sixAgo && new Date(r.order_date) < threeAgo).reduce((s, r) => s + effectiveQty(r), 0);
+      const trendScore = previous === 0 ? 12 : Math.min(25, Math.max(0, 12 + ((recent - previous) / previous) * 12));
+
+      const score = Math.round(freqScore + recencyScore + volScore + trendScore);
+      const grade: 'A' | 'B' | 'C' | 'D' | 'F' =
+        score >= 80 ? 'A' : score >= 65 ? 'B' : score >= 45 ? 'C' : score >= 25 ? 'D' : 'F';
+
+      return { client, score, grade, freqScore: Math.round(freqScore), recencyScore: Math.round(recencyScore), volScore: Math.round(volScore), trendScore: Math.round(trendScore), avgMonthly, monthsSinceLast, totalQty };
+    }).filter(Boolean).sort((a, b) => b!.score - a!.score) as any[];
+  }, [filteredConsumosForView, allClients]);
+
+  // ── INTELLIGENCE: Seasonality ─────────────────────────────────────────────
+  const seasonalityData = useMemo(() => {
+    const SIZES = ['8x10', '10x12', '10x14', '14x17'];
+    const months = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+    // Build monthly totals per size over all years
+    const grid: Record<string, number[]> = {};
+    SIZES.forEach(s => { grid[s] = Array(12).fill(0); });
+    const totalByMonth = Array(12).fill(0);
+    // Track per (year, month) to find which specific year had the peak/low
+    const byYearMonth: Record<string, number> = {};
+    // Track per client per month for top-client tooltip
+    const clientByMonth: Record<number, Record<number, number>> = {}; // monthIdx → clientId → qty
+    filteredConsumosForView.forEach(r => {
+      const d = new Date(r.order_date);
+      const m = d.getMonth();
+      const y = d.getFullYear();
+      if (grid[r.size]) grid[r.size][m] += effectiveQty(r);
+      totalByMonth[m] += effectiveQty(r);
+      const key = `${y}-${m}`;
+      byYearMonth[key] = (byYearMonth[key] || 0) + effectiveQty(r);
+      if (!clientByMonth[m]) clientByMonth[m] = {};
+      clientByMonth[m][r.client_id] = (clientByMonth[m][r.client_id] || 0) + effectiveQty(r);
+    });
+    // Normalize: index where 100 = global average month
+    const globalAvg = totalByMonth.reduce((s,v) => s+v, 0) / 12 || 1;
+    // Track per client per month per size for expanded tooltip
+    const clientByMonthSize: Record<string, Record<number, number>> = {}; // "monthIdx-size" → clientId → qty
+    filteredConsumosForView.forEach(r => {
+      const d = new Date(r.order_date);
+      const m = d.getMonth();
+      const key = `${m}-${r.size}`;
+      if (!clientByMonthSize[key]) clientByMonthSize[key] = {};
+      clientByMonthSize[key][r.client_id] = (clientByMonthSize[key][r.client_id] || 0) + effectiveQty(r);
+    });
+    const chartData = months.map((label, i) => {
+      const topClientId = clientByMonth[i]
+        ? Object.entries(clientByMonth[i]).sort((a,b) => b[1]-a[1])[0]
+        : null;
+      const topClientName = topClientId
+        ? allClients.find(c => c.id === parseInt(topClientId[0]))?.name || '—'
+        : '—';
+      const topClientQty = topClientId ? topClientId[1] : 0;
+      const row: any = { label, total: totalByMonth[i], index: Math.round((totalByMonth[i] / globalAvg) * 100), topClientName, topClientQty };
+      SIZES.forEach(s => {
+        row[s] = grid[s][i];
+        const sizeTop = clientByMonthSize[`${i}-${s}`]
+          ? Object.entries(clientByMonthSize[`${i}-${s}`]).sort((a,b) => b[1]-a[1])[0]
+          : null;
+        row[`${s}_topClient`] = sizeTop ? allClients.find(c => c.id === parseInt(sizeTop[0]))?.name || '—' : '—';
+        row[`${s}_topQty`] = sizeTop ? sizeTop[1] : 0;
+      });
+      return row;
+    });
+    const monthsWithData = chartData.filter(m => m.total > 0);
+    const peakMonth = monthsWithData.length ? monthsWithData.reduce((best, m) => m.total > best.total ? m : best, monthsWithData[0]) : chartData[0];
+    const peakVal = peakMonth?.total || 1;
+    const meaningfulMonths = monthsWithData.filter(m => m.total >= peakVal * 0.10);
+    const lowMonth = meaningfulMonths.length ? meaningfulMonths.reduce((low, m) => m.total < low.total ? m : low, meaningfulMonths[0]) : peakMonth;
+    const variationPct = lowMonth && lowMonth.total > 0 ? Math.round(((peakMonth.total - lowMonth.total) / lowMonth.total) * 100) : null;
+
+    // Find which specific year had the highest value for peak month index
+    const peakMonthIdx = months.indexOf(peakMonth?.label);
+    const lowMonthIdx = months.indexOf(lowMonth?.label);
+    const peakYear = peakMonthIdx >= 0
+      ? Object.entries(byYearMonth)
+          .filter(([k]) => parseInt(k.split('-')[1]) === peakMonthIdx)
+          .sort((a, b) => b[1] - a[1])[0]?.[0].split('-')[0]
+      : null;
+    const lowYear = lowMonthIdx >= 0
+      ? Object.entries(byYearMonth)
+          .filter(([k]) => parseInt(k.split('-')[1]) === lowMonthIdx)
+          .sort((a, b) => a[1] - b[1])[0]?.[0].split('-')[0]
+      : null;
+
+    return { chartData, peakMonth, lowMonth, variationPct, SIZES, peakYear, lowYear };
+  }, [filteredConsumosForView, allClients]);
+
+  // ── INTELLIGENCE: Growth Potential Clients ────────────────────────────────
+  const growthPotentialClients = useMemo(() => {
+    return allClients.map(client => {
+      const consumos = filteredConsumosForView.filter(r => r.client_id === client.id);
+      const hasPrinters = (client.printers?.length || 0) > 0;
+      const printerCount = client.printers?.length || 0;
+      if (!hasPrinters || consumos.length === 0) return null;
+
+      const now = new Date();
+      const firstOrder = new Date(Math.min(...consumos.map(r => new Date(r.order_date).getTime())));
+      const monthsActive = Math.max(1, (now.getFullYear() - firstOrder.getFullYear()) * 12 + (now.getMonth() - firstOrder.getMonth()) + 1);
+      const totalQty = consumos.reduce((s, r) => s + effectiveQty(r), 0);
+      const avgMonthly = totalQty / monthsActive;
+
+      // Expected consumption: ~2 boxes/printer/month as benchmark
+      const expectedMonthly = printerCount * 2;
+      const captureRate = Math.min(100, Math.round((avgMonthly / expectedMonthly) * 100));
+      const untappedBoxes = Math.max(0, expectedMonthly - avgMonthly);
+
+      if (captureRate >= 85 || untappedBoxes < 0.5) return null;
+
+      return { client, printerCount, avgMonthly: parseFloat(avgMonthly.toFixed(1)), expectedMonthly, captureRate, untappedBoxes: parseFloat(untappedBoxes.toFixed(1)) };
+    }).filter(Boolean).sort((a, b) => b!.untappedBoxes - a!.untappedBoxes) as any[];
+  }, [allClients, filteredConsumosForView]);
+
+  // ── INTELLIGENCE: Province Comparison ────────────────────────────────────
+  const provinceComparison = useMemo(() => {
+    const now = new Date();
+    const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6, 1);
+    const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 12, 1);
+    const map: Record<string, { clients: number; qty: number; m2: number; revenue: number; recent: number; previous: number }> = {};
+
+    allClients.forEach(client => {
+      const prov = client.province || 'Sin provincia';
+      if (!map[prov]) map[prov] = { clients: 0, qty: 0, m2: 0, revenue: 0, recent: 0, previous: 0 };
+      map[prov].clients++;
+      filteredConsumosForView.filter(r => r.client_id === client.id).forEach(r => {
+        const d = new Date(r.order_date);
+        const qty = effectiveQty(r);
+        map[prov].qty += qty;
+        map[prov].m2 = parseFloat((map[prov].m2 + getTotalM2(qty, r.size, r.film_type)).toFixed(2));
+        map[prov].revenue += r.quantity * (r.unit_cost || 0);
+        if (d >= sixMonthsAgo) map[prov].recent += qty;
+        else if (d >= twelveMonthsAgo) map[prov].previous += qty;
+      });
+    });
+
+    return Object.entries(map).map(([province, data]) => {
+      const trend = data.previous === 0 ? null : ((data.recent - data.previous) / data.previous) * 100;
+      return { province, ...data, trend, avgPerClient: data.clients > 0 ? (data.qty / data.clients).toFixed(1) : '0', avgM2PerClient: data.clients > 0 ? (data.m2 / data.clients).toFixed(1) : '0' };
+    }).sort((a, b) => b.m2 - a.m2);
+  }, [allClients, filteredConsumosForView]);
+
+  // ── INTELLIGENCE: Anomaly Detection ──────────────────────────────────────
+  const anomalies = useMemo(() => {
+    const now = new Date();
+    const results: any[] = [];
+    allClients.forEach(client => {
+      const consumos = filteredConsumosForView.filter(r => r.client_id === client.id).sort((a,b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime());
+      if (consumos.length < 4) return;
+
+      // Build monthly qtys last 12 months
+      const monthly: Record<string, number> = {};
+      consumos.forEach(r => {
+        const d = new Date(r.order_date);
+        const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+        monthly[key] = (monthly[key] || 0) + r.quantity;
+      });
+      const vals = Object.values(monthly);
+      if (vals.length < 3) return;
+
+      const mean = vals.reduce((s,v) => s+v, 0) / vals.length;
+      const std = Math.sqrt(vals.reduce((s,v) => s + Math.pow(v-mean,2), 0) / vals.length);
+      if (std < 1) return;
+
+      const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+      const lastMonthKey = `${now.getMonth() === 0 ? now.getFullYear()-1 : now.getFullYear()}-${String(now.getMonth() === 0 ? 12 : now.getMonth()).padStart(2,'0')}`;
+      const checkKey = monthly[currentMonthKey] !== undefined ? currentMonthKey : lastMonthKey;
+      const checkVal = monthly[checkKey] || 0;
+      const zScore = (checkVal - mean) / std;
+
+      if (Math.abs(zScore) >= 1.8) {
+        results.push({
+          client,
+          type: zScore > 0 ? 'spike' : 'drop',
+          zScore: Math.abs(zScore).toFixed(1),
+          currentVal: checkVal,
+          mean: mean.toFixed(1),
+          std: std.toFixed(1),
+          monthLabel: checkKey,
+        });
+      }
+    });
+    return results.sort((a,b) => parseFloat(b.zScore) - parseFloat(a.zScore));
+  }, [allClients, filteredConsumosForView]);
+
+  // ── INTELLIGENCE: Profitability Ranking ──────────────────────────────────
+  const profitabilityRanking = useMemo(() => {
+    return allClients.map(client => {
+      const consumos = filteredConsumosForView.filter(r => r.client_id === client.id);
+      if (!consumos.length) return null;
+      const totalQty = consumos.reduce((s, r) => s + effectiveQty(r), 0);
+      const totalM2client = parseFloat(consumos.reduce((s, r) => s + getTotalM2(effectiveQty(r), r.size, r.film_type), 0).toFixed(2));
+      const totalCost = consumos.filter(r => r.unit_cost).reduce((s,r) => s + r.quantity * (r.unit_cost||0), 0);
+      const now = new Date();
+      const firstOrder = new Date(Math.min(...consumos.map(r => new Date(r.order_date).getTime())));
+      const monthsActive = Math.max(1, (now.getFullYear()-firstOrder.getFullYear())*12 + (now.getMonth()-firstOrder.getMonth()) + 1);
+      const avgMonthlyRevenue = totalCost / monthsActive;
+      const avgMonthlyQty = totalQty / monthsActive;
+      const avgMonthlyM2 = parseFloat((totalM2client / monthsActive).toFixed(2));
+      const lastOrder = new Date(Math.max(...consumos.map(r => new Date(r.order_date).getTime())));
+      const monthsSinceLast = (now.getFullYear()-lastOrder.getFullYear())*12 + (now.getMonth()-lastOrder.getMonth());
+      return { client, totalQty, totalM2client, totalCost, avgMonthlyRevenue, avgMonthlyQty, avgMonthlyM2, monthsActive, monthsSinceLast };
+    }).filter(Boolean).sort((a,b) => b!.totalM2client - a!.totalM2client) as any[];
+  }, [allClients, filteredConsumosForView]);
+
+  // ── CLIENT PROJECTION: 12-month forecast per client ──────────────────────
+  const clientProjection = useMemo(() => {
+    const now = new Date();
+    const SIZES = globalFilmFilter === 'DIML' ? ['8x10', '10x14'] : ['8x10', '10x12', '10x14', '14x17'];
+
+    return allClients.map(client => {
+      const consumos = filteredConsumosForView.filter(r => r.client_id === client.id);
+      if (consumos.length < 2) return null;
+
+      const sorted = [...consumos].sort((a, b) => new Date(a.order_date).getTime() - new Date(b.order_date).getTime());
+      const firstDate = new Date(sorted[0].order_date);
+      const monthsActive = Math.max(1, (now.getFullYear() - firstDate.getFullYear()) * 12 + (now.getMonth() - firstDate.getMonth()) + 1);
+      const totalQty = consumos.reduce((s, r) => s + effectiveQty(r), 0);
+      const monthlyAvg = totalQty / monthsActive;
+      if (monthlyAvg < 0.3) return null;
+
+      // Seasonality index per month (relative to own average)
+      const monthlyTotals = Array(12).fill(0);
+      consumos.forEach(r => { monthlyTotals[new Date(r.order_date).getMonth()] += effectiveQty(r); });
+      const yearsActive = Math.max(1, Math.ceil(monthsActive / 12));
+      const seasonIndex = monthlyTotals.map(v => {
+        const avg = totalQty / 12;
+        return avg > 0 ? (v / yearsActive) / avg : 1;
+      });
+
+      // Size breakdown
+      const sizeAvg: Record<string, number> = {};
+      SIZES.forEach(s => {
+        const sq = consumos.filter(r => r.size === s).reduce((sum, r) => sum + r.quantity, 0);
+        sizeAvg[s] = parseFloat((sq / monthsActive).toFixed(1));
+      });
+
+      // 12-month projection applying seasonality
+      const forecast = Array.from({ length: 12 }, (_, i) => {
+        const monthIdx = (now.getMonth() + 1 + i) % 12;
+        const label = new Date(now.getFullYear(), now.getMonth() + 1 + i, 1)
+          .toLocaleDateString('es-EC', { month: 'short', year: '2-digit' });
+        const projected = Math.max(0, Math.round(monthlyAvg * (seasonIndex[monthIdx] || 1)));
+        return { label, monthIdx, projected };
+      });
+
+      const annualTotal = forecast.reduce((s, m) => s + m.projected, 0);
+      const lastOrder = new Date(sorted[sorted.length - 1].order_date);
+      const avgCost = consumos.reduce((s, r) => s + (r.unit_cost || 0), 0) / consumos.length;
+
+      return {
+        client,
+        monthlyAvg: parseFloat(monthlyAvg.toFixed(1)),
+        annualTotal,
+        forecast,
+        sizeAvg,
+        lastOrder,
+        avgCost: parseFloat(avgCost.toFixed(2)),
+        annualRevenue: Math.round(annualTotal * avgCost),
+      };
+    }).filter(Boolean).sort((a, b) => (b as any).annualTotal - (a as any).annualTotal) as any[];
+  }, [allClients, filteredConsumosForView]);
+
+  const printerMetrics = useMemo(() => {
+    let totalPrinters = 0;
+    const serialCounts: Record<string, { count: number, clients: string[] }> = {};
+    const clientsWithoutPrinters: Client[] = [];
+    const typeDistribution: Record<string, number> = {};
+    const clientPrinterStats: { clientName: string, printerCount: number, consumption: number }[] = [];
+
+    let filteredConsumos = filteredConsumosForView;
+    if (dashboardStartDate) {
+      filteredConsumos = filteredConsumos.filter(r => new Date(r.order_date) >= new Date(dashboardStartDate));
+    }
+    if (dashboardEndDate) {
+      filteredConsumos = filteredConsumos.filter(r => new Date(r.order_date) <= new Date(dashboardEndDate));
+    }
+
+    allClients.forEach(client => {
+      const pCount = client.printers?.length || 0;
+      totalPrinters += pCount;
+
+      if (pCount === 0) {
+        clientsWithoutPrinters.push(client);
+      } else {
+        client.printers!.forEach(p => {
+          if (p.serial) {
+             const s = p.serial.toUpperCase().trim();
+             if (!serialCounts[s]) serialCounts[s] = { count: 0, clients: [] };
+             serialCounts[s].count++;
+             if (!serialCounts[s].clients.includes(client.name)) {
+               serialCounts[s].clients.push(client.name);
+             }
+          }
+          if (p.type) {
+             const t = p.type.toUpperCase().trim();
+             typeDistribution[t] = (typeDistribution[t] || 0) + 1;
+          }
+        });
+      }
+
+      const consumption = filteredConsumos.filter(r => r.client_id === client.id).reduce((acc, curr) => acc + effectiveQty(curr), 0);
+      clientPrinterStats.push({
+        clientName: client.name,
+        printerCount: pCount,
+        consumption
+      });
+    });
+
+    const repeatedSerials = Object.entries(serialCounts)
+      .filter(([_, data]) => data.count > 1)
+      .map(([serial, data]) => ({ serial, count: data.count, clients: data.clients }));
+
+    const typeData = Object.entries(typeDistribution)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+
+    return {
+      totalPrinters,
+      clientsWithoutPrinters,
+      repeatedSerials,
+      typeData,
+      clientPrinterStats: clientPrinterStats.sort((a, b) => b.consumption - a.consumption)
+    };
+  }, [allClients, filteredConsumosForView, dashboardStartDate, dashboardEndDate]);
+
+  // ── RETURNS SUMMARY ───────────────────────────────────────────────────────
+  const returnsSummary = useMemo(() => {
+    const returns = allConsumos.filter(r => r.is_return || r.quantity < 0);
+    const totalUnits = Math.abs(returns.reduce((s, r) => s + effectiveQty(r), 0));
+    const totalValue = Math.abs(returns.reduce((s, r) => s + (r.quantity * (r.unit_cost || 0)), 0));
+    // Group by client
+    const byClient: Record<number, { name: string; units: number; value: number; records: typeof returns }> = {};
+    returns.forEach(r => {
+      const client = allClients.find(c => c.id === r.client_id);
+      if (!byClient[r.client_id]) byClient[r.client_id] = { name: client?.name || 'Desconocido', units: 0, value: 0, records: [] };
+      byClient[r.client_id].units += Math.abs(r.quantity);
+      byClient[r.client_id].value += Math.abs(r.quantity * (r.unit_cost || 0));
+      byClient[r.client_id].records.push(r);
+    });
+    const byClientList = Object.entries(byClient)
+      .map(([id, v]) => ({ clientId: parseInt(id), ...v }))
+      .sort((a, b) => b.value - a.value);
+    // Sort all returns by date desc
+    const sorted = [...returns].sort((a, b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime());
+    return { returns: sorted, totalUnits, totalValue, byClientList };
+  }, [allConsumos, allClients]);
+  const stockSummary = useMemo(() => {
+    const SIZES = ['8x10', '10x12', '10x14', '14x17'];
+    const now = new Date();
+    // Use most recent year with stock film data (data may be 2025 while calendar says 2026)
+    const availStockYears = Object.keys(stockFilmData).map(Number).filter(y => y <= now.getFullYear()).sort((a,b) => b-a);
+    const currentYear = availStockYears[0] || now.getFullYear();
+    const currentMonthIdx = currentYear === now.getFullYear() ? now.getMonth() : 11;
+
+    return SIZES.map(size => {
+      const totalOut = filteredConsumosForView.filter(r => r.size === size).reduce((s, r) => s + effectiveQty(r), 0);
+      const openingQty = filteredStockEntries.filter(e => e.size === size && e.is_opening).reduce((s, e) => s + e.quantity, 0);
+      const purchasedQty = filteredStockEntries.filter(e => e.size === size && !e.is_opening).reduce((s, e) => s + e.quantity, 0);
+      const hasManualEntries = filteredStockEntries.some(e => e.size === size);
+
+      // ── Use Stock Film Planning as stock source when no manual entries ──
+      // Calculate current balance from Stock Film for matching film types
+      let filmPlanningStock = 0;
+      STOCK_FILM_PRODUCTS.forEach(prod => {
+        if (prod.size !== size) return;
+        // Filter by globalFilmFilter
+        if (globalFilmFilter === 'DIHT' && prod.type !== 'DIHT') return;
+        if (globalFilmFilter === 'DIHL' && prod.type !== 'DIHL') return;
+        if (globalFilmFilter === 'all' && prod.type === 'DIML') return; // exclude DIML from combined
+        const yd = stockFilmData[String(currentYear)]?.[prod.key] || { openingBoxes: 0, openingM2: 0, months: {} };
+        let running = yd.openingBoxes || 0;
+        STOCK_FILM_MONTHS.forEach((month, mi) => {
+          if (mi > currentMonthIdx) return;
+          const inB = yd.months?.[month]?.inBoxes || 0;
+          const outB = allConsumos.reduce((s, r) => {
+            const d = new Date(r.order_date);
+            if (d.getFullYear() !== currentYear || d.getMonth() !== mi) return s;
+            if (r.size !== prod.size) return s;
+            const rft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type === 'DIHL' ? 'DIHL' : 'DIHT';
+            if (rft !== prod.type) return s;
+            return s + (r.is_return ? -r.quantity : r.quantity);
+          }, 0);
+          running = running + inB - outB;
+        });
+        filmPlanningStock += Math.max(0, running);
+      });
+
+      const hasFilmPlanningData = filmPlanningStock > 0 || STOCK_FILM_PRODUCTS.some(p =>
+        p.size === size && (stockFilmData[String(currentYear)]?.[p.key]?.openingBoxes || 0) > 0
+      );
+
+      const impliedOpening = !hasManualEntries && !hasFilmPlanningData ? totalOut : 0;
+      const totalIn = openingQty + purchasedQty + impliedOpening;
+      // Prefer Stock Film Planning stock over manual entries when available
+      const current = hasFilmPlanningData ? filmPlanningStock : Math.max(0, totalIn - totalOut);
+
+      const minimum = stockMinimums[size] || 0;
+      const status: 'critical' | 'warning' | 'ok' | 'unknown' =
+        !hasFilmPlanningData && totalOut === 0 && !hasManualEntries ? 'unknown' :
+        current <= minimum * 0.5 ? 'critical' :
+        current <= minimum ? 'warning' : 'ok';
+
+      // Batches with remaining stock
+      const batches = filteredStockEntries
+        .filter(e => e.size === size)
+        .map(e => {
+          const usedFromBatch = filteredConsumosForView
+            .filter(r => r.size === size && r.batch_number === e.batch_number)
+            .reduce((s, r) => s + effectiveQty(r), 0);
+          return {
+            ...e,
+            remaining: Math.max(0, e.quantity - usedFromBatch),
+            used: Math.min(e.quantity, usedFromBatch),
+          };
+        })
+        .filter(b => b.remaining > 0)
+        .sort((a, b) => new Date(a.expiry_date).getTime() - new Date(b.expiry_date).getTime());
+
+      const avgCost = batches.length > 0
+        ? batches.reduce((s, b) => s + b.unit_cost * b.remaining, 0) / batches.reduce((s, b) => s + b.remaining, 0)
+        : 0;
+      const stockValue = batches.reduce((s, b) => s + b.unit_cost * b.remaining, 0);
+      const expiringSoon = batches.filter(b => {
+        const days = (new Date(b.expiry_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24);
+        return days <= 90 && days > 0;
+      });
+
+      return { size, totalIn, totalOut, openingQty, purchasedQty, impliedOpening, current, minimum, status, batches, avgCost, stockValue, expiringSoon, hasFilmPlanningData };
+    });
+  }, [filteredStockEntries, filteredConsumosForView, stockMinimums, stockFilmData, allConsumos, globalFilmFilter]);
+
+  // ── STOCK FROM FILM PLANNING — real current stock per size+filmType ──────
+  // Uses Stock Film Planning balances (opening + IN - real OUT) as source of truth
+  const stockFromFilmPlanning = useMemo(() => {
+    const now = new Date();
+    // Use most recent year that has stock film data (calendar may be 2026 but data is in 2025)
+    const availYears = Object.keys(stockFilmData).map(Number).filter(y => y <= now.getFullYear()).sort((a,b) => b-a);
+    const currentYear = availYears[0] || now.getFullYear();
+    const currentMonthIdx = currentYear === now.getFullYear() ? now.getMonth() : 11; // if past year use Dec
+
+    const result: Record<string, { boxes: number; m2: number }> = {};
+
+    STOCK_FILM_PRODUCTS.forEach(prod => {
+      const yd = stockFilmData[String(currentYear)]?.[prod.key] || { openingBoxes: 0, openingM2: 0, months: {} };
+      let running = yd.openingBoxes || 0;
+
+      // Apply all months up to and including current month
+      STOCK_FILM_MONTHS.forEach((month, mi) => {
+        if (mi > currentMonthIdx) return; // only past + current
+        const inBoxes = yd.months?.[month]?.inBoxes || 0;
+        // Real OUT from consumos for this month/year/product
+        const outBoxes = allConsumos.reduce((s, r) => {
+          const d = new Date(r.order_date);
+          if (d.getFullYear() !== currentYear || d.getMonth() !== mi) return s;
+          if (r.size !== prod.size) return s;
+          const rft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT'
+                    : r.film_type === 'DIHL' ? 'DIHL'
+                    : r.film_type === 'DIML' ? 'DIML' : 'DIHT';
+          if (rft !== prod.type) return s;
+          return s + (r.is_return ? -r.quantity : r.quantity);
+        }, 0);
+        running = running + inBoxes - outBoxes;
+      });
+
+      const currentBoxes = Math.max(0, running);
+      result[`${prod.type}_${prod.size}`] = {
+        boxes: currentBoxes,
+        m2: parseFloat((currentBoxes * prod.m2box).toFixed(2)),
+      };
+    });
+
+    // Also compute combined (DIHT+DIHL) per size for generic stock lookups
+    const bySize: Record<string, { boxes: number; m2: number }> = {};
+    STOCK_FILM_PRODUCTS.forEach(prod => {
+      const key = prod.size;
+      if (!bySize[key]) bySize[key] = { boxes: 0, m2: 0 };
+      const val = result[`${prod.type}_${prod.size}`];
+      if (val) {
+        bySize[key].boxes += val.boxes;
+        bySize[key].m2 = parseFloat((bySize[key].m2 + val.m2).toFixed(2));
+      }
+    });
+
+    return { byTypeSize: result, bySize };
+  }, [stockFilmData, allConsumos, STOCK_FILM_PRODUCTS, STOCK_FILM_MONTHS]);
+
+  // ── STOCK TIEMPO: precomputed matrix outside JSX (avoids TS annotations in IIFE) ──
+  const stockTiempoData = useMemo(() => {
+    const SIZES = ['8x10', '10x12', '10x14', '14x17'];
+    const FILM_TYPES_ALL = ['DIHT', 'DIHL'] as const;
+    const now = new Date();
+
+    const allMonths: { year: number; month: number; label: string }[] = [];
+    for (let y = 2024; y <= now.getFullYear(); y++) {
+      const endMonth = y === now.getFullYear() ? now.getMonth() : 11;
+      for (let m = 0; m <= endMonth; m++) {
+        allMonths.push({ year: y, month: m, label: new Date(y, m, 1).toLocaleDateString('es-EC', { month: 'short', year: '2-digit' }) });
+      }
+    }
+
+    const months = stockTiempoYear === 'all' ? allMonths : allMonths.filter(m => m.year === stockTiempoYear);
+    const availableYears = [...new Set(allMonths.map(m => m.year))];
+
+    const matrix: Record<string, Record<string, { boxes: number; m2: number }[]>> = {};
+    FILM_TYPES_ALL.forEach(ft => {
+      matrix[ft] = {};
+      SIZES.forEach(sz => { matrix[ft][sz] = months.map(() => ({ boxes: 0, m2: 0 })); });
+    });
+
+    allConsumos.forEach(r => {
+      const d = new Date(r.order_date);
+      const ft = r.film_type === 'DIHL' ? 'DIHL' : 'DIHT';
+      const sz = r.size;
+      if (!SIZES.includes(sz)) return;
+      const idx = months.findIndex(m => m.year === d.getFullYear() && m.month === d.getMonth());
+      if (idx < 0) return;
+      const qty = r.is_return ? -r.quantity : r.quantity;
+      matrix[ft][sz][idx].boxes += qty;
+      matrix[ft][sz][idx].m2 = parseFloat((matrix[ft][sz][idx].m2 + getTotalM2(qty, sz, ft)).toFixed(2));
+    });
+
+    const monthTotals: Record<string, { boxes: number; m2: number }[]> = {
+      DIHT: months.map(() => ({ boxes: 0, m2: 0 })),
+      DIHL: months.map(() => ({ boxes: 0, m2: 0 })),
+    };
+    FILM_TYPES_ALL.forEach(ft => {
+      SIZES.forEach(sz => {
+        matrix[ft][sz].forEach((c, i) => {
+          monthTotals[ft][i].boxes += c.boxes;
+          monthTotals[ft][i].m2 = parseFloat((monthTotals[ft][i].m2 + c.m2).toFixed(2));
+        });
+      });
+    });
+
+    const sizeGrandTotal = (ft: string, sz: string) => matrix[ft]?.[sz]?.reduce(
+      (acc, c) => ({ boxes: acc.boxes + c.boxes, m2: parseFloat((acc.m2 + c.m2).toFixed(2)) }),
+      { boxes: 0, m2: 0 }
+    ) ?? { boxes: 0, m2: 0 };
+
+    const ftGrandTotal = (ft: string) => (monthTotals[ft] || []).reduce(
+      (acc, c) => ({ boxes: acc.boxes + c.boxes, m2: parseFloat((acc.m2 + c.m2).toFixed(2)) }),
+      { boxes: 0, m2: 0 }
+    );
+
+    return { allMonths, months, availableYears, matrix, monthTotals, sizeGrandTotal, ftGrandTotal, SIZES };
+  }, [allConsumos, stockTiempoYear]);
+
+
+  const stockFilmPlanningVsReal = useMemo(() => {
+    const months = STOCK_FILM_MONTHS;
+    const now = new Date();
+    const useYear = stockFilmYear;
+
+    const realOutByMonth = {} as Record<string, { boxes: number; m2: number }>;
+    months.forEach(m => { realOutByMonth[m] = { boxes: 0, m2: 0 }; });
+    allConsumos.forEach(r => {
+      const d = new Date(r.order_date);
+      if (d.getFullYear() !== useYear) return;
+      const ml = months[d.getMonth()];
+      realOutByMonth[ml].boxes += effectiveQty(r);
+      realOutByMonth[ml].m2 = parseFloat((realOutByMonth[ml].m2 + getTotalM2(effectiveQty(r), r.size, r.film_type)).toFixed(2));
+    });
+
+    const plannedOutByMonth: Record<string, { boxes: number; m2: number }> = {};
+    months.forEach(m => { plannedOutByMonth[m] = { boxes: 0, m2: 0 }; });
+    STOCK_FILM_PRODUCTS.forEach(prod => {
+      const balances = computeStockFilmBalances(useYear, prod.key);
+      balances.forEach(b => {
+        plannedOutByMonth[b.month].boxes += b.outBoxes;
+        plannedOutByMonth[b.month].m2 = parseFloat((plannedOutByMonth[b.month].m2 + b.outM2).toFixed(2));
+      });
+    });
+
+    // Balance híbrido: meses pasados/actual → consumo real; meses futuros → salidas planificadas
+    const currentMonthIdx = now.getFullYear() === useYear ? now.getMonth() : (useYear < now.getFullYear() ? 11 : -1);
+    const plannedBalanceByMonth: Record<string, { boxes: number; m2: number }> = {};
+
+    let runningBoxes = 0;
+    let runningM2 = 0;
+    STOCK_FILM_PRODUCTS.forEach(prod => {
+      const y = String(useYear);
+      const yearData = stockFilmData[y]?.[prod.key]
+        || (y === '2025' ? STOCK_FILM_DEFAULT_2025[prod.key as keyof typeof STOCK_FILM_DEFAULT_2025] : null)
+        || { openingBoxes: 0, openingM2: 0, months: {} };
+      runningBoxes += yearData.openingBoxes || 0;
+      runningM2 += (yearData.openingBoxes || 0) * prod.m2box;
+    });
+
+    months.forEach((month, idx) => {
+      const isPastOrCurrent = idx <= currentMonthIdx;
+
+      // Sumar entradas planificadas (IN) siempre
+      STOCK_FILM_PRODUCTS.forEach(prod => {
+        const y = String(useYear);
+        const yearData = stockFilmData[y]?.[prod.key]
+          || (y === '2025' ? STOCK_FILM_DEFAULT_2025[prod.key as keyof typeof STOCK_FILM_DEFAULT_2025] : null)
+          || { openingBoxes: 0, openingM2: 0, months: {} };
+        const mv = yearData.months?.[month] || { inBoxes: 0, outBoxes: 0 };
+        runningBoxes += mv.inBoxes;
+        runningM2 += mv.inBoxes * prod.m2box;
+      });
+
+      if (isPastOrCurrent) {
+        runningBoxes -= realOutByMonth[month].boxes;
+        runningM2 -= realOutByMonth[month].m2;
+      } else {
+        runningBoxes -= plannedOutByMonth[month].boxes;
+        runningM2 -= plannedOutByMonth[month].m2;
+      }
+
+      plannedBalanceByMonth[month] = {
+        boxes: Math.max(0, Math.round(runningBoxes)),
+        m2: parseFloat(Math.max(0, runningM2).toFixed(1)),
+      };
+    });
+
+    return { months, now, useYear, realOutByMonth, plannedOutByMonth, plannedBalanceByMonth, currentMonthIdx };
+  }, [allConsumos, stockFilmYear, stockFilmData]);
+  const handleSaveOpeningStock = async () => {
+    setIsSavingOpening(true);
+    try {
+      const SIZES = ['8x10', '10x12', '10x14', '14x17'];
+      const TYPES = ['DIHT', 'DIHL'] as ('DIHT' | 'DIHL')[];
+      for (const size of SIZES) {
+        for (const ft of TYPES) {
+          const key = `${size}-${ft}`;
+          const raw = openingStockEdit[key];
+          if (raw === undefined) continue; // not edited
+          const qty = parseInt(raw) || 0;
+          // Find existing opening entry for this size+film_type
+          const existing = stockEntries.find(e => e.is_opening && e.size === size && (e.film_type || 'DIHT') === ft);
+          if (existing) {
+            if (qty === 0) {
+              await deleteDoc(doc(db, 'stock_entries', existing.id));
+            } else {
+              await updateDoc(doc(db, 'stock_entries', existing.id), { quantity: qty });
+            }
+          } else if (qty > 0) {
+            await addDoc(collection(db, 'stock_entries'), {
+              date: '2020-01-01', // apertura siempre al inicio
+              size,
+              quantity: qty,
+              batch_number: 'APERTURA',
+              expiry_date: '2099-12-31',
+              unit_cost: 0,
+              supplier_invoice: '',
+              notes: 'Stock de apertura',
+              film_type: ft,
+              is_opening: true,
+            });
+          }
+        }
+      }
+      setOpeningStockEdit({});
+    } finally {
+      setIsSavingOpening(false);
+    }
+  };
+
+  const handleSaveStockEntry = async () => {
+    if (!newStockEntry.size || !newStockEntry.quantity || !newStockEntry.date) return;
+    try {
+      await addDoc(collection(db, 'stock_entries'), {
+        date: newStockEntry.date || new Date().toISOString().split('T')[0],
+        size: newStockEntry.size || '',
+        quantity: parseInt(String(newStockEntry.quantity)) || 0,
+        batch_number: newStockEntry.batch_number || '',
+        expiry_date: newStockEntry.expiry_date || '2099-12-31',
+        unit_cost: parseFloat(String(newStockEntry.unit_cost)) || 0,
+        supplier_invoice: newStockEntry.supplier_invoice || '',
+        notes: newStockEntry.notes || '',
+        film_type: newStockEntry.film_type || 'DIHT',
+      });
+      setIsStockEntryModalOpen(false);
+      setNewStockEntry({});
+    } catch (err) {
+      console.error('Error saving stock entry:', err);
+    }
+  };
+
+  return (
+    <div className="w-screen h-screen overflow-hidden bg-transparent">
+      <div 
+        className={cn(
+          "flex flex-col text-sm overflow-hidden transition-all duration-300",
+          darkMode ? "bg-[#0F0F11] text-white" : "bg-[#F4F5F7] text-[#111827]"
+        )}
+        style={{ 
+          transform: `scale(${zoomLevel})`,
+          transformOrigin: 'top left',
+          width: `${100 / zoomLevel}vw`,
+          height: `${100 / zoomLevel}vh`,
+          fontFamily: "'DM Sans', 'Inter', system-ui, sans-serif"
+        }}
+      >
+      {loading && (
+        <div className={cn(
+          "fixed inset-0 z-[100] flex flex-col items-center justify-center transition-colors duration-300 gap-5",
+          darkMode ? "bg-[#0F0F11]" : "bg-white"
+        )}>
+          <div className="relative">
+            <div className="w-14 h-14 rounded-2xl bg-[#ED1C24] flex items-center justify-center shadow-xl shadow-red-500/30">
+              <Package className="text-white w-7 h-7" />
+            </div>
+            <div className="absolute -inset-2 rounded-3xl border-2 border-[#ED1C24]/30 animate-ping" />
+          </div>
+          <div className="text-center">
+            <p className="font-black text-[#ED1C24] text-sm tracking-widest uppercase">FUJIFILM DI-HT · DI-HL</p>
+            <p className={cn("text-xs mt-1 font-medium", darkMode ? "text-gray-500" : "text-gray-400")}>Cargando datos de Orimec...</p>
+          </div>
+        </div>
+      )}
+      {/* Header Corporativo Orimec */}
+      <header className={cn(
+        "border-b px-6 py-3 flex items-center justify-between z-10 shrink-0 transition-colors duration-300",
+        darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/80 shadow-sm"
+      )}>
+        <div className="flex items-center gap-6">
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <div className="w-9 h-9 bg-[#ED1C24] rounded-xl flex items-center justify-center shadow-lg shadow-red-500/25">
+                <Package className="text-white w-5 h-5" />
+              </div>
+            </div>
+            <div>
+              <h1 className="text-base font-black tracking-tight leading-none">
+                FUJIFILM <span className="text-[#ED1C24]">DI-HT · DI-HL</span>
+              </h1>
+              <p className={cn(
+                "text-[9px] font-semibold uppercase tracking-[0.15em] mt-0.5",
+                darkMode ? "text-gray-600" : "text-gray-400"
+              )}>Orimec · Sistema de Gestión</p>
+            </div>
+          </div>
+
+          <div className={cn(
+            "h-6 w-px",
+            darkMode ? "bg-white/10" : "bg-gray-200"
+          )} />
+
+          <nav className={cn(
+            "flex items-center gap-1 p-1 rounded-xl transition-colors duration-300",
+            darkMode ? "bg-white/5" : "bg-gray-100/80"
+          )}>
+            {[
+              { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, roles: ['admin','financiero','vendedor','asistente','gerencia'] },
+              { id: 'clients', label: 'Clientes', icon: Users, roles: ['admin','financiero','vendedor','asistente','gerencia'] },
+              { id: 'inventory', label: 'Inventario', icon: Package, roles: ['admin','financiero','asistente','gerencia'] },
+              { id: 'imager', label: 'Imager', icon: Layers, roles: ['admin','financiero','asistente','gerencia'] },
+              { id: 'intelligence', label: 'Inteligencia', icon: Brain, roles: ['admin','financiero','gerencia'] },
+              ...(role === 'admin' ? [{ id: 'usuarios', label: 'Usuarios', icon: Shield, roles: ['admin'] }] : []),
+            ].filter(t => t.roles.includes(role || '')).map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                onClick={() => setView(id as any)}
+                className={cn(
+                  "px-3.5 py-1.5 rounded-lg font-semibold text-xs flex items-center gap-1.5 transition-all",
+                  view === id
+                    ? (darkMode
+                        ? "bg-[#ED1C24] text-white shadow-sm shadow-red-500/20"
+                        : "bg-white text-[#ED1C24] shadow-sm border border-gray-200/80")
+                    : (darkMode
+                        ? "text-gray-500 hover:text-gray-300 hover:bg-white/5"
+                        : "text-gray-500 hover:text-gray-700 hover:bg-white/60")
+                )}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                {label}
+              </button>
+            ))}
+          </nav>
+        </div>
+
+        <div className="flex items-center gap-2.5">
+          {/* User chip */}
+          <div className={cn(
+            "flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-semibold",
+            darkMode ? "bg-white/5 border-white/8 text-gray-400" : "bg-gray-100 border-gray-200 text-gray-500"
+          )}>
+            <span className="max-w-[80px] truncate">{appUser?.nombre}</span>
+            <span className={cn(
+              "px-1.5 py-0.5 rounded-md text-[9px] font-bold",
+              appUser?.role === 'admin' ? 'bg-[#ED1C24]/15 text-[#ED1C24]' :
+              appUser?.role === 'financiero' ? 'bg-emerald-500/15 text-emerald-500' :
+              appUser?.role === 'asistente' ? 'bg-violet-500/15 text-violet-500' :
+              appUser?.role === 'gerencia' ? 'bg-amber-500/15 text-amber-500' :
+              'bg-blue-500/15 text-blue-500'
+            )}>{appUser?.role}</span>
+          </div>
+          {/* Logout */}
+          <button
+            onClick={logout}
+            className={cn(
+              "p-2 rounded-xl transition-all duration-300",
+              darkMode
+                ? "bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/10"
+                : "bg-red-50 text-red-400 hover:bg-red-100 border border-transparent"
+            )}
+            title="Cerrar sesión"
+          >
+            <LogOut className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => setDarkMode(!darkMode)}
+            className={cn(
+              "p-2 rounded-xl transition-all duration-300",
+              darkMode
+                ? "bg-amber-400/10 text-amber-400 hover:bg-amber-400/20 border border-amber-400/10"
+                : "bg-gray-100 text-gray-500 hover:bg-gray-200 border border-transparent"
+            )}
+            title={darkMode ? "Modo Día" : "Modo Noche"}
+          >
+            {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+          </button>
+
+          <div className="relative">
+            <Search className={cn(
+              "absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5",
+              darkMode ? "text-gray-600" : "text-gray-400"
+            )} />
+            <input
+              type="text"
+              placeholder="Buscar clientes, RUC, factura..."
+              className={cn(
+                "pl-9 pr-4 py-2 rounded-xl w-72 outline-none text-xs font-medium transition-all",
+                darkMode
+                  ? "bg-white/5 text-white placeholder:text-gray-600 focus:bg-white/8 focus:ring-1 focus:ring-[#ED1C24]/30"
+                  : "bg-gray-100 text-gray-800 placeholder:text-gray-400 focus:bg-white focus:ring-2 focus:ring-[#ED1C24]/15 border border-transparent focus:border-[#ED1C24]/20"
+              )}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+
+          {(role === 'admin' || role === 'financiero' || role === 'asistente' || role === 'gerencia') && (
+            <button
+              onClick={handleExportExcel}
+              className={cn(
+                "px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all",
+                darkMode
+                  ? "bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/10"
+                  : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200/60"
+              )}
+              title="Exportar a Excel"
+            >
+              <Download className="w-3.5 h-3.5" />
+              Exportar
+            </button>
+          )}
+
+          {role === 'admin' && (
+            <button
+              onClick={handleOpenCsvImport}
+              className={cn(
+                "px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all",
+                darkMode
+                  ? "bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 border border-blue-500/10"
+                  : "bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200/60"
+              )}
+              title="Importar CSV"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              Importar CSV
+            </button>
+          )}
+
+          {(role === 'admin' || role === 'financiero') && (
+            <button
+              onClick={handleOpenNewClient}
+              className="bg-[#ED1C24] text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 hover:bg-[#D11920] shadow-md shadow-red-500/20 transition-all"
+            >
+              <Plus className="w-3.5 h-3.5" /> Nuevo Cliente
+            </button>
+          )}
+        </div>
+      </header>
+
+      <main className="flex-1 grid grid-cols-12 gap-6 p-6 min-h-0">
+        {view === 'usuarios' && role === 'admin' && (
+          <div className="col-span-12 h-full overflow-hidden">
+            <UsersPanel darkMode={darkMode} />
+          </div>
+        )}
+        {view === 'clients' && (
+          <>
+            {/* Sidebar: Centros Médicos */}
+            <div className="col-span-4 flex flex-col min-h-0">
+              <div className={cn(
+                "flex items-center justify-between px-1 mb-3 shrink-0"
+              )}>
+                <h2 className={cn(
+                  "text-[10px] font-bold uppercase tracking-[0.18em] flex items-center gap-2",
+                  darkMode ? "text-gray-500" : "text-gray-400"
+                )}>
+                  <Hospital className="w-3.5 h-3.5" />
+                  Centros Médicos
+                  <span className={cn(
+                    "text-[9px] font-black px-1.5 py-0.5 rounded-md",
+                    darkMode ? "bg-white/10 text-gray-300" : "bg-gray-200 text-gray-600"
+                  )}>{filteredClients.length}</span>
+                </h2>
+              </div>
+              <div className="flex-1 overflow-y-auto space-y-2 pr-1 pb-8 custom-scrollbar">
+              {filteredClients.map(client => (
+                  <button
+                    key={client.id}
+                    onClick={() => setSelectedClient(client)}
+                    className={cn(
+                      "w-full text-left p-4 rounded-2xl border transition-all relative overflow-hidden group",
+                      darkMode
+                        ? selectedClient?.id === client.id
+                          ? "bg-[#1E1E24] border-[#ED1C24]/60 shadow-lg shadow-red-500/10"
+                          : "bg-[#16161A] border-white/5 hover:border-white/15 hover:bg-[#1E1E24]"
+                        : selectedClient?.id === client.id
+                          ? "bg-white border-[#ED1C24]/40 shadow-md shadow-red-500/8 ring-1 ring-[#ED1C24]/20"
+                          : "bg-white border-gray-200/60 hover:border-gray-300 hover:shadow-sm"
+                    )}
+                  >
+                    {selectedClient?.id === client.id && (
+                      <div className="absolute left-0 top-3 bottom-3 w-0.5 rounded-r-full bg-[#ED1C24]" />
+                    )}
+                    <h3 className={cn(
+                      "font-semibold text-sm leading-snug mb-1.5",
+                      darkMode ? "text-gray-100" : "text-gray-800"
+                    )}>{client.name}</h3>
+                    <div className="flex gap-3 text-[10px] font-medium text-gray-400 uppercase tracking-wide">
+                      <span className="flex items-center gap-1"><MapPin className="w-2.5 h-2.5 text-[#ED1C24]"/> {client.province}</span>
+                      <span className="flex items-center gap-1"><User className="w-2.5 h-2.5"/> {client.client_code || 'N/A'}</span>
+                    </div>
+                    {(() => {
+                      const clientConsumos = allConsumos.filter(r => r.client_id === client.id);
+                      if (!clientConsumos.length) return null;
+                      const totalM2 = clientConsumos.reduce((s, r) => s + getTotalM2(effectiveQty(r), r.size, r.film_type), 0);
+                      if (totalM2 <= 0) return null;
+                      return (
+                        <p className={cn("text-[10px] font-bold mt-1.5", darkMode ? "text-cyan-500" : "text-cyan-600")}>
+                          {totalM2.toFixed(1)} m²
+                        </p>
+                      );
+                    })()}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Dashboard de Análisis */}
+            <div className="col-span-8 flex flex-col min-h-0 overflow-y-auto pr-2 pb-8 custom-scrollbar">
+              {selectedClient ? (
+                <div className="flex flex-col gap-5">
+                  {/* Client Card */}
+                  <div className={cn(
+                    "rounded-2xl p-7 border relative overflow-hidden transition-colors duration-300",
+                    darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
+                  )}>
+                    <div className={cn(
+                      "absolute top-0 right-0 w-48 h-48 opacity-[0.03]",
+                      darkMode ? "opacity-5" : ""
+                    )}>
+                      <Hospital className="w-full h-full" />
+                    </div>
+                    <div className="relative z-10">
+                      <div className="flex items-center gap-2 mb-3">
+                        <div className="flex items-center gap-1.5 text-[#ED1C24]">
+                          <div className="w-1.5 h-1.5 rounded-full bg-[#ED1C24] animate-pulse" />
+                          <span className="text-[10px] font-bold uppercase tracking-widest">Registro Activo</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-start justify-between mb-2">
+                        <h2 className={cn(
+                          "text-2xl font-black tracking-tight leading-tight max-w-[75%]",
+                          darkMode ? "text-white" : "text-gray-900"
+                        )}>{selectedClient.name}</h2>
+                        <div className="flex items-center gap-1 mt-1">
+                          {role === 'admin' && (
+                            <button
+                              onClick={handleEditClient}
+                              className={cn(
+                                "p-1.5 rounded-lg transition-colors",
+                                darkMode ? "hover:bg-white/8 text-gray-600 hover:text-[#ED1C24]" : "hover:bg-gray-100 text-gray-400 hover:text-[#ED1C24]"
+                              )}
+                              title="Editar información del cliente"
+                            >
+                              <Edit2 className="w-4 h-4" />
+                            </button>
+                          )}
+                          {role === 'admin' && (
+                            <button
+                              onClick={() => setClientToDelete(selectedClient)}
+                              className={cn(
+                                "p-1.5 rounded-lg transition-colors",
+                                darkMode ? "hover:bg-white/8 text-gray-600 hover:text-red-400" : "hover:bg-gray-100 text-gray-400 hover:text-red-500"
+                              )}
+                              title="Eliminar cliente"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap gap-4 mb-4 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
+                        <span className="flex items-center gap-1.5"><MapPin className="w-3 h-3 text-[#ED1C24]"/> {selectedClient.province}</span>
+                        <span className="flex items-center gap-1.5">
+                          <User className="w-3 h-3 text-[#ED1C24]"/>
+                          COD: {selectedClient.client_code || 'N/A'}
+                          {(selectedClient.alt_codes || []).length > 0 && (
+                            <span className={cn("flex items-center gap-1 ml-1")}>
+                              {(selectedClient.alt_codes || []).map((ac, i) => (
+                                <span key={i} className={cn("text-[9px] font-bold px-1.5 py-0.5 rounded", darkMode ? "bg-amber-500/15 text-amber-400" : "bg-amber-50 text-amber-600")}>
+                                  {ac}
+                                </span>
+                              ))}
+                            </span>
+                          )}
+                        </span>
+                        <span className="flex items-center gap-1.5"><Package className="w-3 h-3 text-[#ED1C24]"/> {selectedClient.salesperson || 'Sin vendedor'}</span>
+                      </div>
+
+                      {altNames[selectedClient.id] && (
+                        <p className={cn(
+                          "text-sm font-medium mb-4 italic",
+                          darkMode ? "text-gray-500" : "text-gray-400"
+                        )}>"{altNames[selectedClient.id]}"</p>
+                      )}
+
+                      <div className="flex items-center justify-between mb-6">
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={handleOpenAltName}
+                            className={cn(
+                              "text-[10px] font-semibold uppercase tracking-wider flex items-center gap-1.5 transition-colors",
+                              darkMode ? "text-gray-500 hover:text-[#ED1C24]" : "text-gray-400 hover:text-[#ED1C24]"
+                            )}
+                          >
+                            <Edit2 className="w-3 h-3" /> Denominación alternativa
+                          </button>
+                          <span className={cn("w-px h-3", darkMode ? "bg-white/10" : "bg-gray-200")} />
+                          <button
+                            onClick={() => { setMergeSearchQuery(''); setMergeTarget(null); setIsMergeModalOpen(true); }}
+                            className={cn(
+                              "text-[10px] font-semibold uppercase tracking-wider flex items-center gap-1.5 transition-colors",
+                              darkMode ? "text-gray-500 hover:text-amber-400" : "text-gray-400 hover:text-amber-500"
+                            )}
+                          >
+                            <Users className="w-3 h-3" /> Fusionar con...
+                          </button>
+                          <span className={cn("w-px h-3", darkMode ? "bg-white/10" : "bg-gray-200")} />
+                          <button
+                            onClick={() => setShowPrinters(!showPrinters)}
+                            className={cn(
+                              "text-[10px] font-semibold uppercase tracking-wider flex items-center gap-1.5 transition-colors",
+                              darkMode ? "text-gray-500 hover:text-[#ED1C24]" : "text-gray-400 hover:text-[#ED1C24]"
+                            )}
+                          >
+                            <Printer className="w-3 h-3" />
+                            Impresoras
+                            <span className={cn(
+                              "px-1.5 py-0.5 rounded text-[9px] font-black",
+                              darkMode ? "bg-white/10 text-gray-300" : "bg-gray-100 text-gray-600"
+                            )}>{selectedClient.printers?.length || 0}</span>
+                          </button>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Filter className={cn("w-3.5 h-3.5", darkMode ? "text-gray-600" : "text-gray-400")} />
+                          <select
+                            value={clientSizeFilter}
+                            onChange={(e) => setClientSizeFilter(e.target.value)}
+                            className={cn(
+                              "text-xs font-semibold px-3 py-1.5 rounded-lg outline-none cursor-pointer transition-colors border-none focus:ring-2 focus:ring-[#ED1C24]/20",
+                              darkMode ? "bg-white/8 text-white" : "bg-gray-100 text-gray-700"
+                            )}
+                          >
+                            <option value="Todas" className={darkMode ? "bg-[#16161A]" : "bg-white"}>Todas las medidas</option>
+                            <option value="14x17" className={darkMode ? "bg-[#16161A]" : "bg-white"}>14x17</option>
+                            <option value="8x10" className={darkMode ? "bg-[#16161A]" : "bg-white"}>8x10</option>
+                            <option value="10x12" className={darkMode ? "bg-[#16161A]" : "bg-white"}>10x12</option>
+                            <option value="10x14" className={darkMode ? "bg-[#16161A]" : "bg-white"}>10x14</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-4 gap-4">
+                        <div className={cn(
+                          "rounded-xl p-4 border",
+                          darkMode ? "bg-white/4 border-white/6" : "bg-gray-50 border-gray-100"
+                        )}>
+                          <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-1", darkMode ? "text-gray-600" : "text-gray-400")}>Promedio Mensual</p>
+                          <p className="text-2xl font-black leading-none">{metrics.avg}</p>
+                          <p className={cn("text-[10px] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>cajas / mes</p>
+                          {(() => {
+                            // m²/mes: use dominant size from filtered consumption
+                            const sizeCounts = {} as Record<string,number>;
+                            filteredClientConsumption.forEach(r => { sizeCounts[r.size] = (sizeCounts[r.size]||0) + r.quantity; });
+                            const topSize = Object.entries(sizeCounts).sort((a,b)=>b[1]-a[1])[0]?.[0];
+                            const topFilm = clientFilmFilter === 'DIHL' ? 'DIHL' : 'DIHT';
+                            const m2PerBox = topSize ? getM2PerBox(topSize, topFilm) : 0;
+                            const avgM2 = m2PerBox > 0 ? (parseFloat(metrics.avg as string) * m2PerBox).toFixed(2) : null;
+                            return avgM2 ? (
+                              <p className={cn("text-xs font-bold mt-0.5", darkMode ? "text-cyan-400" : "text-cyan-600")}>{avgM2} m²/mes</p>
+                            ) : null;
+                          })()}
+                        </div>
+                        <div className={cn(
+                          "rounded-xl p-4 border",
+                          darkMode ? "bg-white/4 border-white/6" : "bg-gray-50 border-gray-100"
+                        )}>
+                          <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-1", darkMode ? "text-gray-600" : "text-gray-400")}>Total Comprado</p>
+                          <p className="text-2xl font-black leading-none">{metrics.total}</p>
+                          <p className={cn("text-[10px] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>cajas totales</p>
+                          {(() => {
+                            const totalM2 = filteredClientConsumption.reduce((acc, r) => acc + getTotalM2(effectiveQty(r), r.size, r.film_type), 0);
+                            return totalM2 > 0 ? (
+                              <p className={cn("text-xs font-bold mt-1", darkMode ? "text-cyan-400" : "text-cyan-600")}>
+                                {totalM2.toFixed(2)} m²
+                              </p>
+                            ) : null;
+                          })()}
+                          {metrics.totalCost > 0 && (
+                            <p className="text-sm font-black text-[#ED1C24] mt-1.5">
+                              ${metrics.totalCost.toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </p>
+                          )}
+                        </div>
+                        <div className={cn(
+                          "rounded-xl p-4 border",
+                          darkMode ? "bg-white/4 border-white/6" : "bg-gray-50 border-gray-100"
+                        )}>
+                          <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-1", darkMode ? "text-gray-600" : "text-gray-400")}>Tendencia</p>
+                          {metrics.trend === null ? (
+                            <p className={cn("text-2xl font-black leading-none", darkMode ? "text-gray-600" : "text-gray-300")}>—</p>
+                          ) : (
+                            <p className={cn(
+                              "text-2xl font-black flex items-center gap-1 leading-none",
+                              parseFloat(metrics.trend as string) >= 0 ? "text-emerald-500" : "text-red-500"
+                            )}>
+                              {parseFloat(metrics.trend as string) >= 0 ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
+                              {Math.abs(parseFloat(metrics.trend as string)).toFixed(1)}%
+                            </p>
+                          )}
+                          <p className={cn("text-[10px] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>
+                            {metrics.trend === null ? 'datos insuficientes' : 'vs. promedio histórico'}
+                          </p>
+                        </div>
+                        <div className={cn(
+                          "rounded-xl p-4 flex flex-col justify-between border transition-all",
+                          darkMode ? metrics.status.darkColor : metrics.status.color
+                        )}>
+                          <p className="text-[9px] font-bold uppercase tracking-wider opacity-60">Fidelización</p>
+                          <div>
+                            <p className="font-black text-xs uppercase leading-tight">{metrics.status.label}</p>
+                            <div className={cn(
+                              "mt-2 h-1 rounded-full overflow-hidden",
+                              darkMode ? "bg-white/10" : "bg-black/10"
+                            )}>
+                              <div
+                                className="h-full rounded-full bg-current transition-all"
+                                style={{ width: `${metrics.loyalty}%` }}
+                              />
+                            </div>
+                            <p className="text-[9px] font-bold mt-1 opacity-60">{metrics.loyalty}% score</p>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {showPrinters && (
+                        <div className={cn(
+                          "mt-5 p-5 rounded-xl border transition-colors duration-300",
+                          darkMode ? "bg-white/4 border-white/8" : "bg-gray-50 border-gray-200"
+                        )}>
+                          <div className="flex justify-between items-center mb-6">
+                            <h3 className="text-sm font-black uppercase tracking-widest">Impresoras Instaladas</h3>
+                            <div className="flex items-center gap-2">
+                              {!isEditingPrinters && editingPrinters.length > 0 && (
+                                <button 
+                                  onClick={() => setIsEditingPrinters(true)}
+                                  className={cn(
+                                    "text-[10px] font-bold px-3 py-1.5 rounded-full flex items-center gap-1.5 transition-all shadow-sm",
+                                    darkMode ? "bg-white/10 text-white hover:bg-white/20" : "bg-white text-gray-700 hover:bg-gray-50 border border-gray-200"
+                                  )}
+                                >
+                                  <Edit2 className="w-3.5 h-3.5" /> Editar
+                                </button>
+                              )}
+                              <button 
+                                onClick={() => {
+                                  setEditingPrinters([...editingPrinters, { id: Date.now().toString(), type: '', trays: '', installDate: '', serial: '', location: '' }]);
+                                }}
+                                className="text-[10px] font-bold bg-[#ED1C24] text-white px-3 py-1.5 rounded-full flex items-center gap-1.5 hover:bg-[#D11920] transition-all shadow-sm"
+                              >
+                                <Plus className="w-3.5 h-3.5" /> Agregar Impresora
+                              </button>
+                            </div>
+                          </div>
+                          
+                          <div className="space-y-4">
+                            {editingPrinters.map((printer, index) => {
+                              const isExistingPrinter = selectedClient?.printers?.some(p => p.id === printer.id);
+                              const isDisabled = !isEditingPrinters && isExistingPrinter;
+                              
+                              return (
+                                <div key={printer.id} className="grid grid-cols-12 gap-4 items-end">
+                                  <div className="col-span-2">
+                                    <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Tipo Impresora</label>
+                                    <input 
+                                      type="text" 
+                                      value={printer.type}
+                                      disabled={isDisabled}
+                                      onChange={e => {
+                                        const newPrinters = [...editingPrinters];
+                                        newPrinters[index].type = e.target.value;
+                                        setEditingPrinters(newPrinters);
+                                      }}
+                                      className={cn(
+                                        "w-full px-3 py-2 rounded-xl border-none outline-none font-bold text-xs transition-colors",
+                                        isDisabled 
+                                          ? "bg-transparent px-0 text-lg" 
+                                          : (darkMode ? "bg-[#16161A] text-white focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm" : "bg-white text-gray-900 focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm")
+                                      )}
+                                      placeholder={!isDisabled ? "Ej: DryPix Plus" : "-"}
+                                    />
+                                  </div>
+                                  <div className="col-span-1">
+                                    <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Trays</label>
+                                    <input 
+                                      type="text" 
+                                      value={printer.trays}
+                                      disabled={isDisabled}
+                                      onChange={e => {
+                                        const newPrinters = [...editingPrinters];
+                                        newPrinters[index].trays = e.target.value;
+                                        setEditingPrinters(newPrinters);
+                                      }}
+                                      className={cn(
+                                        "w-full px-3 py-2 rounded-xl border-none outline-none font-bold text-xs transition-colors",
+                                        isDisabled 
+                                          ? "bg-transparent px-0 text-lg" 
+                                          : (darkMode ? "bg-[#16161A] text-white focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm" : "bg-white text-gray-900 focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm")
+                                      )}
+                                      placeholder={!isDisabled ? "Ej: 2" : "-"}
+                                    />
+                                  </div>
+                                  <div className="col-span-3">
+                                    <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Fecha Instalación</label>
+                                    <input 
+                                      type="date" 
+                                      value={printer.installDate}
+                                      disabled={isDisabled}
+                                      onChange={e => {
+                                        const newPrinters = [...editingPrinters];
+                                        newPrinters[index].installDate = e.target.value;
+                                        setEditingPrinters(newPrinters);
+                                      }}
+                                      className={cn(
+                                        "w-full px-3 py-2 rounded-xl border-none outline-none font-bold text-xs transition-colors",
+                                        isDisabled 
+                                          ? "bg-transparent px-0 text-lg" 
+                                          : (darkMode ? "bg-[#16161A] text-white focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm" : "bg-white text-gray-900 focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm")
+                                      )}
+                                    />
+                                  </div>
+                                  <div className="col-span-2">
+                                    <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Serial</label>
+                                    <input 
+                                      type="text" 
+                                      value={printer.serial}
+                                      disabled={isDisabled}
+                                      onChange={e => {
+                                        const newPrinters = [...editingPrinters];
+                                        newPrinters[index].serial = e.target.value;
+                                        setEditingPrinters(newPrinters);
+                                      }}
+                                      className={cn(
+                                        "w-full px-3 py-2 rounded-xl border-none outline-none font-bold text-xs transition-colors",
+                                        isDisabled 
+                                          ? "bg-transparent px-0 text-lg" 
+                                          : (darkMode ? "bg-[#16161A] text-white focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm" : "bg-white text-gray-900 focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm")
+                                      )}
+                                      placeholder={!isDisabled ? "Ej: 12345ABC" : "-"}
+                                    />
+                                  </div>
+                                  <div className="col-span-3">
+                                    <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Sucursal / Ciudad</label>
+                                    <input 
+                                      type="text" 
+                                      value={printer.location || ''}
+                                      disabled={isDisabled}
+                                      onChange={e => {
+                                        const newPrinters = [...editingPrinters];
+                                        newPrinters[index].location = e.target.value;
+                                        setEditingPrinters(newPrinters);
+                                      }}
+                                      className={cn(
+                                        "w-full px-3 py-2 rounded-xl border-none outline-none font-bold text-xs transition-colors",
+                                        isDisabled 
+                                          ? "bg-transparent px-0 text-lg" 
+                                          : (darkMode ? "bg-[#16161A] text-white focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm" : "bg-white text-gray-900 focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm")
+                                      )}
+                                      placeholder={!isDisabled ? "Ej: Quito - Matriz" : "-"}
+                                    />
+                                  </div>
+                                  {!isDisabled && (
+                                    <div className="col-span-1 flex justify-end pb-1">
+                                      <button 
+                                        onClick={() => {
+                                          const newPrinters = editingPrinters.filter((_, i) => i !== index);
+                                          setEditingPrinters(newPrinters);
+                                        }}
+                                        className={cn(
+                                          "p-2 rounded-lg transition-colors",
+                                          darkMode ? "hover:bg-white/10 text-gray-500 hover:text-red-500" : "hover:bg-gray-200 text-gray-400 hover:text-red-500"
+                                        )}
+                                      >
+                                        <Trash2 className="w-4 h-4" />
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                            {editingPrinters.length === 0 && (
+                              <p className="text-xs text-gray-400 font-bold uppercase text-center py-4">No hay impresoras registradas</p>
+                            )}
+                          </div>
+                          
+                          {(isEditingPrinters || JSON.stringify(editingPrinters) !== JSON.stringify(selectedClient?.printers || [])) && (
+                            <div className="mt-6 flex justify-end gap-3">
+                              <button 
+                                onClick={() => {
+                                  setEditingPrinters(selectedClient.printers || []);
+                                  setIsEditingPrinters(false);
+                                }}
+                                className={cn(
+                                  "text-[10px] font-bold px-4 py-2 rounded-xl uppercase tracking-widest transition-colors",
+                                  darkMode ? "bg-white/5 hover:bg-white/10 text-white" : "bg-gray-100 hover:bg-gray-200 text-gray-700"
+                                )}
+                              >
+                                Cancelar
+                              </button>
+                              <button 
+                                onClick={async () => {
+                                  if (!selectedClient) return;
+                                  try {
+                                    const clientRef = doc(db, "clientes", selectedClient.id.toString());
+                                    await setDoc(clientRef, { ...selectedClient, printers: editingPrinters }, { merge: true });
+                                    setSelectedClient({ ...selectedClient, printers: editingPrinters });
+                                    setIsEditingPrinters(false);
+                                  } catch (error) {
+                                    console.error("Error saving printers:", error);
+                                    alert("Error al guardar las impresoras");
+                                  }
+                                }}
+                                className="text-[10px] font-bold bg-[#16161A] dark:bg-white dark:text-[#1A1A1A] text-white px-4 py-2 rounded-xl uppercase tracking-widest hover:opacity-80 transition-opacity"
+                              >
+                                Guardar Impresoras
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Charts Section */}
+                  <div className="grid grid-cols-2 gap-5">
+                    <div className={cn(
+                      "rounded-xl p-6 border transition-colors duration-300",
+                      darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
+                    )}>
+                      <h3 className={cn("text-[10px] font-bold uppercase tracking-wider mb-5", darkMode ? "text-gray-500" : "text-gray-400")}>Tendencia de Pedidos</h3>
+                      <div className="h-44">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={filteredClientConsumption.slice(0, 8).reverse()}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={darkMode ? "#222" : "#F0F0F0"} />
+                            <XAxis dataKey="order_date" hide />
+                            <Tooltip
+                              contentStyle={darkMode
+                                ? { backgroundColor: '#16161A', border: '1px solid rgba(255,255,255,0.08)', color: '#fff', borderRadius: '10px', fontSize: '11px' }
+                                : { borderRadius: '10px', fontSize: '11px', border: '1px solid #e5e7eb' }}
+                              itemStyle={darkMode ? { color: '#fff' } : {}}
+                            />
+                            <Line type="monotone" dataKey="quantity" stroke="#ED1C24" strokeWidth={2.5} dot={{r: 4, fill: '#ED1C24', strokeWidth: 0}} />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+
+                    <div className={cn(
+                      "rounded-xl p-6 border transition-colors duration-300",
+                      darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
+                    )}>
+                      <h3 className={cn("text-[10px] font-bold uppercase tracking-wider mb-5", darkMode ? "text-gray-500" : "text-gray-400")}>Stock por Medida (Cajas)</h3>
+                      <div className="h-44">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={sizeDistribution} layout="vertical">
+                            <XAxis type="number" hide />
+                            <YAxis
+                              dataKey="name"
+                              type="category"
+                              axisLine={false}
+                              tickLine={false}
+                              tick={{fontSize: 10, fontWeight: '600', fill: darkMode ? '#777' : '#888'}}
+                              width={70}
+                            />
+                            <Tooltip
+                              cursor={{fill: 'transparent'}}
+                              contentStyle={darkMode
+                                ? { backgroundColor: '#16161A', border: '1px solid rgba(255,255,255,0.08)', color: '#fff', borderRadius: '10px', fontSize: '11px' }
+                                : { borderRadius: '10px', fontSize: '11px', border: '1px solid #e5e7eb' }}
+                              itemStyle={darkMode ? { color: '#fff' } : {}}
+                            />
+                            <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={16}>
+                              {sizeDistribution.map((entry, index) => (
+                                <Cell key={`cell-${index}`} fill={index % 2 === 0 ? '#ED1C24' : (darkMode ? '#3a3a3a' : '#D1D5DB')} />
+                              ))}
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Data Table */}
+                  <div className={cn(
+                    "rounded-xl border overflow-hidden mb-8 transition-colors duration-300",
+                    darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
+                  )}>
+                    <div className={cn(
+                      "px-6 py-4 border-b flex justify-between items-center transition-colors duration-300",
+                      darkMode ? "bg-white/3 border-white/8" : "bg-gray-50/80 border-gray-100"
+                    )}>
+                      {/* DI-HT / DI-HL tab switcher */}
+                      <div className="flex items-center gap-1">
+                        <History className={cn("w-3.5 h-3.5 mr-1", darkMode ? "text-gray-500" : "text-gray-400")} />
+                        {[
+                          { value: 'Todos', label: 'DI-HT + DI-HL' },
+                          { value: 'DIHT', label: 'DI-HT' },
+                          { value: 'DIHL', label: 'DI-HL' },
+                        ].map(tab => (
+                          <button
+                            key={tab.value}
+                            onClick={() => setClientFilmFilter(tab.value)}
+                            className={cn(
+                              "px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all",
+                              clientFilmFilter === tab.value
+                                ? tab.value === 'DIHL'
+                                  ? "bg-blue-500/20 text-blue-400 ring-1 ring-blue-500/30"
+                                  : tab.value === 'DIHT'
+                                  ? "bg-[#ED1C24]/15 text-[#ED1C24] ring-1 ring-[#ED1C24]/30"
+                                  : (darkMode ? "bg-white/12 text-white" : "bg-gray-800 text-white")
+                                : (darkMode ? "text-gray-600 hover:text-gray-400 hover:bg-white/5" : "text-gray-400 hover:text-gray-600 hover:bg-gray-100")
+                            )}
+                          >
+                            {tab.label}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <div className="relative">
+                          <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                          <input
+                            type="text"
+                            placeholder="Buscar factura..."
+                            value={invoiceSearchTerm}
+                            onChange={(e) => setInvoiceSearchTerm(e.target.value)}
+                            className={cn(
+                              "pl-8 pr-3 py-1.5 rounded-lg text-xs font-medium outline-none transition-colors w-44",
+                              darkMode
+                                ? "bg-white/8 text-white placeholder-gray-600 focus:ring-1 focus:ring-white/20"
+                                : "bg-white text-gray-800 placeholder-gray-400 border border-gray-200 focus:border-[#ED1C24]/30 focus:ring-1 focus:ring-[#ED1C24]/20"
+                            )}
+                          />
+                        </div>
+                        {(role === 'admin' || role === 'financiero') && (
+                          <button
+                            onClick={handleOpenNewRecord}
+                            className="text-[10px] font-semibold bg-[#ED1C24] text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5 hover:bg-[#D11920] transition-all shadow-sm whitespace-nowrap"
+                          >
+                            <Plus className="w-3 h-3" /> Nuevo Registro
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left min-w-[800px]">
+                        <thead className={cn(
+                          "text-[9px] font-bold uppercase tracking-wider",
+                          darkMode ? "bg-white/4 text-gray-500" : "bg-gray-50 text-gray-400"
+                        )}>
+                          <tr>
+                            <th className="px-6 py-3 whitespace-nowrap">Fecha Pedido</th>
+                            <th className="px-6 py-3 whitespace-nowrap">Factura</th>
+                            <th className="px-6 py-3 whitespace-nowrap">Medida</th>
+                            <th className="px-6 py-3 whitespace-nowrap">Tipo</th>
+                            <th className="px-6 py-3 text-center whitespace-nowrap">Cajas</th>
+                            <th className="px-6 py-3 text-center whitespace-nowrap">m²</th>
+                            <th className="px-6 py-3 text-right whitespace-nowrap">Costo Unit.</th>
+                            <th className="px-6 py-3 text-right whitespace-nowrap">Costo Total</th>
+                            <th className="px-6 py-3 whitespace-nowrap">Lote</th>
+                            <th className="px-6 py-3 text-right whitespace-nowrap">Acciones</th>
+                          </tr>
+                        </thead>
+                        <tbody className={cn(
+                          "divide-y transition-colors duration-300",
+                          darkMode ? "divide-white/5" : "divide-gray-100"
+                        )}>
+                          {filteredClientConsumption.map(record => {
+                            // Format date from YYYY-MM-DD to DD/MM/YYYY
+                            let formattedDate = record.order_date;
+                            if (record.order_date && record.order_date.includes('-')) {
+                              const [year, month, day] = record.order_date.split('-');
+                              if (year && month && day) {
+                                formattedDate = `${day}/${month}/${year}`;
+                              }
+                            }
+                            
+                            return (
+                            <tr key={record.id} className={cn(
+                              "transition-colors group",
+                              darkMode ? "hover:bg-white/3" : "hover:bg-gray-50/80"
+                            )}>
+                              <td className="px-6 py-3.5 font-medium text-xs whitespace-nowrap">{formattedDate}</td>
+                              <td className={cn("px-6 py-3.5 text-xs whitespace-nowrap font-mono", darkMode ? "text-gray-500" : "text-gray-400")}>{record.invoice_number || '—'}</td>
+                              <td className="px-6 py-3.5 whitespace-nowrap">
+                                <span className={cn(
+                                  "px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wide",
+                                  darkMode ? "bg-white/12 text-gray-200" : "bg-gray-800 text-white"
+                                )}>
+                                  {record.size}
+                                </span>
+                              </td>
+                              <td className="px-6 py-3.5 whitespace-nowrap">
+                                {record.film_type ? (
+                                  <span className={cn(
+                                    "px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wide",
+                                    record.film_type === 'DIHL'
+                                      ? (darkMode ? "bg-blue-500/20 text-blue-400" : "bg-blue-100 text-blue-700")
+                                      : record.film_type === 'DIML'
+                                      ? (darkMode ? "bg-purple-500/20 text-purple-400" : "bg-purple-100 text-purple-700")
+                                      : (darkMode ? "bg-[#ED1C24]/20 text-[#ED1C24]" : "bg-red-100 text-red-700")
+                                  )}>
+                                    {record.film_type}
+                                  </span>
+                                ) : (
+                                  <span className={cn("text-[9px]", darkMode ? "text-gray-700" : "text-gray-300")}>—</span>
+                                )}
+                              </td>
+                              <td className="px-6 py-3.5 text-center whitespace-nowrap">
+                                <span className={cn("font-black text-base", record.is_return ? "text-amber-400" : "")}>
+                                  {record.is_return ? `-${record.quantity}` : record.quantity}
+                                </span>
+                              </td>
+                              <td className="px-6 py-3.5 text-center whitespace-nowrap">
+                                {getM2PerBox(record.size, record.film_type) > 0 ? (
+                                  <span className={cn("text-xs font-semibold", darkMode ? "text-cyan-400" : "text-cyan-600")}>
+                                    {getTotalM2(record.quantity, record.size, record.film_type).toFixed(2)}
+                                  </span>
+                                ) : (
+                                  <span className={cn("text-[10px]", darkMode ? "text-gray-700" : "text-gray-300")}>—</span>
+                                )}
+                              </td>
+                              <td className={cn("px-6 py-3.5 text-right font-mono text-xs whitespace-nowrap", record.is_return ? "text-amber-400" : (darkMode ? "text-gray-500" : "text-gray-400"))}>
+                                {record.unit_cost ? `${record.is_return ? '-' : ''}$${Math.abs(record.unit_cost).toFixed(2)}` : '—'}
+                              </td>
+                              <td className={cn("px-6 py-3.5 text-right font-bold text-sm whitespace-nowrap", record.is_return ? "text-amber-400" : "text-[#ED1C24]")}>
+                                {record.unit_cost ? `${record.is_return ? '-' : ''}$${(record.quantity * Math.abs(record.unit_cost)).toFixed(2)}` : '—'}
+                              </td>
+                              <td className={cn("px-6 py-3.5 text-xs font-mono whitespace-nowrap", darkMode ? "text-gray-600" : "text-gray-400")}>#{record.batch_number}</td>
+                              <td className="px-6 py-3.5 text-right whitespace-nowrap">
+                                <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  {role === 'admin' && (
+                                    <button
+                                      onClick={() => handleEditRecord(record)}
+                                      className={cn(
+                                        "p-1.5 rounded-lg transition-colors",
+                                        darkMode ? "hover:bg-white/10 text-gray-600 hover:text-[#ED1C24]" : "hover:bg-gray-100 text-gray-400 hover:text-[#ED1C24]"
+                                      )}
+                                    >
+                                      <Edit2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                  {role === 'admin' && (
+                                    <button
+                                      onClick={() => handleDeleteRecord(record.id)}
+                                      className={cn(
+                                        "p-1.5 rounded-lg transition-colors",
+                                        darkMode ? "hover:bg-white/10 text-gray-600 hover:text-red-400" : "hover:bg-gray-100 text-gray-400 hover:text-red-500"
+                                      )}
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          )})}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className={cn(
+                  "h-full flex flex-col items-center justify-center text-center p-16 border-2 border-dashed rounded-2xl transition-colors duration-300",
+                  darkMode ? "bg-[#16161A] border-white/5" : "bg-white border-gray-200"
+                )}>
+                  <div className={cn(
+                    "w-16 h-16 rounded-2xl flex items-center justify-center mb-5",
+                    darkMode ? "bg-white/4" : "bg-gray-100"
+                  )}>
+                    <Package className={cn("w-8 h-8", darkMode ? "text-gray-700" : "text-gray-300")} />
+                  </div>
+                  <h3 className={cn(
+                    "text-xl font-black tracking-tight mb-2",
+                    darkMode ? "text-gray-700" : "text-gray-300"
+                  )}>ORIMEC DATA HUB</h3>
+                  <p className={cn("max-w-xs text-xs font-medium tracking-wide leading-relaxed", darkMode ? "text-gray-700" : "text-gray-400")}>
+                    Seleccione un centro médico para auditar el historial de películas radiográficas.
+                  </p>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        {view === 'dashboard' && (
+          <div className="col-span-12 flex flex-col gap-6 min-h-0 overflow-y-auto pr-2 pb-8 custom-scrollbar">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-black tracking-tight">Dashboard de Análisis</h2>
+                <p className={cn("text-[10px] font-medium uppercase tracking-wider mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>
+                  Métricas globales · FUJIFILM DI-HT · DI-HL
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <label className={cn("text-[9px] font-bold uppercase tracking-widest", darkMode ? "text-gray-600" : "text-gray-400")}>Desde:</label>
+                  <input
+                    type="date"
+                    value={dashboardStartDate}
+                    onChange={e => setDashboardStartDate(e.target.value)}
+                    className={cn(
+                      "px-3 py-1.5 rounded-lg border-none focus:ring-2 focus:ring-[#ED1C24]/20 outline-none font-medium text-xs",
+                      darkMode ? "bg-white/8 text-white" : "bg-white text-gray-800 shadow-sm border border-gray-200"
+                    )}
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className={cn("text-[9px] font-bold uppercase tracking-widest", darkMode ? "text-gray-600" : "text-gray-400")}>Hasta:</label>
+                  <input
+                    type="date"
+                    value={dashboardEndDate}
+                    onChange={e => setDashboardEndDate(e.target.value)}
+                    className={cn(
+                      "px-3 py-1.5 rounded-lg border-none focus:ring-2 focus:ring-[#ED1C24]/20 outline-none font-medium text-xs",
+                      darkMode ? "bg-white/8 text-white" : "bg-white text-gray-800 shadow-sm border border-gray-200"
+                    )}
+                  />
+                </div>
+                {(dashboardStartDate || dashboardEndDate) && (
+                  <button
+                    onClick={() => { setDashboardStartDate(''); setDashboardEndDate(''); }}
+                    className={cn(
+                      "p-1.5 rounded-lg transition-colors",
+                      darkMode ? "bg-white/5 hover:bg-white/10 text-gray-400" : "bg-white hover:bg-gray-50 text-gray-500 shadow-sm border border-gray-200"
+                    )}
+                    title="Limpiar filtros"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="grid grid-cols-5 gap-4">
+              {/* m² total - PRIMARY metric */}
+              <div className={cn(
+                "p-5 rounded-xl border col-span-1 transition-colors duration-300 relative overflow-hidden",
+                darkMode ? "bg-[#ED1C24]/10 border-[#ED1C24]/30" : "bg-red-50 border-red-200 shadow-sm"
+              )}>
+                <div className="absolute top-0 right-0 w-20 h-20 opacity-5"><BarChart3 className="w-full h-full" /></div>
+                <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-2", darkMode ? "text-red-400" : "text-red-500")}>m² Totales Vendidos</p>
+                <p className="text-3xl font-black leading-none text-[#ED1C24]">{globalMetrics.totalM2.toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                <p className={cn("text-[10px] mt-1 font-semibold", darkMode ? "text-red-400/60" : "text-red-400")}>metros cuadrados</p>
+                <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{globalMetrics.totalConsumption} cajas</p>
+              </div>
+              {/* m²/mes promedio */}
+              <div className={cn(
+                "p-5 rounded-xl border transition-colors duration-300",
+                darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
+              )}>
+                <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-2", darkMode ? "text-gray-600" : "text-gray-400")}>m² · Medida Top</p>
+                <p className={cn("text-3xl font-black leading-none uppercase", darkMode ? "text-cyan-400" : "text-cyan-600")}>
+                  {globalMetrics.topSizeByM2}
+                </p>
+                <p className={cn("text-[10px] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>mayor superficie</p>
+                {globalMetrics.sizeData[0]?.m2 > 0 && (
+                  <p className={cn("text-[9px] mt-0.5 font-semibold", darkMode ? "text-cyan-500" : "text-cyan-600")}>
+                    {globalMetrics.sizeData[0].m2.toLocaleString('es-EC', { minimumFractionDigits: 2 })} m²
+                  </p>
+                )}
+              </div>
+              <div className={cn(
+                "p-5 rounded-xl border transition-colors duration-300",
+                darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
+              )}>
+                <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-2", darkMode ? "text-gray-600" : "text-gray-400")}>Ingresos Totales</p>
+                <p className="text-3xl font-black leading-none text-emerald-500">${globalMetrics.totalRevenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                <p className={cn("text-[10px] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>USD facturado</p>
+                {globalMetrics.totalM2 > 0 && (
+                  <p className={cn("text-[9px] mt-0.5 font-semibold", darkMode ? "text-gray-500" : "text-gray-400")}>
+                    ${(globalMetrics.totalRevenue / globalMetrics.totalM2).toFixed(2)}/m²
+                  </p>
+                )}
+              </div>
+              <div className={cn(
+                "p-5 rounded-xl border transition-colors duration-300",
+                darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
+              )}>
+                <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-2", darkMode ? "text-gray-600" : "text-gray-400")}>Centros Médicos</p>
+                <p className={cn("text-3xl font-black leading-none", darkMode ? "text-white" : "text-gray-900")}>{globalMetrics.totalClients}</p>
+                <p className={cn("text-[10px] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>activos</p>
+                {globalMetrics.totalClients > 0 && globalMetrics.totalM2 > 0 && (
+                  <p className={cn("text-[9px] mt-0.5 font-semibold", darkMode ? "text-gray-500" : "text-gray-400")}>
+                    {(globalMetrics.totalM2 / globalMetrics.totalClients).toFixed(1)} m²/cliente
+                  </p>
+                )}
+              </div>
+              <div className={cn(
+                "p-5 rounded-xl border transition-colors duration-300",
+                darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
+              )}>
+                <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-2", darkMode ? "text-gray-600" : "text-gray-400")}>Última Actualización</p>
+                <p className={cn("text-xl font-black leading-none uppercase", darkMode ? "text-white" : "text-gray-900")}>{format(new Date(), 'dd MMM yyyy')}</p>
+                <p className={cn("text-[10px] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>datos en tiempo real</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-12 gap-5">
+              <div className={cn(
+                "col-span-8 p-6 rounded-xl border transition-colors duration-300",
+                darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
+              )}>
+                <div className="flex items-center justify-between mb-6">
+                  <h3 className={cn("text-[10px] font-bold uppercase tracking-wider flex items-center gap-2", darkMode ? "text-gray-500" : "text-gray-400")}>
+                    <BarChart3 className="w-3.5 h-3.5 text-[#ED1C24]" /> Distribución Global por Medida — m²
+                  </h3>
+                  <div className={cn("flex items-center gap-1 p-1 rounded-xl", darkMode ? "bg-white/5" : "bg-gray-100")}>
+                    {([['all','Global'], ['DIHT','DI-HT'], ['DIHL','DI-HL']] as const).map(([val, label]) => (
+                      <button key={val} onClick={() => setSizeChartFilter(val)}
+                        className={cn("px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all",
+                          sizeChartFilter === val
+                            ? val === 'DIHL' ? "bg-blue-500/20 text-blue-400 ring-1 ring-blue-500/30"
+                            : val === 'DIHT' ? "bg-[#ED1C24]/15 text-[#ED1C24] ring-1 ring-[#ED1C24]/30"
+                            : (darkMode ? "bg-white/12 text-white" : "bg-gray-800 text-white")
+                            : (darkMode ? "text-gray-600 hover:text-gray-400 hover:bg-white/5" : "text-gray-400 hover:text-gray-600 hover:bg-gray-200")
+                        )}>{label}</button>
+                    ))}
+                  </div>
+                </div>
+                <div className="h-72">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={(() => {
+                      const filtered = sizeChartFilter === 'all' ? allConsumos
+                        : sizeChartFilter === 'DIHT' ? allConsumos.filter(r => !r.film_type || r.film_type === 'DIHT')
+                        : allConsumos.filter(r => r.film_type === 'DIHL');
+                      const dated = filtered.filter(r => {
+                        const d = new Date(r.order_date);
+                        if (dashboardStartDate && d < new Date(dashboardStartDate)) return false;
+                        if (dashboardEndDate && d > new Date(dashboardEndDate)) return false;
+                        return true;
+                      });
+                      const distM2 = {} as Record<string, number>;
+                      const distBoxes = {} as Record<string, number>;
+                      dated.forEach(r => {
+                        const m2 = getTotalM2(r.quantity, r.size, r.film_type);
+                        distM2[r.size] = parseFloat(((distM2[r.size] || 0) + m2).toFixed(2));
+                        distBoxes[r.size] = (distBoxes[r.size] || 0) + r.quantity;
+                      });
+                      return Object.entries(distM2).map(([name, m2]) => ({ name, m2, cajas: distBoxes[name] || 0 })).sort((a,b) => b.m2 - a.m2);
+                    })()}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={darkMode ? "#222" : "#F0F0F0"} />
+                      <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 11, fontWeight: '600', fill: darkMode ? '#666' : '#888'}} />
+                      <YAxis axisLine={false} tickLine={false} tick={{fontSize: 11, fontWeight: '600', fill: darkMode ? '#666' : '#888'}} tickFormatter={(v) => `${v}m²`} />
+                      <Tooltip
+                        cursor={{fill: darkMode ? 'rgba(255,255,255,0.03)' : '#F9FAFB'}}
+                        contentStyle={darkMode
+                          ? { backgroundColor: '#16161A', border: '1px solid rgba(255,255,255,0.08)', color: '#fff', borderRadius: '10px', fontSize: '11px' }
+                          : { borderRadius: '10px', fontSize: '11px', border: '1px solid #e5e7eb' }}
+                        formatter={(value: any, name: string) => [
+                          name === 'm2' ? `${value} m²` : `${value} cajas`,
+                          name === 'm2' ? 'Superficie' : 'Cajas'
+                        ]}
+                        itemStyle={darkMode ? { color: '#fff' } : {}}
+                      />
+                      <Bar dataKey="m2" name="m2" radius={[6, 6, 0, 0]} barSize={50}>
+                        {[0,1,2,3].map((index) => (
+                          <Cell key={`cell-${index}`} fill={
+                            sizeChartFilter === 'DIHL'
+                              ? (index % 2 === 0 ? '#3B82F6' : '#1D4ED8')
+                              : (index % 2 === 0 ? '#ED1C24' : (darkMode ? '#2a2a2e' : '#E5E7EB'))
+                          } />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              <div className={cn(
+                "col-span-4 p-6 rounded-xl border transition-colors duration-300",
+                darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
+              )}>
+                <h3 className={cn("text-[10px] font-bold uppercase tracking-wider mb-5 flex items-center gap-2", darkMode ? "text-gray-500" : "text-gray-400")}>
+                  <TrendingUp className="w-3.5 h-3.5 text-[#ED1C24]" /> Top 5 Clientes — m²
+                </h3>
+                <div className="space-y-4">
+                  {globalMetrics.topClients.map((client, idx) => (
+                    <div key={idx} className="flex items-center gap-3">
+                      <div className={cn(
+                        "w-6 h-6 rounded-lg flex items-center justify-center font-black text-[10px] shrink-0",
+                        idx === 0
+                          ? "bg-[#ED1C24] text-white"
+                          : (darkMode ? "bg-white/8 text-gray-400" : "bg-gray-100 text-gray-500")
+                      )}>
+                        {idx + 1}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-xs truncate">{client.name}</p>
+                        <div className={cn(
+                          "mt-1 h-0.5 rounded-full overflow-hidden",
+                          darkMode ? "bg-white/8" : "bg-gray-100"
+                        )}>
+                          <div
+                            className="h-full bg-[#ED1C24] rounded-full"
+                            style={{ width: `${(client.m2 / globalMetrics.topClients[0].m2) * 100}%` }}
+                          />
+                        </div>
+                        <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{client.value} cajas</p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className={cn("font-black text-sm", darkMode ? "text-cyan-400" : "text-cyan-600")}>{client.m2.toFixed(1)}</p>
+                        <p className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>m²</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              
+              {/* Estadísticas por Vendedor */}
+              <div className={cn(
+                "col-span-12 p-6 rounded-xl border transition-colors duration-300",
+                darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
+              )}>
+                <h3 className={cn("text-[10px] font-bold uppercase tracking-wider mb-5 flex items-center gap-2", darkMode ? "text-gray-500" : "text-gray-400")}>
+                  <Users className="w-3.5 h-3.5 text-[#ED1C24]" /> Estadísticas por Vendedor
+                </h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left min-w-[600px]">
+                    <thead className={cn(
+                      "text-[9px] font-bold uppercase tracking-wider",
+                      darkMode ? "text-gray-600" : "text-gray-400"
+                    )}>
+                      <tr className={cn(
+                        "border-b",
+                        darkMode ? "border-white/8" : "border-gray-100"
+                      )}>
+                        <th className="px-5 py-3 whitespace-nowrap">Vendedor</th>
+                        <th className="px-5 py-3 text-center whitespace-nowrap">m² Vendidos</th>
+                        <th className="px-5 py-3 text-center whitespace-nowrap">Cajas</th>
+                        <th className="px-5 py-3 text-center whitespace-nowrap">Prom. Mensual</th>
+                        <th className="px-5 py-3 text-center whitespace-nowrap">Este Mes</th>
+                        <th className="px-5 py-3 text-center whitespace-nowrap">Meta Mensual</th>
+                        <th className="px-5 py-3 text-right whitespace-nowrap">Ingresos Generados</th>
+                      </tr>
+                    </thead>
+                    <tbody className={cn(
+                      "divide-y transition-colors duration-300",
+                      darkMode ? "divide-white/5" : "divide-gray-50"
+                    )}>
+                      {salespersonPerformance.map((salesperson: any, idx: number) => {
+                        const goal = salesperson.goal || 0;
+                        const thisMonthQty = salesperson.thisMonth ?? 0;
+                        const monthlyAvg = salesperson.monthlyAvg ?? 0;
+                        const growthLabel = salesperson.growthVsLastMonth ?? null;
+                        const pct = goal > 0 ? Math.min(100, Math.round((thisMonthQty / goal) * 100)) : 0;
+                        return (
+                        <tr key={idx} onClick={() => setSelectedSalesperson(salesperson.name)} className={cn(
+                          "transition-colors group cursor-pointer",
+                          darkMode ? "hover:bg-white/3" : "hover:bg-gray-50/60"
+                        )}>
+                          <td className="px-5 py-3.5 font-semibold text-sm whitespace-nowrap flex items-center gap-2.5">
+                            <div className={cn(
+                              "w-7 h-7 rounded-lg flex items-center justify-center font-black text-[10px]",
+                              idx === 0
+                                ? "bg-[#ED1C24] text-white"
+                                : (darkMode ? "bg-white/8 text-gray-400" : "bg-gray-100 text-gray-600")
+                            )}>
+                              {salesperson.name.charAt(0).toUpperCase()}
+                            </div>
+                            {salesperson.name}
+                          </td>
+                          <td className="px-5 py-3.5 text-center whitespace-nowrap">
+                            <span className={cn("font-black text-lg", darkMode ? "text-cyan-400" : "text-cyan-600")}>
+                              {(globalMetrics.salespersonData.find((s: any) => s.name === salesperson.name)?.m2 || 0).toLocaleString('es-EC', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
+                            </span>
+                            <span className={cn("text-[9px] block", darkMode ? "text-gray-600" : "text-gray-400")}>m²</span>
+                          </td>
+                          <td className="px-5 py-3.5 text-center font-black text-lg whitespace-nowrap">
+                            {salesperson.quantity}
+                            <span className={cn("text-[9px] block font-normal", darkMode ? "text-gray-600" : "text-gray-400")}>cajas</span>
+                          </td>
+                          <td className="px-5 py-3.5 text-center whitespace-nowrap">
+                            <span className="font-black text-lg">{monthlyAvg}</span>
+                            <span className={cn("text-[9px] block", darkMode ? "text-gray-600" : "text-gray-400")}>cj/mes</span>
+                          </td>
+                          <td className="px-5 py-3.5 text-center whitespace-nowrap">
+                            <span className={cn("font-black text-lg", thisMonthQty === 0 ? (darkMode ? "text-gray-600" : "text-gray-300") : "")}>{thisMonthQty}</span>
+                            {growthLabel !== null && (
+                              <span className={cn("text-[9px] block font-semibold", parseFloat(growthLabel ?? "0") >= 0 ? "text-emerald-400" : "text-red-400")}>
+                                {parseFloat(growthLabel ?? '0') >= 0 ? '▲' : '▼'}{Math.abs(parseFloat(growthLabel ?? '0'))}% vs mes ant.
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-5 py-3.5 text-center whitespace-nowrap" onClick={e => e.stopPropagation()}>
+                            {editingGoal?.name === salesperson.name ? (
+                              <input
+                                autoFocus
+                                type="number"
+                                value={editingGoal.value}
+                                onChange={e => setEditingGoal({ name: salesperson.name, value: e.target.value })}
+                                onBlur={() => {
+                                  const v = parseInt(editingGoal.value) || 0;
+                                  const ng = { ...salespersonGoals, [salesperson.name]: v };
+                                  setSalespersonGoals(ng);
+                                  localStorage.setItem('sp_goals', JSON.stringify(ng));
+                                  setEditingGoal(null);
+                                }}
+                                onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                                className={cn("w-20 text-center text-xs font-black rounded-lg px-2 py-1 outline-none focus:ring-2 focus:ring-[#ED1C24]/30",
+                                  darkMode ? "bg-white/15 text-white border-none" : "bg-white text-gray-800 border border-gray-300"
+                                )}
+                              />
+                            ) : (
+                              <button
+                                onClick={() => setEditingGoal({ name: salesperson.name, value: String(goal || '') })}
+                                className={cn("flex flex-col items-center gap-0.5 mx-auto transition-opacity",
+                                  darkMode ? "hover:opacity-80" : "hover:opacity-70"
+                                )}
+                              >
+                                {goal > 0 ? (
+                                  <>
+                                    <span className="text-xs font-black">{thisMonthQty} / {goal} cj</span>
+                                    <div className={cn("w-24 h-1.5 rounded-full overflow-hidden", darkMode ? "bg-white/10" : "bg-gray-200")}>
+                                      <div className={cn("h-full rounded-full transition-all",
+                                        pct >= 100 ? "bg-emerald-400" : pct >= 70 ? "bg-amber-400" : "bg-[#ED1C24]"
+                                      )} style={{ width: `${pct}%` }} />
+                                    </div>
+                                    <span className={cn("text-[9px] font-bold",
+                                      pct >= 100 ? "text-emerald-400" : pct >= 70 ? "text-amber-400" : "text-[#ED1C24]"
+                                    )}>{pct}%</span>
+                                  </>
+                                ) : (
+                                  <span className={cn("text-[10px] font-bold border border-dashed rounded px-2 py-0.5 transition-colors",
+                                    darkMode ? "border-white/20 text-gray-600 hover:border-[#ED1C24]/50 hover:text-[#ED1C24]" : "border-gray-300 text-gray-400 hover:border-[#ED1C24] hover:text-[#ED1C24]"
+                                  )}>+ Meta</span>
+                                )}
+                              </button>
+                            )}
+                          </td>
+                          <td className="px-5 py-3.5 text-right font-bold text-[#ED1C24] whitespace-nowrap">
+                            ${salesperson.revenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+                        </tr>
+                        );
+                      })}
+                      {salespersonPerformance.length === 0 && (
+                        <tr>
+                          <td colSpan={7} className={cn("px-5 py-10 text-center text-xs font-medium", darkMode ? "text-gray-600" : "text-gray-400")}>
+                            No hay datos de vendedores en este período
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Métricas de Impresoras */}
+              <div className={cn(
+                "col-span-12 p-6 rounded-xl border transition-colors duration-300",
+                darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
+              )}>
+                <h3 className={cn("text-[10px] font-bold uppercase tracking-wider mb-5 flex items-center gap-2", darkMode ? "text-gray-500" : "text-gray-400")}>
+                  <Printer className="w-3.5 h-3.5 text-[#ED1C24]" /> Análisis de Impresoras Instaladas
+                </h3>
+                
+                <div className="grid grid-cols-4 gap-4 mb-6">
+                  <div className={cn(
+                    "p-4 rounded-xl border transition-colors duration-300",
+                    darkMode ? "bg-white/4 border-white/6" : "bg-gray-50 border-gray-100"
+                  )}>
+                    <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-1.5", darkMode ? "text-gray-600" : "text-gray-400")}>Total Impresoras</p>
+                    <p className="text-2xl font-black">{printerMetrics.totalPrinters}</p>
+                  </div>
+                  <div className={cn(
+                    "p-4 rounded-xl border transition-colors duration-300",
+                    darkMode ? "bg-white/4 border-white/6" : "bg-gray-50 border-gray-100"
+                  )}>
+                    <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-1.5", darkMode ? "text-gray-600" : "text-gray-400")}>Promedio / Impresora</p>
+                    <p className="text-2xl font-black">
+                      {printerMetrics.totalPrinters > 0
+                        ? (globalMetrics.totalM2 / printerMetrics.totalPrinters).toFixed(1)
+                        : '0'} <span className={cn("text-xs font-bold", darkMode ? "text-cyan-400" : "text-cyan-600")}>m²</span>
+                    </p>
+                    <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>
+                      {printerMetrics.totalPrinters > 0 ? (globalMetrics.totalConsumption / printerMetrics.totalPrinters).toFixed(1) : '0'} cj/impr.
+                    </p>
+                  </div>
+                  <div className={cn(
+                    "p-4 rounded-xl border transition-colors duration-300",
+                    printerMetrics.clientsWithoutPrinters.length > 0
+                      ? (darkMode ? "bg-amber-500/10 border-amber-500/20" : "bg-amber-50 border-amber-200")
+                      : (darkMode ? "bg-white/4 border-white/6" : "bg-gray-50 border-gray-100")
+                  )}>
+                    <p className={cn(
+                      "text-[9px] font-bold uppercase tracking-wider mb-1.5",
+                      printerMetrics.clientsWithoutPrinters.length > 0 ? "text-amber-600 dark:text-amber-400" : (darkMode ? "text-gray-600" : "text-gray-400")
+                    )}>Clientes sin Impresora</p>
+                    <p className={cn(
+                      "text-2xl font-black",
+                      printerMetrics.clientsWithoutPrinters.length > 0 ? "text-amber-600 dark:text-amber-400" : ""
+                    )}>{printerMetrics.clientsWithoutPrinters.length}</p>
+                  </div>
+                  <div className={cn(
+                    "p-4 rounded-xl border transition-colors duration-300",
+                    printerMetrics.repeatedSerials.length > 0
+                      ? (darkMode ? "bg-red-500/10 border-red-500/20" : "bg-red-50 border-red-200")
+                      : (darkMode ? "bg-white/4 border-white/6" : "bg-gray-50 border-gray-100")
+                  )}>
+                    <p className={cn(
+                      "text-[9px] font-bold uppercase tracking-wider mb-1.5",
+                      printerMetrics.repeatedSerials.length > 0 ? "text-red-600 dark:text-red-400" : (darkMode ? "text-gray-600" : "text-gray-400")
+                    )}>Alertas Seriales</p>
+                    <p className={cn(
+                      "text-2xl font-black",
+                      printerMetrics.repeatedSerials.length > 0 ? "text-red-600 dark:text-red-400" : ""
+                    )}>{printerMetrics.repeatedSerials.length}</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-12 gap-6">
+                  {/* Tipos de Impresora */}
+                  <div className="col-span-4">
+                    <h4 className={cn("text-[9px] font-bold uppercase tracking-wider mb-3", darkMode ? "text-gray-600" : "text-gray-400")}>Distribución por Tipo</h4>
+                    <div className="space-y-2">
+                      {printerMetrics.typeData.map((type, idx) => (
+                        <button
+                          key={idx}
+                          onClick={() => setSelectedPrinterType(type.name)}
+                          className={cn(
+                            "w-full flex items-center justify-between p-3 rounded-lg border transition-all group text-left",
+                            darkMode
+                              ? "bg-white/4 border-white/6 hover:border-white/15 hover:bg-white/8"
+                              : "bg-gray-50 border-gray-100 hover:border-gray-300 hover:bg-gray-100/80"
+                          )}
+                        >
+                          <div className="flex items-center gap-2">
+                            <p className="font-semibold text-xs truncate">{type.name}</p>
+                            <ChevronRight className={cn(
+                              "w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity",
+                              darkMode ? "text-gray-400" : "text-gray-500"
+                            )} />
+                          </div>
+                          <span className="font-black text-sm text-[#ED1C24]">{type.value}</span>
+                        </button>
+                      ))}
+                      {printerMetrics.typeData.length === 0 && (
+                        <p className={cn("text-xs italic", darkMode ? "text-gray-600" : "text-gray-400")}>No hay datos de tipos de impresora</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Seriales Duplicados */}
+                  <div className="col-span-8">
+                    <div className="flex items-center justify-between mb-4">
+                      <h4 className="text-[10px] font-bold text-gray-400 uppercase">Seriales Duplicados</h4>
+                      {printerMetrics.repeatedSerials.length > 0 && (
+                        <span className={cn("text-[9px] font-bold px-2 py-0.5 rounded-lg bg-red-500/15 text-red-400")}>
+                          {printerMetrics.repeatedSerials.length} seriales
+                        </span>
+                      )}
+                    </div>
+                    {printerMetrics.repeatedSerials.length > 0 ? (
+                      <div className={cn(
+                        "overflow-y-auto custom-scrollbar rounded-2xl border",
+                        darkMode ? "border-red-500/10" : "border-red-100"
+                      )} style={{ maxHeight: '320px' }}>
+                        <div className="space-y-0 divide-y divide-red-500/10">
+                          {printerMetrics.repeatedSerials.map((item, idx) => (
+                            <div key={idx}
+                              onClick={() => setSelectedDuplicateSerial({ serial: item.serial, clients: item.clients })}
+                              className={cn(
+                                "p-4 flex items-start justify-between cursor-pointer transition-all",
+                                darkMode ? "bg-red-500/5 hover:bg-red-500/12" : "bg-red-50/60 hover:bg-red-100"
+                              )}>
+                              <div>
+                                <p className="font-black text-red-500 mb-1">Serial: {item.serial}</p>
+                                <p className="text-xs text-gray-500">Registrado en: {item.clients.join(', ')}</p>
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0 ml-4">
+                                <div className="font-bold text-xs bg-red-500 text-white px-2 py-1 rounded-lg">
+                                  {item.count} veces
+                                </div>
+                                <ChevronRight className="w-4 h-4 text-red-400" />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className={cn(
+                        "p-6 rounded-2xl border text-center",
+                        darkMode ? "bg-white/5 border-white/5" : "bg-gray-50 border-gray-100"
+                      )}>
+                        <p className="text-xs font-bold text-emerald-500 uppercase">No se encontraron seriales duplicados</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-12 gap-8 mt-8">
+                  {/* Relación Consumo vs Impresoras */}
+                  <div className="col-span-8">
+                    <h4 className="text-[10px] font-bold text-gray-400 uppercase mb-4">Relación Consumo vs Impresoras (Top 10)</h4>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left">
+                        <thead className={cn(
+                          "text-[10px] font-bold uppercase transition-colors duration-300",
+                          darkMode ? "bg-white/5 text-gray-500" : "bg-gray-50 text-gray-400"
+                        )}>
+                          <tr>
+                            <th className="px-4 py-3">Cliente</th>
+                            <th className="px-4 py-3 text-center">Impresoras</th>
+                            <th className="px-4 py-3 text-center">Consumo (Cajas)</th>
+                            <th className="px-4 py-3 text-right">Promedio / Impresora</th>
+                          </tr>
+                        </thead>
+                        <tbody className={cn(
+                          "divide-y transition-colors duration-300",
+                          darkMode ? "divide-white/5" : "divide-gray-100"
+                        )}>
+                          {printerMetrics.clientPrinterStats.slice(0, 10).map((stat, idx) => (
+                            <tr key={idx} className={darkMode ? "hover:bg-white/5" : "hover:bg-gray-50"}>
+                              <td className="px-4 py-3 font-bold text-xs truncate max-w-[200px]">{stat.clientName}</td>
+                              <td className="px-4 py-3 text-center font-black">{stat.printerCount}</td>
+                              <td className="px-4 py-3 text-center font-black text-[#ED1C24]">{stat.consumption}</td>
+                              <td className="px-4 py-3 text-right font-bold text-gray-500">
+                                {stat.printerCount > 0 ? (stat.consumption / stat.printerCount).toFixed(1) : '0'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Clientes sin impresora */}
+                  <div className="col-span-4">
+                    <h4 className="text-[10px] font-bold text-gray-400 uppercase mb-4">Clientes sin Impresora Registrada</h4>
+                    <div className="space-y-2 max-h-[300px] overflow-y-auto custom-scrollbar pr-2">
+                      {printerMetrics.clientsWithoutPrinters.map((client, idx) => (
+                        <div key={idx}
+                          onClick={() => { setSelectedClient(client); setView('clients'); }}
+                          className={cn(
+                          "p-3 rounded-xl border flex items-center justify-between cursor-pointer transition-all",
+                          darkMode ? "bg-white/5 border-white/5 hover:bg-amber-500/10 hover:border-amber-500/20" : "bg-gray-50 border-gray-100 hover:bg-amber-50 hover:border-amber-200"
+                        )}>
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className={cn("w-6 h-6 rounded-md flex items-center justify-center font-black text-[10px] shrink-0",
+                              darkMode ? "bg-amber-500/20 text-amber-400" : "bg-amber-100 text-amber-600"
+                            )}>
+                              {client.name.charAt(0)}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="font-bold text-xs truncate">{client.name}</p>
+                              {client.province && (
+                                <p className={cn("text-[9px] truncate", darkMode ? "text-gray-600" : "text-gray-400")}>{client.province}</p>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <AlertCircle className="w-4 h-4 text-amber-500" />
+                            <ChevronRight className="w-3.5 h-3.5 text-amber-400 opacity-0 group-hover:opacity-100" />
+                          </div>
+                        </div>
+                      ))}
+                      {printerMetrics.clientsWithoutPrinters.length === 0 && (
+                        <p className="text-xs text-gray-400 italic">Todos los clientes tienen impresoras registradas</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* ── RETORNOS ── */}
+            {returnsSummary.returns.length > 0 && (
+              <div className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                <div className={cn("px-6 py-4 border-b flex items-center justify-between flex-wrap gap-3", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+                  <h3 className={cn("text-[10px] font-bold uppercase tracking-wider flex items-center gap-2", darkMode ? "text-gray-400" : "text-gray-600")}>
+                    <TrendingDown className="w-3.5 h-3.5 text-amber-400" /> Retornos / Devoluciones
+                  </h3>
+                  <div className="flex items-center gap-4">
+                    <div className="text-center">
+                      <p className="text-lg font-black text-amber-400">{returnsSummary.totalUnits}</p>
+                      <p className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>cajas devueltas</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-lg font-black text-red-400">${returnsSummary.totalValue.toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                      <p className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>valor total devuelto</p>
+                    </div>
+                  </div>
+                </div>
+                <div className="overflow-x-auto max-h-72 overflow-y-auto custom-scrollbar">
+                  <table className="w-full text-left text-xs">
+                    <thead className={cn("text-[9px] font-bold uppercase tracking-wider sticky top-0 z-10", darkMode ? "text-gray-600 bg-[#16161A]" : "text-gray-400 bg-white")}>
+                      <tr>
+                        <th className="px-5 py-2.5">Fecha</th>
+                        <th className="px-5 py-2.5">Cliente</th>
+                        <th className="px-5 py-2.5">Vendedor</th>
+                        <th className="px-5 py-2.5">Factura</th>
+                        <th className="px-5 py-2.5 text-center">Medida</th>
+                        <th className="px-5 py-2.5 text-center">Cajas</th>
+                        <th className="px-5 py-2.5 text-right">Valor</th>
+                        <th className="px-5 py-2.5 text-center">Acción</th>
+                      </tr>
+                    </thead>
+                    <tbody className={cn("divide-y", darkMode ? "divide-white/4" : "divide-gray-50")}>
+                      {returnsSummary.returns.map((r, i) => {
+                        const client = allClients.find(c => c.id === r.client_id);
+                        return (
+                          <tr key={i} className={cn("transition-colors", darkMode ? "hover:bg-white/3" : "hover:bg-amber-50/40")}>
+                            <td className={cn("px-5 py-3 font-medium", darkMode ? "text-gray-400" : "text-gray-600")}>{r.order_date}</td>
+                            <td className="px-5 py-3">
+                              <p className="font-semibold truncate max-w-[200px]">{client?.name || '—'}</p>
+                              <p className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>{client?.province || '—'}</p>
+                            </td>
+                            <td className={cn("px-5 py-3 text-[10px]", darkMode ? "text-gray-500" : "text-gray-400")}>{client?.salesperson || '—'}</td>
+                            <td className={cn("px-5 py-3 font-mono text-[10px]", darkMode ? "text-gray-500" : "text-gray-400")}>{r.invoice_number || '—'}</td>
+                            <td className="px-5 py-3 text-center">
+                              {r.size && <span className={cn("px-1.5 py-0.5 rounded text-[9px] font-black uppercase", darkMode ? "bg-white/10 text-gray-300" : "bg-gray-800 text-white")}>{r.size}</span>}
+                            </td>
+                            <td className="px-5 py-3 text-center">
+                              <span className="font-black text-amber-400">{r.quantity}</span>
+                            </td>
+                            <td className="px-5 py-3 text-right font-bold text-red-400">
+                              ${Math.abs(r.quantity * (r.unit_cost || 0)).toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </td>
+                            <td className="px-5 py-3 text-center">
+                              <button onClick={() => { if (client) { setSelectedClient(client); setView('clients'); } }}
+                                className={cn("text-[9px] font-bold px-2.5 py-1 rounded-lg transition-colors inline-flex items-center gap-1",
+                                  darkMode ? "bg-white/8 text-gray-400 hover:bg-white/12" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                                )}>
+                                <ArrowRight className="w-3 h-3" /> Ver
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {view === 'inventory' && (
+          <div className="col-span-12 flex flex-col gap-6 min-h-0 overflow-y-auto pr-2 pb-8 custom-scrollbar">
+
+            {/* Header */}
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-black tracking-tight flex items-center gap-2">
+                  <Package className="w-5 h-5 text-[#ED1C24]" /> Control de Inventario
+                </h2>
+                <p className={cn("text-[10px] font-medium uppercase tracking-wider mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>
+                  Stock real · Entradas · Lotes · Mínimos
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                {/* Film type filter removed from inventory header — each tab manages its own filter */}
+                <div className={cn("flex items-center gap-1 p-1 rounded-xl", darkMode ? "bg-white/5" : "bg-gray-100")}>
+                  {([['overview','Stock Tiempo'], ['movements','Movimientos'], ['stock-film','Stock Film']] as const).map(([tab, label]) => (
+                    <button key={tab} onClick={() => setInventoryTab(tab)}
+                      className={cn("px-3 py-1.5 rounded-lg text-xs font-semibold transition-all",
+                        inventoryTab === tab
+                          ? tab === 'stock-film'
+                            ? "bg-cyan-500 text-white shadow-sm"
+                            : (darkMode ? "bg-[#ED1C24] text-white" : "bg-white text-[#ED1C24] shadow-sm border border-gray-200/80")
+                          : (darkMode ? "text-gray-500 hover:text-gray-300" : "text-gray-500 hover:text-gray-700")
+                      )}>{label}</button>
+                  ))}
+                </div>
+                {inventoryTab !== 'stock-film' && (
+                <button
+                  onClick={() => { setNewStockEntry({ date: new Date().toISOString().split('T')[0], film_type: (globalFilmFilter === 'DIHL' ? 'DIHL' : 'DIHT') as 'DIHT'|'DIHL' }); setIsStockEntryModalOpen(true); }}
+                  className="bg-[#ED1C24] text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 hover:bg-[#D11920] shadow-md shadow-red-500/20 transition-all"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Nueva Entrada
+                </button>
+                )}
+              </div>
+            </div>
+
+            {/* ── TAB: OVERVIEW (merged into Stock Tiempo) ── */}
+            {false && inventoryTab === 'overview' && (
+              <>
+                {/* ── STOCK DE APERTURA ── */}
+                {(() => {
+                  const SIZES = ['8x10', '10x12', '10x14', '14x17'];
+                  const TYPES = ['DIHT', 'DIHL'] as ('DIHT' | 'DIHL')[];
+                  const hasEdits = Object.keys(openingStockEdit).length > 0;
+                  return (
+                    <div className={cn("rounded-xl border p-5", darkMode ? "bg-white/3 border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                      <div className="flex items-center justify-between mb-4">
+                        <div>
+                          <h3 className={cn("text-xs font-black uppercase tracking-wider", darkMode ? "text-gray-300" : "text-gray-700")}>Stock de Apertura</h3>
+                          <p className={cn("text-[10px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>Cajas en bodega al iniciar. Se suman a las compras posteriores y se descuentan las ventas.</p>
+                        </div>
+                        {hasEdits && (
+                          <button onClick={handleSaveOpeningStock} disabled={isSavingOpening}
+                            className="bg-emerald-500 text-white px-4 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 hover:bg-emerald-400 disabled:opacity-50 transition-all">
+                            <Save className="w-3.5 h-3.5" /> {isSavingOpening ? 'Guardando...' : 'Guardar apertura'}
+                          </button>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-4 gap-3">
+                        {SIZES.map(size => (
+                          <div key={size} className={cn("rounded-xl p-3 border", darkMode ? "bg-white/4 border-white/8" : "bg-gray-50 border-gray-100")}>
+                            <span className={cn("text-[10px] font-black uppercase px-2 py-0.5 rounded mb-3 inline-block", darkMode ? "bg-white/10 text-white" : "bg-gray-800 text-white")}>{size}</span>
+                            <div className="space-y-2">
+                              {TYPES.map(ft => {
+                                const key = `${size}-${ft}`;
+                                const existing = stockEntries.find(e => e.is_opening && e.size === size && (e.film_type || 'DIHT') === ft);
+                                const currentVal = openingStockEdit[key] !== undefined ? openingStockEdit[key] : (existing?.quantity?.toString() || '');
+                                return (
+                                  <div key={ft} className="flex items-center gap-2">
+                                    <span className={cn("text-[9px] font-black px-1.5 py-0.5 rounded shrink-0",
+                                      ft === 'DIHL' ? "bg-blue-500/20 text-blue-400" : "bg-[#ED1C24]/15 text-[#ED1C24]"
+                                    )}>{ft === 'DIHL' ? 'HL' : 'HT'}</span>
+                                    <input
+                                      type="number" min={0} placeholder="0"
+                                      value={currentVal}
+                                      onChange={e => setOpeningStockEdit(p => ({ ...p, [key]: e.target.value }))}
+                                      className={cn("w-full text-right text-xs font-black rounded-lg px-2 py-1 outline-none border focus:ring-2 focus:ring-emerald-500/30",
+                                        openingStockEdit[key] !== undefined
+                                          ? (darkMode ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400" : "bg-emerald-50 border-emerald-300 text-emerald-700")
+                                          : (darkMode ? "bg-white/8 border-white/10 text-white" : "bg-white border-gray-200 text-gray-800")
+                                      )}
+                                    />
+                                    <span className={cn("text-[9px] shrink-0", darkMode ? "text-gray-600" : "text-gray-400")}>cajas</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Stock cards per size */}
+                <div className="grid grid-cols-4 gap-5">
+                  {stockSummary.map(item => (
+                    <div key={item.size} className={cn("rounded-xl p-5 border relative overflow-hidden transition-all",
+                      item.status === 'critical' ? (darkMode ? "bg-red-500/10 border-red-500/30" : "bg-red-50 border-red-200") :
+                      item.status === 'warning' ? (darkMode ? "bg-amber-500/10 border-amber-500/30" : "bg-amber-50 border-amber-200") :
+                      item.status === 'ok' ? (darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm") :
+                      (darkMode ? "bg-white/4 border-white/6" : "bg-gray-50 border-gray-100")
+                    )}>
+                      <div className="flex items-start justify-between mb-3">
+                        <span className={cn("text-sm font-black uppercase px-2.5 py-1 rounded-lg", darkMode ? "bg-white/10 text-white" : "bg-gray-800 text-white")}>{item.size}</span>
+                        {item.status === 'critical' && <span className="text-[9px] font-black px-2 py-0.5 rounded-lg bg-red-500/20 text-red-400 animate-pulse">CRÍTICO</span>}
+                        {item.status === 'warning' && <span className="text-[9px] font-black px-2 py-0.5 rounded-lg bg-amber-500/20 text-amber-400">BAJO</span>}
+                        {item.status === 'ok' && <span className="text-[9px] font-black px-2 py-0.5 rounded-lg bg-emerald-500/20 text-emerald-400">OK</span>}
+                        {item.status === 'unknown' && <span className={cn("text-[9px] font-black px-2 py-0.5 rounded-lg", darkMode ? "bg-white/10 text-gray-500" : "bg-gray-100 text-gray-400")}>SIN DATOS</span>}
+                        {item.status !== 'unknown' && item.current === 0 && item.impliedOpening > 0 && (
+                          <span className="text-[9px] font-black px-2 py-0.5 rounded-lg bg-gray-500/20 text-gray-400">AGOTADO</span>
+                        )}
+                      </div>
+
+                      <p className="text-4xl font-black leading-none">{item.current}</p>
+                      <p className={cn("text-[10px] mt-1 font-medium", darkMode ? "text-gray-500" : "text-gray-400")}>cajas disponibles</p>
+                      {(() => {
+                        // Show m² for both DIHT and DIHL if filter is 'all', or just for the active filter
+                        const m2PerBoxDIHT = FILM_M2_PER_BOX['DIHT']?.[item.size] ?? 0;
+                        const m2PerBoxDIHL = FILM_M2_PER_BOX['DIHL']?.[item.size] ?? 0;
+                        const m2PerBox = globalFilmFilter === 'DIHL' ? m2PerBoxDIHL : m2PerBoxDIHT;
+                        const totalM2 = m2PerBox > 0 ? (item.current * m2PerBox).toFixed(2) : null;
+                        return totalM2 ? (
+                          <p className={cn("text-xs font-bold mt-0.5", darkMode ? "text-cyan-400" : "text-cyan-600")}>
+                            {totalM2} m²
+                          </p>
+                        ) : null;
+                      })()}
+
+                      {/* Breakdown */}
+                      {(item.totalOut > 0 || item.totalIn > 0) && (
+                        <div className={cn("mt-3 space-y-1 text-[10px] pt-3 border-t", darkMode ? "border-white/8" : "border-gray-100")}>
+                          {item.openingQty > 0 && (
+                            <div className="flex justify-between">
+                              <span className={darkMode ? "text-gray-600" : "text-gray-400"}>Apertura</span>
+                              <span className="font-bold text-emerald-400">+{item.openingQty}</span>
+                            </div>
+                          )}
+                          {item.impliedOpening > 0 && item.openingQty === 0 && (
+                            <div className="flex justify-between">
+                              <span className={darkMode ? "text-gray-600" : "text-gray-400"}>Hist. vendido</span>
+                              <span className={cn("font-bold", darkMode ? "text-gray-500" : "text-gray-400")}>{item.impliedOpening}</span>
+                            </div>
+                          )}
+                          {item.purchasedQty > 0 && (
+                            <div className="flex justify-between">
+                              <span className={darkMode ? "text-gray-600" : "text-gray-400"}>Compras</span>
+                              <span className="font-bold text-blue-400">+{item.purchasedQty}</span>
+                            </div>
+                          )}
+                          <div className="flex justify-between">
+                            <span className={darkMode ? "text-gray-600" : "text-gray-400"}>Vendido</span>
+                            <span className="font-bold text-red-400">−{item.totalOut} cj</span>
+                          </div>
+                          {(() => {
+                            const m2PerBox = globalFilmFilter === 'DIHL'
+                              ? (FILM_M2_PER_BOX['DIHL']?.[item.size] ?? 0)
+                              : (FILM_M2_PER_BOX['DIHT']?.[item.size] ?? 0);
+                            const m2Sold = m2PerBox > 0 ? (item.totalOut * m2PerBox).toFixed(2) : null;
+                            return m2Sold ? (
+                              <div className="flex justify-between">
+                                <span className={darkMode ? "text-gray-600" : "text-gray-400"}>m² vendidos</span>
+                                <span className={cn("font-bold", darkMode ? "text-cyan-500" : "text-cyan-600")}>{m2Sold} m²</span>
+                              </div>
+                            ) : null;
+                          })()}
+                        </div>
+                      )}
+
+                      {/* Min stock editable */}
+                      <div className="flex items-center justify-between mt-3 pt-3 border-t border-white/8">
+                        <span className={cn("text-[9px] font-semibold uppercase tracking-wide", darkMode ? "text-gray-600" : "text-gray-400")}>Mínimo</span>
+                        <input
+                          type="number" min={0}
+                          value={item.minimum || ''}
+                          placeholder="—"
+                          onChange={e => {
+                            const v = parseInt(e.target.value) || 0;
+                            const ns = { ...stockMinimums, [item.size]: v };
+                            setStockMinimums(ns);
+                            localStorage.setItem('stock_minimums', JSON.stringify(ns));
+                          }}
+                          className={cn("w-14 text-right text-xs font-black rounded-lg px-2 py-0.5 outline-none border-none focus:ring-2 focus:ring-[#ED1C24]/30",
+                            darkMode ? "bg-white/10 text-white" : "bg-white text-gray-800 border border-gray-200"
+                          )}
+                        />
+                      </div>
+
+                      {/* Progress bar vs minimum */}
+                      {item.minimum > 0 && (
+                        <div className={cn("mt-2 h-1.5 rounded-full overflow-hidden", darkMode ? "bg-white/8" : "bg-gray-200")}>
+                          <div className={cn("h-full rounded-full transition-all",
+                            item.status === 'critical' ? 'bg-red-400' :
+                            item.status === 'warning' ? 'bg-amber-400' : 'bg-emerald-400'
+                          )} style={{ width: `${Math.min(100, (item.current / item.minimum) * 100)}%` }} />
+                        </div>
+                      )}
+
+                      {/* Stock value & avg cost */}
+                      <div className="mt-3 space-y-1">
+                        {item.avgCost > 0 && (
+                          <div className="flex justify-between">
+                            <span className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>Costo promedio</span>
+                            <span className="text-[9px] font-bold">${item.avgCost.toFixed(2)}</span>
+                          </div>
+                        )}
+                        {item.stockValue > 0 && (
+                          <div className="flex justify-between">
+                            <span className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>Valor en stock</span>
+                            <span className="text-[9px] font-black text-[#ED1C24]">${item.stockValue.toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Expiring soon warning */}
+                      {item.expiringSoon.length > 0 && (
+                        <div className={cn("mt-3 p-2 rounded-lg flex items-center gap-1.5", darkMode ? "bg-orange-500/10" : "bg-orange-50")}>
+                          <AlertTriangle className="w-3 h-3 text-orange-400 shrink-0" />
+                          <p className="text-[9px] font-semibold text-orange-400">
+                            {item.expiringSoon.reduce((s, b) => s + b.remaining, 0)} cj vencen en ≤90 días
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Active batches per size */}
+                <div className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                  <div className={cn("px-6 py-4 border-b", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+                    <h3 className={cn("text-[10px] font-bold uppercase tracking-wider", darkMode ? "text-gray-400" : "text-gray-600")}>
+                      Lotes Activos (con stock disponible)
+                    </h3>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className={cn("text-[9px] font-bold uppercase tracking-wider", darkMode ? "text-gray-600 bg-white/2" : "text-gray-400 bg-gray-50/60")}>
+                        <tr>
+                          <th className="px-5 py-2.5">Medida</th>
+                          <th className="px-5 py-2.5">Lote</th>
+                          <th className="px-5 py-2.5">Fecha entrada</th>
+                          <th className="px-5 py-2.5">Vencimiento</th>
+                          <th className="px-5 py-2.5 text-center">Ingresado</th>
+                          <th className="px-5 py-2.5 text-center">Consumido</th>
+                          <th className="px-5 py-2.5 text-center">Disponible</th>
+                          <th className="px-5 py-2.5 text-center">m² disp.</th>
+                          <th className="px-5 py-2.5 text-right">Costo unit.</th>
+                          <th className="px-5 py-2.5 text-right">Valor stock</th>
+                          <th className="px-5 py-2.5">Factura prov.</th>
+                        </tr>
+                      </thead>
+                      <tbody className={cn("divide-y", darkMode ? "divide-white/4" : "divide-gray-50")}>
+                        {stockSummary.flatMap(item => item.batches).map((b, i) => {
+                          const daysToExpiry = Math.ceil((new Date(b.expiry_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+                          return (
+                            <tr key={i} className={cn("transition-colors", darkMode ? "hover:bg-white/3" : "hover:bg-gray-50/60")}>
+                              <td className="px-5 py-3">
+                                <span className={cn("px-2 py-0.5 rounded text-[9px] font-black uppercase", darkMode ? "bg-white/10 text-gray-300" : "bg-gray-800 text-white")}>{b.size}</span>
+                              </td>
+                              <td className={cn("px-5 py-3 font-mono font-semibold", darkMode ? "text-gray-300" : "text-gray-700")}>#{b.batch_number || '—'}</td>
+                              <td className={cn("px-5 py-3", darkMode ? "text-gray-500" : "text-gray-400")}>{b.date}</td>
+                              <td className="px-5 py-3">
+                                <span className={cn("font-medium",
+                                  daysToExpiry <= 30 ? 'text-red-400' :
+                                  daysToExpiry <= 90 ? 'text-amber-400' :
+                                  (darkMode ? "text-gray-500" : "text-gray-400")
+                                )}>
+                                  {b.expiry_date}
+                                  {daysToExpiry <= 90 && <span className="ml-1 text-[9px]">({daysToExpiry}d)</span>}
+                                </span>
+                              </td>
+                              <td className="px-5 py-3 text-center font-semibold">{b.quantity}</td>
+                              <td className={cn("px-5 py-3 text-center", darkMode ? "text-gray-600" : "text-gray-400")}>{b.used}</td>
+                              <td className="px-5 py-3 text-center font-black text-emerald-400">{b.remaining}</td>
+                              <td className="px-5 py-3 text-center">
+                                {(() => {
+                                  const m2pb = getM2PerBox(b.size, b.film_type);
+                                  return m2pb > 0
+                                    ? <span className={cn("text-xs font-semibold", darkMode ? "text-cyan-400" : "text-cyan-600")}>{(b.remaining * m2pb).toFixed(2)}</span>
+                                    : <span className={cn("text-[10px]", darkMode ? "text-gray-700" : "text-gray-300")}>—</span>;
+                                })()}
+                              </td>
+                              <td className={cn("px-5 py-3 text-right font-mono text-xs", darkMode ? "text-gray-400" : "text-gray-600")}>${b.unit_cost.toFixed(2)}</td>
+                              <td className="px-5 py-3 text-right font-bold text-[#ED1C24] text-xs">${(b.unit_cost * b.remaining).toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                              <td className={cn("px-5 py-3 font-mono text-[10px]", darkMode ? "text-gray-600" : "text-gray-400")}>{b.supplier_invoice || '—'}</td>
+                            </tr>
+                          );
+                        })}
+                        {stockSummary.every(s => s.batches.length === 0) && (
+                          <tr><td colSpan={11} className={cn("px-5 py-10 text-center text-xs", darkMode ? "text-gray-600" : "text-gray-400")}>
+                            No hay lotes activos. Registra una entrada de stock para comenzar.
+                          </td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* ── TAB: MOVEMENTS ── */}
+            {inventoryTab === 'movements' && (
+              <div className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                <div className={cn("px-6 py-4 border-b", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+                  <h3 className={cn("text-[10px] font-bold uppercase tracking-wider", darkMode ? "text-gray-400" : "text-gray-600")}>
+                    Historial Completo de Movimientos (entradas + salidas)
+                  </h3>
+                </div>
+                <div className="overflow-x-auto max-h-[600px] overflow-y-auto custom-scrollbar">
+                  <table className="w-full text-left text-xs">
+                    <thead className={cn("text-[9px] font-bold uppercase tracking-wider sticky top-0", darkMode ? "text-gray-600 bg-[#16161A]" : "text-gray-400 bg-white")}>
+                      <tr>
+                        <th className="px-5 py-2.5">Tipo</th>
+                        <th className="px-5 py-2.5">Fecha</th>
+                        <th className="px-5 py-2.5">Medida</th>
+                        <th className="px-5 py-2.5">Lote</th>
+                        <th className="px-5 py-2.5 text-center">Cantidad</th>
+                        <th className="px-5 py-2.5">Referencia</th>
+                        <th className="px-5 py-2.5">Detalle</th>
+                      </tr>
+                    </thead>
+                    <tbody className={cn("divide-y", darkMode ? "divide-white/4" : "divide-gray-50")}>
+                      {[
+                        ...filteredStockEntries.map(e => ({ type: 'in' as const, date: e.date, size: e.size, batch: e.batch_number, qty: e.quantity, ref: e.supplier_invoice, detail: e.notes || 'Compra a Fujifilm' })),
+                        ...filteredConsumosForView.sort((a,b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime()).slice(0, 200).map(r => ({
+                          type: 'out' as const,
+                          date: r.order_date,
+                          size: r.size,
+                          batch: r.batch_number,
+                          qty: r.quantity,
+                          ref: r.invoice_number || '—',
+                          detail: allClients.find(c => c.id === r.client_id)?.name || 'Desconocido'
+                        }))
+                      ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map((m, i) => (
+                        <tr key={i} className={cn("transition-colors", darkMode ? "hover:bg-white/3" : "hover:bg-gray-50/60")}>
+                          <td className="px-5 py-3">
+                            <span className={cn("text-[9px] font-black px-2 py-0.5 rounded-lg",
+                              m.type === 'in' ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/15 text-red-400"
+                            )}>
+                              {m.type === 'in' ? '▲ ENTRADA' : '▼ SALIDA'}
+                            </span>
+                          </td>
+                          <td className={cn("px-5 py-3 font-medium", darkMode ? "text-gray-300" : "text-gray-700")}>{m.date}</td>
+                          <td className="px-5 py-3">
+                            <span className={cn("px-2 py-0.5 rounded text-[9px] font-black uppercase", darkMode ? "bg-white/10 text-gray-300" : "bg-gray-800 text-white")}>{m.size || '—'}</span>
+                          </td>
+                          <td className={cn("px-5 py-3 font-mono text-[10px]", darkMode ? "text-gray-500" : "text-gray-400")}>#{m.batch || '—'}</td>
+                          <td className={cn("px-5 py-3 text-center font-black", m.type === 'in' ? 'text-emerald-400' : 'text-red-400')}>
+                            {m.type === 'in' ? '+' : '−'}{m.qty}
+                          </td>
+                          <td className={cn("px-5 py-3 font-mono text-[10px]", darkMode ? "text-gray-600" : "text-gray-400")}>{m.ref}</td>
+                          <td className={cn("px-5 py-3 text-[10px] max-w-[200px] truncate", darkMode ? "text-gray-500" : "text-gray-500")}>{m.detail}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* ── TAB: STOCK FILM ── */}
+            {inventoryTab === 'stock-film' && (
+              <div className="space-y-5">
+                {/* Header + controls */}
+                <div className={cn("rounded-xl border p-5", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                  <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+                    <div>
+                      <h3 className={cn("text-sm font-black uppercase tracking-wider flex items-center gap-2", darkMode ? "text-white" : "text-gray-800")}>
+                        <span className={cn("w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse inline-block")} />
+                        Planning de Stock Film — Bodega Física
+                      </h3>
+                      <p className={cn("text-[10px] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>
+                        Control mes a mes de entradas y salidas de bodega. Edita directamente cada celda. Balance se calcula automáticamente.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-3 flex-wrap">
+                      {/* Year selector */}
+                      <div className={cn("flex items-center gap-1 p-1 rounded-xl", darkMode ? "bg-white/5" : "bg-gray-100")}>
+                        {([2024, 2025, 2026] as const).map(y => (
+                          <button key={y} onClick={() => setStockFilmYear(y)}
+                            className={cn("px-4 py-1.5 rounded-lg text-xs font-black transition-all",
+                              stockFilmYear === y
+                                ? "bg-cyan-500 text-white shadow-sm"
+                                : (darkMode ? "text-gray-500 hover:text-gray-300" : "text-gray-500 hover:text-gray-700")
+                            )}>{y}</button>
+                        ))}
+                      </div>
+                      {/* Film type filter */}
+                      <div className={cn("flex items-center gap-1 p-1 rounded-xl", darkMode ? "bg-white/5" : "bg-gray-100")}>
+                        {([['all','Todos'], ['DIHT','DI-HT'], ['DIHL','DI-HL'], ['DIML','DI-ML'], ['TXE','TXE']] as const).map(([val, label]) => (
+                          <button key={val} onClick={() => setStockFilmGroupFilter(val)}
+                            className={cn("px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all",
+                              stockFilmGroupFilter === val
+                                ? val === 'DIHL' ? "bg-blue-500/20 text-blue-400 ring-1 ring-blue-500/30"
+                                : val === 'DIHT' ? "bg-[#ED1C24]/15 text-[#ED1C24] ring-1 ring-[#ED1C24]/30"
+                                : val === 'DIML' ? "bg-purple-500/20 text-purple-400 ring-1 ring-purple-500/30"
+                                : val === 'TXE' ? "bg-orange-500/20 text-orange-400 ring-1 ring-orange-500/30"
+                                : (darkMode ? "bg-white/12 text-white" : "bg-gray-800 text-white")
+                                : (darkMode ? "text-gray-600 hover:text-gray-400 hover:bg-white/5" : "text-gray-400 hover:text-gray-600 hover:bg-gray-200")
+                            )}>{label}</button>
+                        ))}
+                      </div>
+                      {/* Reset button */}
+                      <button
+                        onClick={() => {
+                          if (!window.confirm('¿Restaurar datos oficiales del Excel? Se perderán los cambios manuales.')) return;
+                          localStorage.removeItem('stock_film_data');
+                          const empty2024reset = Object.fromEntries(Object.keys(STOCK_FILM_DEFAULT_2025).map(k => [k, { openingBoxes: 0, openingM2: 0, months: Object.fromEntries(['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].map(m => [m, {inBoxes:0,outBoxes:0}])) }]));
+                          const fresh = { '2024': empty2024reset, '2025': STOCK_FILM_DEFAULT_2025, '2026': JSON.parse(JSON.stringify(STOCK_FILM_DEFAULT_2025)) };
+                          setStockFilmData(fresh);
+                        }}
+                        className={cn("px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1.5",
+                          darkMode ? "bg-white/5 text-gray-500 hover:bg-amber-500/15 hover:text-amber-400" : "bg-gray-100 text-gray-400 hover:bg-amber-50 hover:text-amber-600"
+                        )}
+                        title="Restaurar datos oficiales del Excel"
+                      >
+                        ↺ Restaurar datos
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Summary totals row */}
+                  {(() => {
+                    const visibleProds = stockFilmGroupFilter === 'TXE'
+                      ? TXE_PRODUCTS.map(p => ({ ...p, m2box: p.m2box }))
+                      : STOCK_FILM_PRODUCTS.filter(p => stockFilmGroupFilter === 'all' || p.type === stockFilmGroupFilter);
+                    const totals = STOCK_FILM_MONTHS.map(month => {
+                      const monthIdx = STOCK_FILM_MONTHS.indexOf(month);
+                      let totalIn = 0, totalOut = 0, totalBalance = 0, totalInM2 = 0, totalOutM2 = 0, totalBalanceM2 = 0;
+                      visibleProds.forEach(prod => {
+                        const yd = stockFilmData[String(stockFilmYear)]?.[prod.key] || { openingBoxes: 0, openingM2: 0, months: {} };
+                        const inBoxes = yd.months?.[month]?.inBoxes || 0;
+                        // For TXE: use stored outBoxes (manual). For Fujifilm: use real consumos
+                        const outBoxes = stockFilmGroupFilter === 'TXE'
+                          ? (yd.months?.[month]?.outBoxes || 0)
+                          : allConsumos.reduce((s, r) => {
+                          const d = new Date(r.order_date);
+                          if (d.getFullYear() !== stockFilmYear || d.getMonth() !== monthIdx) return s;
+                          if (r.size !== prod.size) return s;
+                          const rft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type === 'DIHL' ? 'DIHL' : r.film_type === 'DIML' ? 'DIML' : 'DIHT';
+                          if (rft !== prod.type) return s;
+                          return s + (r.is_return ? -r.quantity : r.quantity);
+                        }, 0);
+                        totalIn += inBoxes;
+                        totalOut += outBoxes;
+                        totalInM2 += inBoxes * prod.m2box;
+                        totalOutM2 += outBoxes * prod.m2box;
+                      });
+                      // Running balance for summary: sum opening + all IN - all OUT up to this month
+                      visibleProds.forEach(prod => {
+                        const yd = stockFilmData[String(stockFilmYear)]?.[prod.key] || { openingBoxes: 0, openingM2: 0, months: {} };
+                        let running = yd.openingBoxes || 0;
+                        STOCK_FILM_MONTHS.slice(0, monthIdx + 1).forEach((m, mi) => {
+                          const inB = yd.months?.[m]?.inBoxes || 0;
+                          const outB = allConsumos.reduce((s, r) => {
+                            const d = new Date(r.order_date);
+                            if (d.getFullYear() !== stockFilmYear || d.getMonth() !== mi) return s;
+                            if (r.size !== prod.size) return s;
+                            const rft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type === 'DIHL' ? 'DIHL' : r.film_type === 'DIML' ? 'DIML' : 'DIHT';
+                            if (rft !== prod.type) return s;
+                            return s + (r.is_return ? -r.quantity : r.quantity);
+                          }, 0);
+                          running = running + inB - outB;
+                        });
+                        totalBalance += Math.max(0, running);
+                        totalBalanceM2 += Math.max(0, running) * prod.m2box;
+                      });
+                      return { month, totalIn, totalOut, totalBalance, totalInM2: parseFloat(totalInM2.toFixed(1)), totalOutM2: parseFloat(totalOutM2.toFixed(1)), totalBalanceM2: parseFloat(totalBalanceM2.toFixed(1)) };
+                    });
+                    return (
+                      <div className="grid grid-cols-12 gap-2 mb-2">
+                        {totals.map((t, i) => (
+                          <div key={i} className={cn("rounded-lg p-2.5 border text-center", darkMode ? "bg-white/4 border-white/8" : "bg-gray-50 border-gray-100")}>
+                            <p className={cn("text-[9px] font-black uppercase mb-1.5", darkMode ? "text-gray-500" : "text-gray-400")}>{t.month}</p>
+                            <p className={cn("text-[10px] font-semibold", darkMode ? "text-emerald-400" : "text-emerald-600")}>+{t.totalIn}</p>
+                            <p className={cn("text-[10px] font-semibold", darkMode ? "text-red-400" : "text-red-500")}>−{t.totalOut}</p>
+                            <p className={cn("text-xs font-black mt-1", t.totalBalance < 50 ? 'text-red-400' : t.totalBalance < 100 ? 'text-amber-400' : (darkMode ? "text-cyan-400" : "text-cyan-600"))}>{t.totalBalance}</p>
+                            <p className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>{t.totalBalanceM2} m²</p>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                  <p className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>Resumen: verde = entradas · rojo = salidas · cyan = balance (cajas + m²)</p>
+                </div>
+
+                {/* Per-product planning tables */}
+                {(stockFilmGroupFilter === 'TXE' ? TXE_PRODUCTS : STOCK_FILM_PRODUCTS.filter(p => stockFilmGroupFilter === 'all' || p.type === stockFilmGroupFilter)).map(prod => {
+                  const isTXE = prod.type === 'TXE';
+                  // For TXE: use stored data (with TXE_DEFAULT_2024 as fallback for 2024)
+                  // For Fujifilm: use STOCK_FILM_DEFAULT_2025 as fallback
+                  const yearData = stockFilmData[String(stockFilmYear)]?.[prod.key]
+                    || (isTXE && stockFilmYear === 2024 ? TXE_DEFAULT_2024[prod.key as keyof typeof TXE_DEFAULT_2024] : null)
+                    || (!isTXE ? STOCK_FILM_DEFAULT_2025[prod.key as keyof typeof STOCK_FILM_DEFAULT_2025] : null)
+                    || { openingBoxes: 0, openingM2: 0, months: {} };
+
+                  // ── For TXE: use stored outBoxes. For Fujifilm: compute from allConsumos ──
+                  const realOutByMonth = {} as Record<string, { boxes: number; m2: number }>;
+                  STOCK_FILM_MONTHS.forEach(m => {
+                    if (isTXE) {
+                      const stored = yearData.months?.[m]?.outBoxes || 0;
+                      realOutByMonth[m] = { boxes: stored, m2: parseFloat((stored * prod.m2box).toFixed(2)) };
+                    } else {
+                      realOutByMonth[m] = { boxes: 0, m2: 0 };
+                    }
+                  });
+                  if (!isTXE) {
+                    allConsumos.forEach(r => {
+                      const d = new Date(r.order_date);
+                      if (d.getFullYear() !== stockFilmYear) return;
+                      if (r.size !== prod.size) return;
+                      const rft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT'
+                                : r.film_type === 'DIHL' ? 'DIHL'
+                                : r.film_type === 'DIML' ? 'DIML'
+                                : 'DIHT';
+                      if (rft !== prod.type) return;
+                      const monthLabel = STOCK_FILM_MONTHS[d.getMonth()];
+                      const qty = r.is_return ? -r.quantity : r.quantity;
+                      realOutByMonth[monthLabel].boxes += qty;
+                      realOutByMonth[monthLabel].m2 = parseFloat((realOutByMonth[monthLabel].m2 + getTotalM2(qty, prod.size, prod.type)).toFixed(2));
+                    });
+                  }
+
+                  // Build balances using REAL OUT instead of manual outBoxes
+                  const realBalances = STOCK_FILM_MONTHS.map(month => {
+                    const mv = yearData.months?.[month] || { inBoxes: 0, outBoxes: 0 };
+                    return {
+                      month,
+                      inBoxes: mv.inBoxes,
+                      outBoxes: realOutByMonth[month].boxes,
+                      outM2: realOutByMonth[month].m2,
+                      inM2: parseFloat((mv.inBoxes * prod.m2box).toFixed(2)),
+                    };
+                  });
+                  // Running balance
+                  let running = yearData.openingBoxes || 0;
+                  const balances = realBalances.map(b => {
+                    running = running + b.inBoxes - b.outBoxes;
+                    return {
+                      ...b,
+                      balanceBoxes: Math.max(0, running),
+                      balanceM2: parseFloat((Math.max(0, running) * prod.m2box).toFixed(2)),
+                    };
+                  });
+
+                  const typeColor = prod.type === 'DIHL' ? 'bg-blue-500/20 text-blue-400' : prod.type === 'DIML' ? 'bg-purple-500/20 text-purple-400' : prod.type === 'TXE' ? 'bg-orange-500/20 text-orange-400' : 'bg-[#ED1C24]/15 text-[#ED1C24]';
+                  const totalIn = balances.reduce((s, b) => s + b.inBoxes, 0);
+                  const totalOut = balances.reduce((s, b) => s + b.outBoxes, 0);
+                  const totalInM2 = balances.reduce((s, b) => s + b.inM2, 0).toFixed(1);
+                  const totalOutM2 = balances.reduce((s, b) => s + b.outM2, 0).toFixed(1);
+                  const endBalance = balances[balances.length - 1]?.balanceBoxes ?? 0;
+                  const endBalanceM2 = balances[balances.length - 1]?.balanceM2 ?? 0;
+                  // Count matching sales records for this year/product
+                  const matchingRecords = allConsumos.filter(r => {
+                    const d = new Date(r.order_date);
+                    if (d.getFullYear() !== stockFilmYear) return false;
+                    if (r.size !== prod.size) return false;
+                    const rft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type === 'DIHL' ? 'DIHL' : r.film_type === 'DIML' ? 'DIML' : 'DIHT';
+                    return rft === prod.type;
+                  }).length;
+                  return (
+                    <div key={prod.key} className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                      {/* Product header */}
+                      <div className={cn("px-5 py-3 border-b flex items-center justify-between flex-wrap gap-3", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50/80")}>
+                        <div className="flex items-center gap-3">
+                          <span className={cn("text-[9px] font-black px-2.5 py-1 rounded-lg", typeColor)}>{prod.type}</span>
+                          <div>
+                            <h4 className={cn("text-xs font-black", darkMode ? "text-white" : "text-gray-800")}>{prod.label}</h4>
+                            <div className={cn("flex items-center gap-2 mt-0.5 flex-wrap text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>
+                              <span>{prod.m2box} m²/caja</span>
+                              <span>·</span>
+                              <span>Stock apertura:</span>
+                              <input
+                                type="number" min={0}
+                                defaultValue={yearData.openingBoxes}
+                                key={`opening-${prod.key}-${stockFilmYear}-${yearData.openingBoxes}`}
+                                onKeyDown={e => {
+                                  if (e.key !== 'Enter') return;
+                                  const newVal = parseInt((e.target as HTMLInputElement).value) || 0;
+                                  if (newVal === yearData.openingBoxes) return;
+                                  const ok = window.confirm(
+                                    `¿Modificar Stock Apertura de ${prod.label} en ${stockFilmYear}?\n\nValor actual: ${yearData.openingBoxes} cj\nNuevo valor: ${newVal} cj`
+                                  );
+                                  if (!ok) { (e.target as HTMLInputElement).value = String(yearData.openingBoxes); return; }
+                                  const m2 = parseFloat((newVal * prod.m2box).toFixed(2));
+                                  setStockFilmData(prev => {
+                                    const updated = JSON.parse(JSON.stringify(prev));
+                                    const y = String(stockFilmYear);
+                                    if (!updated[y]) updated[y] = {};
+                                    if (!updated[y][prod.key]) updated[y][prod.key] = { openingBoxes: 0, openingM2: 0, months: {} };
+                                    updated[y][prod.key].openingBoxes = newVal;
+                                    updated[y][prod.key].openingM2 = m2;
+                                    localStorage.setItem('stock_film_data', JSON.stringify(updated));
+                                    setDoc(doc(db, 'settings', 'stock_film_data'), { data: JSON.stringify(updated), updatedAt: new Date().toISOString() })
+                                      .catch(e => console.warn('Firestore opening save failed:', e));
+                                    return updated;
+                                  });
+                                }}
+                                className={cn("w-16 text-center font-black rounded px-1 py-0.5 outline-none focus:ring-1 focus:ring-cyan-500/50 transition-colors",
+                                  yearData.openingBoxes > 0
+                                    ? (darkMode ? "bg-cyan-500/10 text-cyan-300 border border-cyan-500/30" : "bg-cyan-50 text-cyan-700 border border-cyan-200")
+                                    : (darkMode ? "bg-white/5 text-gray-500 border border-white/10" : "bg-white text-gray-400 border border-gray-200")
+                                )}
+                              />
+                              <span className={cn(darkMode ? "text-gray-600" : "text-gray-400")}>cj · {parseFloat((yearData.openingBoxes * prod.m2box).toFixed(1))} m²</span>
+                              {matchingRecords > 0 && (
+                                <span className={cn("px-1.5 py-0.5 rounded font-bold", darkMode ? "bg-emerald-500/15 text-emerald-400" : "bg-emerald-50 text-emerald-600")}>
+                                  {matchingRecords} registros de venta
+                                </span>
+                              )}
+                              {matchingRecords === 0 && (
+                                <span className="text-amber-400/70">sin ventas en {stockFilmYear}</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-4 text-[10px]">
+                          <div className="text-center">
+                            <p className={cn("font-black text-base", darkMode ? "text-emerald-400" : "text-emerald-600")}>{totalIn}</p>
+                            <p className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>Total In ({totalInM2} m²)</p>
+                          </div>
+                          {(() => {
+                            const transitByMonth = stockFilmTransit[String(stockFilmYear)]?.[prod.key] || {};
+                            const totalTransit = STOCK_FILM_MONTHS.reduce((s, m) => s + (transitByMonth[m] || 0), 0);
+                            const transitM2 = parseFloat((totalTransit * prod.m2box).toFixed(1));
+                            if (totalTransit === 0) return null;
+                            return (
+                              <div className="text-center">
+                                <p className={cn("font-black text-base", darkMode ? "text-amber-400" : "text-amber-600")}>{totalTransit}</p>
+                                <p className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>En tránsito ({transitM2} m²)</p>
+                              </div>
+                            );
+                          })()}
+                          <div className="text-center">
+                            <p className={cn("font-black text-base", darkMode ? "text-red-400" : "text-red-500")}>{totalOut}</p>
+                            <p className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>Total Out ({totalOutM2} m²)</p>
+                          </div>
+                          <div className="text-center">
+                            <p className={cn("font-black text-base", endBalance < 30 ? 'text-red-400' : endBalance < 80 ? 'text-amber-400' : (darkMode ? "text-cyan-400" : "text-cyan-600"))}>{endBalance}</p>
+                            <p className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>Balance Dic ({endBalanceM2.toFixed(1)} m²)</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Monthly grid */}
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs min-w-[1100px]">
+                          <thead className={cn("text-[9px] font-bold uppercase tracking-wider", darkMode ? "text-gray-600 bg-white/2" : "text-gray-400 bg-gray-50/60")}>
+                            <tr>
+                              <th className="px-4 py-2 text-left sticky left-0" style={{ background: 'inherit' }}>Concepto</th>
+                              {STOCK_FILM_MONTHS.map(m => <th key={m} className="px-3 py-2 text-center min-w-[80px]">{m}</th>)}
+                              <th className="px-4 py-2 text-center">TOTAL / END</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {/* IN row */}
+                            <tr className={cn(darkMode ? "bg-emerald-500/5 hover:bg-emerald-500/10" : "bg-emerald-50/60 hover:bg-emerald-50")}>
+                              <td className={cn("px-4 py-2 font-bold text-[10px] sticky left-0 whitespace-nowrap", darkMode ? "text-emerald-400 bg-[#16161A]" : "text-emerald-700 bg-white")}>
+                                ▲ IN (Cajas)
+                              </td>
+                              {balances.map((b, i) => (
+                                <td key={i} className="px-2 py-1.5 text-center">
+                                  <input
+                                    type="number" min={0}
+                                    defaultValue={b.inBoxes || ''}
+                                    placeholder="0"
+                                    key={`${prod.key}-${b.month}-${b.inBoxes}`}
+                                    onKeyDown={e => {
+                                      if (e.key !== 'Enter') return;
+                                      const newVal = parseInt((e.target as HTMLInputElement).value) || 0;
+                                      if (newVal === b.inBoxes) return;
+                                      if (b.inBoxes > 0 && newVal !== b.inBoxes) {
+                                        const ok = window.confirm(
+                                          `¿Modificar IN de ${b.month} para ${prod.label}?\n\nValor actual: ${b.inBoxes} cajas\nNuevo valor: ${newVal} cajas`
+                                        );
+                                        if (!ok) { (e.target as HTMLInputElement).value = String(b.inBoxes || ''); return; }
+                                      }
+                                      updateStockFilmCell(stockFilmYear, prod.key, b.month, 'inBoxes', newVal);
+                                      (e.target as HTMLInputElement).blur();
+                                    }}
+                                    onBlur={e => {
+                                      // Reset to saved value if user clicks away without pressing Enter
+                                      e.target.value = String(b.inBoxes || '');
+                                    }}
+                                    className={cn("w-16 text-center text-xs font-black rounded-lg px-2 py-1 outline-none focus:ring-2 focus:ring-emerald-500/30 transition-colors",
+                                      b.inBoxes > 0
+                                        ? (darkMode ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30" : "bg-emerald-50 text-emerald-700 border border-emerald-200")
+                                        : (darkMode ? "bg-white/5 text-gray-600 border border-white/8" : "bg-white text-gray-400 border border-gray-100")
+                                    )}
+                                  />
+                                </td>
+                              ))}
+                              <td className={cn("px-4 py-2 text-center font-black", darkMode ? "text-emerald-400" : "text-emerald-600")}>{totalIn}</td>
+                            </tr>
+                            {/* IN m² row */}
+                            <tr className={cn(darkMode ? "bg-emerald-500/3" : "bg-emerald-50/30")}>
+                              <td className={cn("px-4 py-2 font-semibold text-[9px] sticky left-0 whitespace-nowrap", darkMode ? "text-emerald-500/60 bg-[#16161A]" : "text-emerald-500 bg-white")}>
+                                ▲ IN (m²)
+                              </td>
+                              {balances.map((b, i) => (
+                                <td key={i} className={cn("px-2 py-1 text-center text-[10px]", b.inM2 > 0 ? (darkMode ? "text-emerald-500" : "text-emerald-600") : (darkMode ? "text-gray-700" : "text-gray-300"))}>
+                                  {b.inM2 > 0 ? b.inM2.toFixed(1) : '—'}
+                                </td>
+                              ))}
+                              <td className={cn("px-4 py-1 text-center text-[10px] font-bold", darkMode ? "text-emerald-500" : "text-emerald-600")}>{totalInM2} m²</td>
+                            </tr>
+                            {/* TRANSIT row — editable */}
+                            {(() => {
+                              const transitByMonth = stockFilmTransit[String(stockFilmYear)]?.[prod.key] || {};
+                              const totalTransit = STOCK_FILM_MONTHS.reduce((s, m) => s + (transitByMonth[m] || 0), 0);
+                              return (
+                                <tr className={cn(darkMode ? "bg-amber-500/5 hover:bg-amber-500/10" : "bg-amber-50/60 hover:bg-amber-50")}>
+                                  <td className={cn("px-4 py-2 sticky left-0 whitespace-nowrap", darkMode ? "bg-[#16161A]" : "bg-white")}>
+                                    <span className={cn("font-bold text-[10px]", darkMode ? "text-amber-400" : "text-amber-600")}>⇒ TRÁNSITO</span>
+                                    <span className={cn("ml-1.5 text-[8px] font-semibold px-1.5 py-0.5 rounded", darkMode ? "bg-amber-500/15 text-amber-500/70" : "bg-amber-100 text-amber-500")}>pedido</span>
+                                  </td>
+                                  {STOCK_FILM_MONTHS.map((month, i) => {
+                                    const val = transitByMonth[month] || 0;
+                                    return (
+                                      <td key={i} className="px-2 py-1.5 text-center">
+                                        <input
+                                          type="number" min={0}
+                                          defaultValue={val || ''}
+                                          placeholder="0"
+                                          key={`transit-${prod.key}-${month}-${val}`}
+                                          onKeyDown={e => {
+                                            if (e.key !== 'Enter') return;
+                                            const newVal = parseInt((e.target as HTMLInputElement).value) || 0;
+                                            if (newVal === val) return;
+                                            if (val > 0 && newVal !== val) {
+                                              const ok = window.confirm(
+                                                `¿Modificar TRÁNSITO de ${month} para ${prod.label}?\n\nValor actual: ${val} cajas\nNuevo valor: ${newVal} cajas`
+                                              );
+                                              if (!ok) { (e.target as HTMLInputElement).value = String(val || ''); return; }
+                                            }
+                                            updateStockFilmTransit(stockFilmYear, prod.key, month, newVal);
+                                            (e.target as HTMLInputElement).blur();
+                                          }}
+                                          onBlur={e => {
+                                            e.target.value = String(val || '');
+                                          }}
+                                          className={cn("w-16 text-center text-xs font-black rounded-lg px-2 py-1 outline-none focus:ring-2 focus:ring-amber-500/30 transition-colors",
+                                            val > 0
+                                              ? (darkMode ? "bg-amber-500/15 text-amber-300 border border-amber-500/30" : "bg-amber-50 text-amber-700 border border-amber-200")
+                                              : (darkMode ? "bg-white/5 text-gray-600 border border-white/8" : "bg-white text-gray-400 border border-gray-100")
+                                          )}
+                                          title="Cajas pedidas a Fujifilm, en camino"
+                                        />
+                                      </td>
+                                    );
+                                  })}
+                                  <td className={cn("px-4 py-2 text-center font-black", totalTransit > 0 ? (darkMode ? "text-amber-400" : "text-amber-600") : (darkMode ? "text-gray-700" : "text-gray-300"))}>
+                                    {totalTransit || '—'}
+                                  </td>
+                                </tr>
+                              );
+                            })()}
+                            {/* OUT row — editable for TXE, auto from consumos for Fujifilm */}
+                            <tr className={cn(darkMode ? "bg-red-500/5" : "bg-red-50/60")}>
+                              <td className={cn("px-4 py-2 font-bold text-[10px] sticky left-0 whitespace-nowrap", darkMode ? "text-red-400 bg-[#16161A]" : "text-red-600 bg-white")}>
+                                ▼ OUT (Cajas)
+                                <span className={cn("ml-1.5 text-[8px] font-semibold px-1.5 py-0.5 rounded",
+                                  isTXE
+                                    ? (darkMode ? "bg-orange-500/15 text-orange-400" : "bg-orange-100 text-orange-500")
+                                    : (darkMode ? "bg-red-500/15 text-red-500/70" : "bg-red-100 text-red-400")
+                                )}>{isTXE ? 'manual' : 'auto'}</span>
+                              </td>
+                              {balances.map((b, i) => {
+                                // TXE: editable input
+                                if (isTXE) {
+                                  return (
+                                    <td key={i} className="px-2 py-1.5 text-center">
+                                      <input
+                                        type="number" min={0}
+                                        defaultValue={b.outBoxes || ''}
+                                        placeholder="0"
+                                        key={`txe-out-${prod.key}-${b.month}-${b.outBoxes}`}
+                                        onKeyDown={e => {
+                                          if (e.key !== 'Enter') return;
+                                          const newVal = parseInt((e.target as HTMLInputElement).value) || 0;
+                                          if (newVal === b.outBoxes) return;
+                                          updateStockFilmCell(stockFilmYear, prod.key, b.month, 'outBoxes', newVal);
+                                          (e.target as HTMLInputElement).blur();
+                                        }}
+                                        onBlur={e => { e.target.value = String(b.outBoxes || ''); }}
+                                        className={cn("w-16 text-center text-xs font-black rounded-lg px-2 py-1 outline-none focus:ring-2 focus:ring-orange-500/30 transition-colors",
+                                          b.outBoxes > 0
+                                            ? (darkMode ? "bg-orange-500/15 text-orange-300 border border-orange-500/30" : "bg-orange-50 text-orange-700 border border-orange-200")
+                                            : (darkMode ? "bg-white/5 text-gray-600 border border-white/8" : "bg-white text-gray-400 border border-gray-100")
+                                        )}
+                                      />
+                                    </td>
+                                  );
+                                }
+                                // Fujifilm: auto from consumos, clickable
+                                if (!b.outBoxes) return (
+                                  <td key={i} className="px-2 py-1.5 text-center">
+                                    <span className={cn("font-black text-xs", darkMode ? "text-gray-700" : "text-gray-300")}>—</span>
+                                  </td>
+                                );
+                                const monthIdx = STOCK_FILM_MONTHS.indexOf(b.month);
+                                const cellClients = {} as Record<number, { boxes: number; invoices: string[] }>;
+                                allConsumos.forEach(r => {
+                                  const d = new Date(r.order_date);
+                                  if (d.getFullYear() !== stockFilmYear || d.getMonth() !== monthIdx) return;
+                                  if (r.size !== prod.size) return;
+                                  const rft2 = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type === 'DIHL' ? 'DIHL' : r.film_type === 'DIML' ? 'DIML' : 'DIHT';
+                                  if (rft2 !== prod.type) return;
+                                  if (!cellClients[r.client_id]) cellClients[r.client_id] = { boxes: 0, invoices: [] };
+                                  cellClients[r.client_id].boxes += r.is_return ? -r.quantity : r.quantity;
+                                  if (r.invoice_number) cellClients[r.client_id].invoices.push(r.invoice_number);
+                                });
+                                const topClients = Object.entries(cellClients)
+                                  .map(([id, v]) => ({ name: allClients.find(c => c.id === parseInt(id))?.name || '?', boxes: v.boxes, invoices: v.invoices }))
+                                  .filter(c => c.boxes > 0)
+                                  .sort((a, z) => z.boxes - a.boxes);
+                                const tooltipText = topClients.slice(0, 3).map(c => `${c.name.split(' ').slice(0,2).join(' ')}: ${c.boxes} cj`).join('\n');
+                                return (
+                                  <td key={i} className="px-2 py-1.5 text-center">
+                                    <button
+                                      title={tooltipText}
+                                      onClick={() => {
+                                        const clientDetails = Object.entries(cellClients)
+                                          .map(([id, v]) => {
+                                            const cl = allClients.find(c => c.id === parseInt(id));
+                                            return { name: cl?.name || '?', salesperson: cl?.salesperson || '—', province: cl?.province || '—', boxes: v.boxes, m2: parseFloat((v.boxes * prod.m2box).toFixed(2)), invoices: [...new Set(v.invoices)] };
+                                          })
+                                          .filter(c => c.boxes > 0)
+                                          .sort((a, z) => z.boxes - a.boxes);
+                                        setStockFilmCellDetail({ prod, month: b.month, year: stockFilmYear, clients: clientDetails, totalBoxes: b.outBoxes, totalM2: b.outM2 });
+                                      }}
+                                      className={cn("group relative font-black text-xs px-2 py-1 rounded-lg transition-all cursor-pointer",
+                                        darkMode ? "text-red-400 hover:bg-red-500/20 hover:text-red-300" : "text-red-600 hover:bg-red-100 hover:text-red-700"
+                                      )}
+                                    >
+                                      {b.outBoxes}
+                                      <span className={cn("absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full", darkMode ? "bg-red-400" : "bg-red-500")} />
+                                    </button>
+                                  </td>
+                                );
+                              })}
+                              <td className={cn("px-4 py-2 text-center font-black", darkMode ? "text-red-400" : "text-red-500")}>{totalOut}</td>
+                            </tr>
+                            {/* OUT m² row */}
+                            <tr className={cn(darkMode ? "bg-red-500/3" : "bg-red-50/30")}>
+                              <td className={cn("px-4 py-2 font-semibold text-[9px] sticky left-0 whitespace-nowrap", darkMode ? "text-red-500/60 bg-[#16161A]" : "text-red-400 bg-white")}>
+                                ▼ OUT (m²)
+                              </td>
+                              {balances.map((b, i) => (
+                                <td key={i} className={cn("px-2 py-1 text-center text-[10px]", b.outM2 > 0 ? (darkMode ? "text-red-400/70" : "text-red-500/70") : (darkMode ? "text-gray-700" : "text-gray-300"))}>
+                                  {b.outM2 > 0 ? b.outM2.toFixed(1) : '—'}
+                                </td>
+                              ))}
+                              <td className={cn("px-4 py-1 text-center text-[10px] font-bold", darkMode ? "text-red-400" : "text-red-500")}>{totalOutM2} m²</td>
+                            </tr>
+                            {/* BALANCE row */}
+                            <tr className={cn("border-t-2", darkMode ? "border-white/10 bg-white/4" : "border-gray-200 bg-gray-50")}>
+                              <td className={cn("px-4 py-2.5 font-black text-[10px] sticky left-0 whitespace-nowrap uppercase tracking-wide", darkMode ? "text-cyan-400 bg-[#1a1a1e]" : "text-cyan-700 bg-gray-100")}>
+                                ≡ Balance Cajas
+                              </td>
+                              {balances.map((b, i) => {
+                                const hasMovement = b.inBoxes > 0 || b.outBoxes > 0;
+                                return (
+                                  <td key={i} className="px-2 py-2.5 text-center">
+                                    <span className={cn("font-black text-sm",
+                                      !hasMovement ? (darkMode ? "text-gray-600" : "text-gray-300") :
+                                      b.balanceBoxes < 30 ? 'text-red-400' :
+                                      b.balanceBoxes < 80 ? 'text-amber-400' :
+                                      (darkMode ? "text-cyan-400" : "text-cyan-600")
+                                    )}>{b.balanceBoxes}</span>
+                                  </td>
+                                );
+                              })}
+                              <td className={cn("px-4 py-2.5 text-center font-black", darkMode ? "text-cyan-400" : "text-cyan-600")}>{endBalance}</td>
+                            </tr>
+                            {/* BALANCE m² row */}
+                            <tr className={cn(darkMode ? "bg-white/2" : "bg-gray-50/60")}>
+                              <td className={cn("px-4 py-1.5 font-semibold text-[9px] sticky left-0 whitespace-nowrap", darkMode ? "text-cyan-500/60 bg-[#1a1a1e]" : "text-cyan-500 bg-gray-100")}>
+                                ≡ Balance m²
+                              </td>
+                              {balances.map((b, i) => {
+                                const hasMovement2 = b.inBoxes > 0 || b.outBoxes > 0;
+                                return (
+                                  <td key={i} className={cn("px-2 py-1 text-center text-[10px] font-semibold",
+                                    !hasMovement2 ? (darkMode ? "text-gray-700" : "text-gray-300") :
+                                    b.balanceM2 < 200 ? 'text-red-400/70' :
+                                    b.balanceM2 < 500 ? 'text-amber-400/70' :
+                                    (darkMode ? "text-cyan-500/70" : "text-cyan-600/70")
+                                  )}>
+                                    {b.balanceM2.toFixed(1)}
+                                  </td>
+                                );
+                              })}
+                              <td className={cn("px-4 py-1 text-center text-[10px] font-bold", darkMode ? "text-cyan-500" : "text-cyan-600")}>{endBalanceM2.toFixed(1)} m²</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* Intelligence integration notice */}
+                <div className={cn("rounded-xl border p-4 flex items-start gap-3", darkMode ? "bg-cyan-500/8 border-cyan-500/25" : "bg-cyan-50 border-cyan-200")}>
+                  <Brain className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
+                  <div>
+                    <p className={cn("text-xs font-bold", darkMode ? "text-cyan-300" : "text-cyan-700")}>Integración con Inteligencia</p>
+                    <p className={cn("text-[10px] mt-0.5", darkMode ? "text-cyan-500" : "text-cyan-600")}>
+                      El planning de Stock Film alimenta la pestaña "Proyección" de Inteligencia — puedes ver el comparativo entre lo planificado aquí y la demanda real de clientes mes a mes. El balance proyectado se considera en las alertas de reorden.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+            {/* ── TAB: STOCK TIEMPO ── */}
+            {(inventoryTab === 'stock-tiempo' || inventoryTab === 'overview') && (() => {
+              const FILM_TYPES = ['DIHT', 'DIHL'] as ('DIHT' | 'DIHL')[];
+
+              // Use precomputed data from useMemo (avoids TS annotations in JSX IIFE)
+              const now = new Date();
+              const { allMonths, months, availableYears, matrix, monthTotals, sizeGrandTotal, ftGrandTotal, SIZES } = stockTiempoData;
+
+              // Year selector UI (shared header above both tables)
+              const yearSelector = (
+                <div className={cn("rounded-xl border p-4 flex items-center justify-between gap-4 flex-wrap", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                  <div>
+                    <h3 className={cn("text-sm font-black uppercase tracking-wider", darkMode ? "text-white" : "text-gray-800")}>Stock Tiempo — Ventas Mensuales</h3>
+                    <p className={cn("text-[10px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>
+                      Cajas y m² vendidos por medida · {stockTiempoYear === 'all' ? `${allMonths.length} meses` : `${months.length} meses de ${stockTiempoYear}`}
+                    </p>
+                  </div>
+                  <div className={cn("flex items-center gap-1 p-1 rounded-xl", darkMode ? "bg-white/5" : "bg-gray-100")}>
+                    <button
+                      onClick={() => setStockTiempoYear('all')}
+                      className={cn("px-4 py-1.5 rounded-lg text-xs font-black transition-all",
+                        stockTiempoYear === 'all'
+                          ? "bg-emerald-500 text-white shadow-sm"
+                          : (darkMode ? "text-gray-500 hover:text-gray-300 hover:bg-white/5" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200")
+                      )}>Todos</button>
+                    {availableYears.map(y => (
+                      <button key={y} onClick={() => setStockTiempoYear(y)}
+                        className={cn("px-4 py-1.5 rounded-lg text-xs font-black transition-all",
+                          stockTiempoYear === y
+                            ? "bg-emerald-500 text-white shadow-sm"
+                            : (darkMode ? "text-gray-500 hover:text-gray-300 hover:bg-white/5" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200")
+                        )}>{y}</button>
+                    ))}
+                  </div>
+                </div>
+              );
+
+              return (
+                <div className="space-y-6">
+                  {yearSelector}
+                  {FILM_TYPES.map(ft => {
+                    const grand = ftGrandTotal(ft);
+                    return (
+                      <div key={ft} className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                        {/* Header */}
+                        <div className={cn("px-6 py-3.5 border-b flex items-center gap-3 flex-wrap", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+                          <span className={cn("text-[9px] font-black px-2.5 py-1 rounded-lg shrink-0", ft === 'DIHL' ? "bg-blue-500/20 text-blue-400" : "bg-[#ED1C24]/15 text-[#ED1C24]")}>
+                            {ft === 'DIHT' ? 'DI-HT' : 'DI-HL'}
+                          </span>
+                          <h3 className={cn("text-xs font-black uppercase tracking-wider", darkMode ? "text-gray-200" : "text-gray-700")}>
+                            Ventas mensuales desde 2024 — Cajas &amp; m²
+                          </h3>
+                          <div className="ml-auto flex items-center gap-5 shrink-0">
+                            <div className="text-right">
+                              <p className={cn("text-lg font-black leading-none", ft === 'DIHL' ? (darkMode ? "text-blue-400" : "text-blue-600") : (darkMode ? "text-red-400" : "text-red-600"))}>{grand.boxes.toLocaleString()}</p>
+                              <p className={cn("text-[9px] font-semibold mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>cajas totales</p>
+                            </div>
+                            <div className="text-right">
+                              <p className={cn("text-lg font-black leading-none", darkMode ? "text-cyan-400" : "text-cyan-600")}>{grand.m2.toLocaleString('es-EC', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</p>
+                              <p className={cn("text-[9px] font-semibold mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>m² totales</p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Table */}
+                        <div className="overflow-x-auto custom-scrollbar">
+                          <table className="w-full text-xs" style={{ minWidth: `${Math.max(900, months.length * 90 + 160)}px` }}>
+                            <thead>
+                              {/* Year separator row — only when showing all years */}
+                              {stockTiempoYear === 'all' && (
+                              <tr className={cn(darkMode ? "bg-white/2" : "bg-gray-50/40")}>
+                                <th className={cn("px-4 py-1.5 text-left sticky left-0 z-10 text-[9px] font-bold uppercase tracking-widest", darkMode ? "bg-[#16161A] text-gray-600" : "bg-white text-gray-400")}>Medida / Año</th>
+                                {months.map((m, i) => {
+                                  const isFirstOfYear = i === 0 || months[i - 1].year !== m.year;
+                                  if (!isFirstOfYear) return <th key={i} className={cn(darkMode ? "bg-white/2" : "bg-gray-50/40")} />;
+                                  const yearSpan = months.filter(x => x.year === m.year).length;
+                                  return (
+                                    <th key={i} colSpan={yearSpan} className={cn("py-1.5 text-center text-[10px] font-black tracking-wider border-l",
+                                      m.year === now.getFullYear()
+                                        ? (darkMode ? "text-white border-white/10" : "text-gray-800 border-gray-200")
+                                        : (darkMode ? "text-gray-600 border-white/6" : "text-gray-400 border-gray-100")
+                                    )}>{m.year}</th>
+                                  );
+                                })}
+                                <th className={cn("sticky right-0 text-[9px] font-bold uppercase tracking-widest", darkMode ? "bg-[#16161A] text-gray-600" : "bg-white text-gray-400")} />
+                              </tr>
+                              )}
+                              {/* Month headers */}
+                              <tr className={cn("text-[9px] font-bold uppercase tracking-wider", darkMode ? "text-gray-600 bg-white/2" : "text-gray-400 bg-gray-50/60")}>
+                                <th className={cn("px-4 py-2 text-left sticky left-0 z-10 min-w-[120px]", darkMode ? "bg-[#16161A]" : "bg-white")}>Medida</th>
+                                {months.map((m, i) => {
+                                  const isCurrent = m.year === now.getFullYear() && m.month === now.getMonth();
+                                  const isFirstOfYear = i === 0 || months[i - 1].year !== m.year;
+                                  return (
+                                    <th key={i} className={cn("px-1 py-2 text-center min-w-[80px] whitespace-nowrap",
+                                      isFirstOfYear ? "border-l" : "",
+                                      isCurrent
+                                        ? (darkMode ? "text-emerald-400 border-emerald-500/20" : "text-emerald-600 border-emerald-200")
+                                        : (darkMode ? "border-white/6" : "border-gray-100")
+                                    )}>
+                                      {m.label}
+                                      {isCurrent && <span className="ml-0.5 text-[6px] text-emerald-400">●</span>}
+                                    </th>
+                                  );
+                                })}
+                                <th className={cn("px-4 py-2 text-center sticky right-0 min-w-[90px] border-l", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200")}>TOTAL</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {SIZES.map(sz => {
+                                const row = matrix[ft][sz];
+                                const grand = sizeGrandTotal(ft, sz);
+                                const maxBoxes = Math.max(...row.map(c => c.boxes), 1);
+                                return (
+                                  <tr key={sz} className={cn("border-t transition-colors", darkMode ? "border-white/5 hover:bg-white/2" : "border-gray-50 hover:bg-gray-50/40")}>
+                                    <td className={cn("px-4 py-2.5 sticky left-0 z-10", darkMode ? "bg-[#16161A]" : "bg-white")}>
+                                      <div className="flex flex-col gap-0.5">
+                                        <span className={cn("text-[10px] font-black px-2 py-0.5 rounded inline-block w-fit", darkMode ? "bg-white/10 text-gray-200" : "bg-gray-800 text-white")}>{sz}</span>
+                                        <span className={cn("text-[9px] font-semibold", darkMode ? "text-gray-600" : "text-gray-400")}>{FILM_M2_PER_BOX[ft]?.[sz] ?? 0} m²/cj</span>
+                                      </div>
+                                    </td>
+                                    {row.map((c, i) => {
+                                      const isCurrent = months[i].year === now.getFullYear() && months[i].month === now.getMonth();
+                                      const isFirstOfYear = i === 0 || months[i - 1].year !== months[i].year;
+                                      const intensity = c.boxes > 0 ? c.boxes / maxBoxes : 0;
+                                      return (
+                                        <td key={i} className={cn("px-1 py-2 text-center align-middle",
+                                          isFirstOfYear ? "border-l" : "",
+                                          darkMode ? "border-white/6" : "border-gray-100"
+                                        )}>
+                                          {c.boxes > 0 ? (
+                                            <button
+                                              onClick={() => {
+                                                // Build client breakdown for this cell
+                                                const clientMap = {} as Record<number, { boxes: number; invoices: string[] }>;
+                                                allConsumos.forEach(r => {
+                                                  const d = new Date(r.order_date);
+                                                  if (d.getFullYear() !== months[i].year || d.getMonth() !== months[i].month) return;
+                                                  if (r.size !== sz) return;
+                                                  const rft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type === 'DIHL' ? 'DIHL' : 'DIHT';
+                                                  if (rft !== ft) return;
+                                                  if (!clientMap[r.client_id]) clientMap[r.client_id] = { boxes: 0, invoices: [] };
+                                                  clientMap[r.client_id].boxes += r.is_return ? -r.quantity : r.quantity;
+                                                  if (r.invoice_number) clientMap[r.client_id].invoices.push(r.invoice_number);
+                                                });
+                                                const clients = Object.entries(clientMap)
+                                                  .map(([id, v]) => {
+                                                    const cl = allClients.find(cli => cli.id === parseInt(id));
+                                                    return { name: cl?.name || '?', salesperson: cl?.salesperson || '—', province: cl?.province || '—', boxes: v.boxes, m2: parseFloat((v.boxes * (FILM_M2_PER_BOX[ft]?.[sz] ?? 0)).toFixed(2)), invoices: [...new Set(v.invoices)] };
+                                                  })
+                                                  .filter(cl2 => cl2.boxes > 0)
+                                                  .sort((a, b) => b.boxes - a.boxes);
+                                                setStockTiempoModal({ ft, sz, year: months[i].year, month: months[i].month, monthLabel: months[i].label, boxes: c.boxes, m2: c.m2, clients });
+                                                setStockTiempoModalClient(null);
+                                              }}
+                                              className={cn("flex flex-col items-center gap-0.5 w-full group relative",
+                                                darkMode ? "hover:bg-white/5" : "hover:bg-gray-100/60",
+                                                "rounded-lg px-1 py-0.5 transition-colors cursor-pointer"
+                                              )}
+                                            >
+                                              <div
+                                                className={cn("w-10 rounded-sm mx-auto mb-0.5", ft === 'DIHL' ? "bg-blue-500" : "bg-[#ED1C24]")}
+                                                style={{ height: `${Math.max(2, Math.round(intensity * 18))}px`, opacity: 0.3 + intensity * 0.7 }}
+                                              />
+                                              <span className={cn("font-black text-[11px] leading-none",
+                                                isCurrent ? "text-emerald-400" :
+                                                ft === 'DIHL' ? (darkMode ? "text-blue-400" : "text-blue-600") :
+                                                (darkMode ? "text-red-400" : "text-red-600")
+                                              )}>{c.boxes}</span>
+                                              <span className={cn("text-[9px] font-semibold leading-none", darkMode ? "text-cyan-500" : "text-cyan-600")}>
+                                                {c.m2.toFixed(1)}
+                                              </span>
+                                              <span className={cn("absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity",
+                                                ft === 'DIHL' ? "bg-blue-400" : "bg-[#ED1C24]"
+                                              )} />
+                                            </button>
+                                          ) : (
+                                            <span className={cn("text-[10px]", darkMode ? "text-gray-800" : "text-gray-200")}>—</span>
+                                          )}
+                                        </td>
+                                      );
+                                    })}
+                                    {/* Grand total col */}
+                                    <td className={cn("px-3 py-2.5 text-center sticky right-0 border-l", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200")}>
+                                      {grand.boxes > 0 ? (
+                                        <div className="flex flex-col items-center gap-0.5">
+                                          <span className={cn("font-black text-sm leading-none",
+                                            ft === 'DIHL' ? (darkMode ? "text-blue-400" : "text-blue-600") : (darkMode ? "text-red-400" : "text-red-600")
+                                          )}>{grand.boxes.toLocaleString()}</span>
+                                          <span className={cn("text-[9px] font-semibold leading-none", darkMode ? "text-cyan-500" : "text-cyan-600")}>
+                                            {grand.m2.toLocaleString('es-EC', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} m²
+                                          </span>
+                                        </div>
+                                      ) : (
+                                        <span className={cn(darkMode ? "text-gray-700" : "text-gray-300")}>—</span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+
+                              {/* TOTAL row — cajas */}
+                              <tr className={cn("border-t-2", darkMode ? "border-white/10 bg-white/4" : "border-gray-200 bg-gray-50")}>
+                                <td className={cn("px-4 py-2.5 font-black text-[10px] uppercase tracking-wide sticky left-0 z-10", darkMode ? "bg-[#1a1a1e] text-gray-400" : "bg-gray-100 text-gray-600")}>
+                                  <div>
+                                    <p>Total Cajas</p>
+                                    <p className={cn("text-[9px] font-semibold", darkMode ? "text-cyan-600" : "text-cyan-500")}>+ m²</p>
+                                  </div>
+                                </td>
+                                {monthTotals[ft].map((c, i) => {
+                                  const isCurrent = months[i].year === now.getFullYear() && months[i].month === now.getMonth();
+                                  const isFirstOfYear = i === 0 || months[i - 1].year !== months[i].year;
+                                  return (
+                                    <td key={i} className={cn("px-1 py-2.5 text-center",
+                                      isFirstOfYear ? "border-l" : "",
+                                      darkMode ? "border-white/6" : "border-gray-100"
+                                    )}>
+                                      {c.boxes > 0 ? (
+                                        <div className="flex flex-col items-center gap-0.5">
+                                          <span className={cn("font-black text-xs leading-none",
+                                            isCurrent ? "text-emerald-400" :
+                                            ft === 'DIHL' ? (darkMode ? "text-blue-400" : "text-blue-600") :
+                                            (darkMode ? "text-red-400" : "text-red-500")
+                                          )}>{c.boxes}</span>
+                                          <span className={cn("text-[9px] font-semibold leading-none", darkMode ? "text-cyan-500" : "text-cyan-600")}>
+                                            {c.m2.toFixed(1)}
+                                          </span>
+                                        </div>
+                                      ) : (
+                                        <span className={cn("text-[10px]", darkMode ? "text-gray-700" : "text-gray-300")}>—</span>
+                                      )}
+                                    </td>
+                                  );
+                                })}
+                                <td className={cn("px-3 py-2.5 text-center sticky right-0 border-l", darkMode ? "bg-[#1a1a1e] border-white/8" : "bg-gray-100 border-gray-200")}>
+                                  <div className="flex flex-col items-center gap-0.5">
+                                    <span className={cn("font-black text-sm leading-none",
+                                      ft === 'DIHL' ? (darkMode ? "text-blue-400" : "text-blue-600") : (darkMode ? "text-red-400" : "text-red-600")
+                                    )}>{grand.boxes.toLocaleString()}</span>
+                                    <span className={cn("text-[9px] font-semibold leading-none", darkMode ? "text-cyan-400" : "text-cyan-600")}>
+                                      {grand.m2.toLocaleString('es-EC', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} m²
+                                    </span>
+                                  </div>
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+
+          </div>
+        )}
+
+        {/* ══════════════ VIEW: IMAGER ══════════════ */}
+        {view === 'imager' && (
+          <div className="col-span-12 flex flex-col gap-6 min-h-0 overflow-y-auto pr-2 pb-8 custom-scrollbar">
+
+            {/* Header */}
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <div>
+                <h2 className="text-xl font-black tracking-tight flex items-center gap-2">
+                  <Layers className="w-5 h-5 text-[#ED1C24]" /> Stock Imager
+                </h2>
+                <p className={cn("text-[10px] font-medium uppercase tracking-wider mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>
+                  Equipos Fujifilm · Planificación · Cobertura · Proyección
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  if (!window.confirm('¿Restaurar todos los datos de Stock Imager a los valores del Excel oficial?')) return;
+                  const defaults = {} as Record<string, { openingStock: number; months: Record<string, { inUnits: number; outUnits: number }> }>;
+                  IMAGER_PRODUCTS.forEach(p => {
+                    defaults[p.key] = { openingStock: p.openingStock, months: Object.fromEntries(IMAGER_MONTHS.map(m => [m, { inUnits: 0, outUnits: 0 }])) };
+                  });
+                  localStorage.setItem('imager_data', JSON.stringify(defaults));
+                  setImagerData(defaults);
+                }}
+                className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all", darkMode ? "bg-white/8 hover:bg-white/12 text-gray-400" : "bg-gray-100 hover:bg-gray-200 text-gray-600")}
+              >
+                ↺ Restaurar datos
+              </button>
+            </div>
+
+            {/* KPI summary cards */}
+            {(() => {
+              const printers = IMAGER_PRODUCTS.filter(p => p.category === 'Impresora Principal');
+              const accessories = IMAGER_PRODUCTS.filter(p => p.category === 'Accesorio LITE');
+              const totalUnits = IMAGER_PRODUCTS.reduce((s, p) => s + (imagerData[p.key]?.openingStock ?? p.openingStock), 0);
+              const totalTransit = IMAGER_PRODUCTS.reduce((s, p) => s + p.inTransit, 0);
+              const lowCoverage = IMAGER_PRODUCTS.filter(p => p.avgSalesMonthly > 0 && (imagerData[p.key]?.openingStock ?? p.openingStock) / p.avgSalesMonthly < 3);
+              return (
+                <div className="grid grid-cols-4 gap-3">
+                  {[
+                    { label: 'Unidades en bodega', value: totalUnits, sub: `${printers.length} impresoras · ${accessories.length} accesorios`, color: darkMode ? 'text-cyan-400' : 'text-cyan-600' },
+                    { label: 'Total disponible', value: totalUnits, sub: 'Unidades en bodega', color: darkMode ? 'text-emerald-400' : 'text-emerald-600' },
+                    { label: 'Cobertura crítica', value: lowCoverage.length, sub: 'Productos < 3 meses cobertura', color: 'text-[#ED1C24]' },
+                  ].map((kpi, i) => (
+                    <div key={i} className={cn("rounded-xl border p-4", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                      <p className={cn("text-2xl font-black leading-none", kpi.color)}>{kpi.value}</p>
+                      <p className={cn("text-xs font-bold mt-1", darkMode ? "text-gray-300" : "text-gray-700")}>{kpi.label}</p>
+                      <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{kpi.sub}</p>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+
+            {/* Product cards by category */}
+            {(['Impresora Principal', 'Accesorio LITE'] as const).map(cat => {
+              const prods = IMAGER_PRODUCTS.filter(p => p.category === cat);
+              return (
+                <div key={cat}>
+                  <h3 className={cn("text-[10px] font-black uppercase tracking-widest mb-3 flex items-center gap-2", darkMode ? "text-gray-500" : "text-gray-400")}>
+                    <span className={cn("w-1.5 h-1.5 rounded-full inline-block", cat === 'Impresora Principal' ? "bg-[#ED1C24]" : "bg-blue-400")} />
+                    {cat}
+                  </h3>
+                  <div className="grid grid-cols-1 gap-4">
+                    {prods.map(prod => {
+                      const pd = imagerData[prod.key] || { openingStock: prod.openingStock, months: {} };
+                      // Compute running balance
+                      let running = pd.openingStock;
+                      const balances = IMAGER_MONTHS.map(month => {
+                        const mv = pd.months?.[month] || { inUnits: 0, outUnits: 0 };
+                        running = running + mv.inUnits - mv.outUnits;
+                        return { month, inUnits: mv.inUnits, outUnits: mv.outUnits, balance: Math.max(0, running) };
+                      });
+                      const totalIn = balances.reduce((s, b) => s + b.inUnits, 0);
+                      const totalOut = balances.reduce((s, b) => s + b.outUnits, 0);
+                      const currentStock = pd.openingStock + totalIn - totalOut;
+                      const coverageMonths = prod.avgSalesMonthly > 0 ? currentStock / prod.avgSalesMonthly : null;
+                      const status = coverageMonths === null ? 'ok' : coverageMonths < 2 ? 'critical' : coverageMonths < 4 ? 'warning' : 'ok';
+                      const statusColor = status === 'critical' ? 'text-red-400' : status === 'warning' ? 'text-amber-400' : (darkMode ? 'text-emerald-400' : 'text-emerald-600');
+
+                      return (
+                        <div key={prod.key} className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                          {/* Product header */}
+                          <div className={cn("px-5 py-3.5 border-b flex items-center justify-between flex-wrap gap-3", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50/80")}>
+                            <div className="flex items-center gap-3">
+                              <span className={cn("text-[9px] font-black px-2.5 py-1 rounded-lg",
+                                cat === 'Impresora Principal' ? "bg-[#ED1C24]/15 text-[#ED1C24]" : "bg-blue-500/20 text-blue-400"
+                              )}>{cat === 'Impresora Principal' ? 'IMAGER' : 'ACCESORIO'}</span>
+                              <div>
+                                <h4 className={cn("text-sm font-black", darkMode ? "text-white" : "text-gray-800")}>{prod.label}</h4>
+                                <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{prod.sublabel}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-5">
+                              {/* Opening stock editable */}
+                              <div className="text-center">
+                                <p className={cn("text-[9px] mb-1", darkMode ? "text-gray-600" : "text-gray-400")}>Stock apertura</p>
+                                <input
+                                  type="number" min={0}
+                                  value={pd.openingStock}
+                                  onChange={e => updateImagerOpening(prod.key, parseInt(e.target.value) || 0)}
+                                  className={cn("w-16 text-center text-sm font-black rounded-lg px-2 py-1 outline-none focus:ring-2 focus:ring-cyan-500/30",
+                                    darkMode ? "bg-white/8 text-cyan-300 border border-white/10" : "bg-cyan-50 text-cyan-700 border border-cyan-200"
+                                  )}
+                                />
+                              </div>
+                              <div className="text-center">
+                                <p className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>En tránsito</p>
+                                <p className={cn("text-xl font-black", darkMode ? "text-amber-400" : "text-amber-600")}>{prod.inTransit}</p>
+                              </div>
+                              <div className="text-center">
+                                <p className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>Stock actual</p>
+                                <p className={cn("text-xl font-black", darkMode ? "text-cyan-400" : "text-cyan-600")}>{Math.max(0, currentStock)}</p>
+                              </div>
+                              <div className="text-center">
+                                <p className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>Cobertura</p>
+                                <p className={cn("text-xl font-black", statusColor)}>
+                                  {coverageMonths !== null ? `${coverageMonths.toFixed(1)}m` : '∞'}
+                                </p>
+                              </div>
+                              <div className="text-center">
+                                <p className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>Avg ventas/mes</p>
+                                <p className={cn("text-sm font-black", darkMode ? "text-gray-300" : "text-gray-700")}>{prod.avgSalesMonthly > 0 ? prod.avgSalesMonthly.toFixed(1) : '—'}</p>
+                              </div>
+                              <div className="text-center">
+                                <p className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>Pedidos activos</p>
+                                <p className={cn("text-sm font-black", darkMode ? "text-gray-300" : "text-gray-700")}>{prod.ordersActive}</p>
+                              </div>
+                              {/* Status badge */}
+                              <span className={cn("text-[9px] font-black px-2.5 py-1 rounded-lg",
+                                status === 'critical' ? "bg-red-500/20 text-red-400" :
+                                status === 'warning' ? "bg-amber-500/20 text-amber-400" :
+                                "bg-emerald-500/20 text-emerald-400"
+                              )}>
+                                {status === 'critical' ? 'CRÍTICO' : status === 'warning' ? 'BAJO' : 'OK'}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Monthly table */}
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-xs min-w-[1100px]">
+                              <thead className={cn("text-[9px] font-bold uppercase tracking-wider", darkMode ? "text-gray-600 bg-white/2" : "text-gray-400 bg-gray-50/60")}>
+                                <tr>
+                                  <th className="px-4 py-2 text-left sticky left-0" style={{ background: 'inherit' }}>Concepto</th>
+                                  {IMAGER_MONTHS.map(m => <th key={m} className="px-3 py-2 text-center min-w-[75px]">{m}</th>)}
+                                  <th className="px-4 py-2 text-center">TOTAL / END</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {/* IN row */}
+                                <tr className={cn(darkMode ? "bg-emerald-500/5 hover:bg-emerald-500/10" : "bg-emerald-50/60 hover:bg-emerald-50")}>
+                                  <td className={cn("px-4 py-2 font-bold text-[10px] sticky left-0 whitespace-nowrap", darkMode ? "text-emerald-400 bg-[#16161A]" : "text-emerald-700 bg-white")}>▲ IN (Unidades)</td>
+                                  {balances.map((b, i) => (
+                                    <td key={i} className="px-2 py-1.5 text-center">
+                                      <input
+                                        type="number" min={0}
+                                        value={b.inUnits || ''}
+                                        placeholder="0"
+                                        onChange={e => updateImagerCell(prod.key, b.month, 'inUnits', parseInt(e.target.value) || 0)}
+                                        className={cn("w-14 text-center text-xs font-black rounded-lg px-1 py-1 outline-none focus:ring-2 focus:ring-emerald-500/30 transition-colors",
+                                          b.inUnits > 0
+                                            ? (darkMode ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30" : "bg-emerald-50 text-emerald-700 border border-emerald-200")
+                                            : (darkMode ? "bg-white/5 text-gray-600 border border-white/8" : "bg-white text-gray-400 border border-gray-100")
+                                        )}
+                                      />
+                                    </td>
+                                  ))}
+                                  <td className={cn("px-4 py-2 text-center font-black", darkMode ? "text-emerald-400" : "text-emerald-600")}>{totalIn}</td>
+                                </tr>
+                                {/* OUT row */}
+                                <tr className={cn(darkMode ? "bg-red-500/5 hover:bg-red-500/10" : "bg-red-50/60 hover:bg-red-50")}>
+                                  <td className={cn("px-4 py-2 font-bold text-[10px] sticky left-0 whitespace-nowrap", darkMode ? "text-red-400 bg-[#16161A]" : "text-red-600 bg-white")}>▼ OUT (Unidades)</td>
+                                  {balances.map((b, i) => (
+                                    <td key={i} className="px-2 py-1.5 text-center">
+                                      <input
+                                        type="number" min={0}
+                                        value={b.outUnits || ''}
+                                        placeholder="0"
+                                        onChange={e => updateImagerCell(prod.key, b.month, 'outUnits', parseInt(e.target.value) || 0)}
+                                        className={cn("w-14 text-center text-xs font-black rounded-lg px-1 py-1 outline-none focus:ring-2 focus:ring-red-500/30 transition-colors",
+                                          b.outUnits > 0
+                                            ? (darkMode ? "bg-red-500/15 text-red-300 border border-red-500/30" : "bg-red-50 text-red-700 border border-red-200")
+                                            : (darkMode ? "bg-white/5 text-gray-600 border border-white/8" : "bg-white text-gray-400 border border-gray-100")
+                                        )}
+                                      />
+                                    </td>
+                                  ))}
+                                  <td className={cn("px-4 py-2 text-center font-black", darkMode ? "text-red-400" : "text-red-500")}>{totalOut}</td>
+                                </tr>
+                                {/* Balance row */}
+                                <tr className={cn("border-t-2", darkMode ? "border-white/10 bg-white/4" : "border-gray-200 bg-gray-50")}>
+                                  <td className={cn("px-4 py-2.5 font-black text-[10px] sticky left-0 whitespace-nowrap uppercase tracking-wide", darkMode ? "text-cyan-400 bg-[#1a1a1e]" : "text-cyan-700 bg-gray-100")}>≡ Balance</td>
+                                  {balances.map((b, i) => {
+                                    const hasMovement = b.inUnits > 0 || b.outUnits > 0;
+                                    const cov = prod.avgSalesMonthly > 0 ? b.balance / prod.avgSalesMonthly : null;
+                                    const covStatus = cov === null ? 'ok' : cov < 2 ? 'critical' : cov < 4 ? 'warning' : 'ok';
+                                    return (
+                                      <td key={i} className="px-2 py-2.5 text-center">
+                                        <span className={cn("font-black text-sm block",
+                                          !hasMovement ? (darkMode ? "text-gray-600" : "text-gray-300") :
+                                          covStatus === 'critical' ? 'text-red-400' :
+                                          covStatus === 'warning' ? 'text-amber-400' :
+                                          (darkMode ? "text-cyan-400" : "text-cyan-600")
+                                        )}>{b.balance}</span>
+                                        {cov !== null && hasMovement && (
+                                          <span className={cn("text-[8px] font-semibold", covStatus === 'critical' ? 'text-red-400/70' : (darkMode ? "text-gray-600" : "text-gray-400"))}>
+                                            {cov.toFixed(1)}m
+                                          </span>
+                                        )}
+                                      </td>
+                                    );
+                                  })}
+                                  <td className={cn("px-4 py-2.5 text-center font-black text-sm sticky right-0", darkMode ? "bg-[#1a1a1e]" : "bg-gray-100", statusColor)}>
+                                    {Math.max(0, currentStock)}
+                                  </td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
+
+                          {/* Coverage bar */}
+                          {coverageMonths !== null && (
+                            <div className={cn("px-5 py-3 border-t flex items-center gap-4", darkMode ? "border-white/8 bg-white/2" : "border-gray-50 bg-gray-50/40")}>
+                              <span className={cn("text-[9px] font-bold uppercase tracking-wider shrink-0 w-28", darkMode ? "text-gray-600" : "text-gray-400")}>Cobertura actual</span>
+                              <div className="flex-1 h-2 rounded-full bg-gray-200/30 overflow-hidden">
+                                <div className={cn("h-full rounded-full transition-all",
+                                  status === 'critical' ? "bg-red-500" : status === 'warning' ? "bg-amber-400" : "bg-emerald-500"
+                                )} style={{ width: `${Math.min(100, (coverageMonths / 12) * 100)}%` }} />
+                              </div>
+                              <span className={cn("text-xs font-black shrink-0 w-16 text-right", statusColor)}>{coverageMonths.toFixed(1)} meses</span>
+                              <span className={cn("text-[9px] shrink-0", darkMode ? "text-gray-600" : "text-gray-400")}>
+                                {prod.avgSalesMonthly > 0 ? `~${prod.avgSalesMonthly.toFixed(1)} u/mes histórico` : 'sin historial de ventas'}
+                              </span>
+                              {prod.inTransit > 0 && (
+                                <span className={cn("text-[9px] font-bold px-2 py-0.5 rounded-lg shrink-0", darkMode ? "bg-amber-500/15 text-amber-400" : "bg-amber-50 text-amber-600")}>
+                                  +{prod.inTransit} en tránsito → {((currentStock + prod.inTransit) / prod.avgSalesMonthly).toFixed(1)}m con tránsito
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Fujifilm data note */}
+            <div className={cn("rounded-xl border p-4 flex items-start gap-3", darkMode ? "bg-white/3 border-white/6" : "bg-gray-50 border-gray-100")}>
+              <FileText className={cn("w-4 h-4 mt-0.5 shrink-0", darkMode ? "text-gray-600" : "text-gray-400")} />
+              <div>
+                <p className={cn("text-[10px] font-bold", darkMode ? "text-gray-400" : "text-gray-600")}>Fuente: Planning Imager — Sales Report Fujifilm/Orimec 2026-2027</p>
+                <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>
+                  Stock apertura al 26-Ene-2026 · Promedio ventas Abr-Dic 2025 · Pedidos activos: FJ-2002, FJ-2008, FJ-2010, FJ-2026 · Los datos de IN/OUT mensuales son editables y se guardan localmente
+                </p>
+              </div>
+            </div>
+
+          </div>
+        )}
+
+        {view === 'intelligence' && (
+          <div className="col-span-12 flex flex-col gap-6 min-h-0 overflow-y-auto pr-2 pb-8 custom-scrollbar">
+
+            {/* Header */}
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <div>
+                <h2 className="text-xl font-black tracking-tight flex items-center gap-2">
+                  <Brain className="w-5 h-5 text-[#ED1C24]" /> Centro de Inteligencia
+                </h2>
+                <p className={cn("text-[10px] font-medium uppercase tracking-wider mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>
+                  Predicción · Alertas · Salud · Rentabilidad · Estacionalidad
+                </p>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* Film type filter — hide only on comparativo (shows all data fixed) */}
+                {intelligenceTab !== 'comparativo' && (
+                <div className={cn("flex items-center gap-1 p-1 rounded-xl", darkMode ? "bg-white/5" : "bg-gray-100")}>
+                  {(intelligenceTab === 'projection'
+                    ? [['DIHT','DI-HT'], ['DIHL','DI-HL'], ['DIML','DI-ML']] as const
+                    : [['all','Todos'], ['DIHT','DI-HT'], ['DIHL','DI-HL'], ['DIML','DI-ML']] as const
+                  ).map(([val, label]) => (
+                    <button key={val} onClick={() => setGlobalFilmFilter(val as any)}
+                      className={cn("px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all",
+                        globalFilmFilter === val
+                          ? val === 'DIHL' ? "bg-blue-500/20 text-blue-400 ring-1 ring-blue-500/30"
+                          : val === 'DIHT' ? "bg-[#ED1C24]/15 text-[#ED1C24] ring-1 ring-[#ED1C24]/30"
+                          : val === 'DIML' ? "bg-purple-500/20 text-purple-400 ring-1 ring-purple-500/30"
+                          : (darkMode ? "bg-white/12 text-white" : "bg-gray-800 text-white")
+                          : (darkMode ? "text-gray-600 hover:text-gray-400 hover:bg-white/5" : "text-gray-400 hover:text-gray-600 hover:bg-gray-200")
+                      )}>{label}</button>
+                  ))}
+                </div>
+                )}
+                <div className={cn("flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl border", darkMode ? "bg-white/4 border-white/8 text-gray-400" : "bg-gray-50 border-gray-100 text-gray-500")}>
+                  <Zap className="w-3.5 h-3.5 text-amber-400" />
+                  {reorderAlerts.filter(a => a.urgency === 'critical').length} críticas · {atRiskClients.filter(a => a.riskLevel === 'lost').length} perdidos · {anomalies.filter(a => a.type === 'drop').length} anomalías
+                </div>
+              </div>
+            </div>
+
+            {/* Tab nav */}
+            <div className={cn("flex items-center gap-1 p-1 rounded-xl", darkMode ? "bg-white/5" : "bg-gray-100")}>
+              {([
+                ['projection',    'Proyección',    Target     ],
+                ['comparativo',   'Comparativo',   BarChart3  ],
+                ['health',        'Salud',         Users      ],
+                ['profitability', 'Rentabilidad',  TrendingUp ],
+                ['seasonality',   'Estacionalidad',BarChart3  ],
+                ['potential',     'Potencial',     Zap        ],
+                ['provinces',     'Provincias',    MapPin     ],
+                ['anomalies',     'Anomalías',     AlertCircle],
+              ] as const).map(([tab, label, Icon]) => (
+                <button key={tab} onClick={() => {
+                  setIntelligenceTab(tab as any);
+                  if (tab === 'projection') setGlobalFilmFilter('DIHT');
+                  if (tab === 'comparativo') setGlobalFilmFilter('all');
+                }}
+                  className={cn(
+                    "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap",
+                    intelligenceTab === tab
+                      ? (darkMode ? "bg-[#ED1C24] text-white shadow-sm" : "bg-white text-[#ED1C24] shadow-sm border border-gray-200/80")
+                      : (darkMode ? "text-gray-500 hover:text-gray-300 hover:bg-white/5" : "text-gray-500 hover:text-gray-700 hover:bg-white/60")
+                  )}>
+                  <Icon className="w-3.5 h-3.5 shrink-0 flex-none" strokeWidth={2} />
+                  <span>{label}</span>
+                </button>
+              ))}
+            </div>
+
+
+            {/* ══ TAB: COMPARATIVO ANUAL ══ */}
+            {intelligenceTab === 'comparativo' && (() => {
+              const SIZES_FJ = ['8x10', '10x12', '10x14', '14x17'];
+              const SIZES_TXE = ['8x10', '10x12', '11x14', '14x17'];
+              const FT_ALL = ['DIHT', 'DIHL'] as const;
+              const now = new Date();
+              const currentYear = now.getFullYear();
+              const currentMonth = now.getMonth(); // 0-based
+
+              // Build yearly totals from allConsumos for Fujifilm (2024, 2025, 2026)
+              const fujiByYearSizeType: Record<number, Record<string, Record<string, { boxes: number; m2: number }>>> = {};
+              [2024, 2025, 2026].forEach(y => {
+                fujiByYearSizeType[y] = {};
+                FT_ALL.forEach(ft => {
+                  fujiByYearSizeType[y][ft] = {};
+                  SIZES_FJ.forEach(sz => { fujiByYearSizeType[y][ft][sz] = { boxes: 0, m2: 0 }; });
+                });
+              });
+              allConsumos.forEach(r => {
+                const d = new Date(r.order_date);
+                const y = d.getFullYear();
+                if (![2024, 2025, 2026].includes(y)) return;
+                const ft = r.film_type === 'DIHL' ? 'DIHL' : 'DIHT';
+                const sz = r.size;
+                if (!SIZES_FJ.includes(sz)) return;
+                const qty = r.is_return ? -r.quantity : r.quantity;
+                fujiByYearSizeType[y][ft][sz].boxes += qty;
+                fujiByYearSizeType[y][ft][sz].m2 = parseFloat((fujiByYearSizeType[y][ft][sz].m2 + getTotalM2(qty, sz, ft)).toFixed(2));
+              });
+
+              // TXE from stockFilmData (stored outBoxes)
+              const txeByYearSize: Record<number, Record<string, { boxes: number; m2: number }>> = {};
+              [2024, 2025, 2026].forEach(y => {
+                txeByYearSize[y] = {};
+                TXE_PRODUCTS.forEach(p => {
+                  const yd = stockFilmData[String(y)]?.[p.key] || { months: {} };
+                  const boxes = STOCK_FILM_MONTHS.reduce((s, m) => s + (yd.months?.[m]?.outBoxes || 0), 0);
+                  txeByYearSize[y][p.size] = { boxes, m2: parseFloat((boxes * p.m2box).toFixed(1)) };
+                });
+              });
+
+              // Projection for 2026: avg of last 6 months × 12 / months elapsed
+              const monthsElapsed2026 = currentYear === 2026 ? Math.max(1, currentMonth) : 12;
+              const isCurrentYear2026 = currentYear === 2026 && monthsElapsed2026 < 12;
+              // real2026: actual data registered so far
+              // proj2026: extrapolated to 12 months
+              const proj2026: Record<string, Record<string, { boxes: number; m2: number }>> = {};
+              FT_ALL.forEach(ft => {
+                proj2026[ft] = {};
+                SIZES_FJ.forEach(sz => {
+                  const actual2026 = fujiByYearSizeType[2026][ft][sz].boxes;
+                  const projected = currentYear === 2026
+                    ? Math.round((actual2026 / monthsElapsed2026) * 12)
+                    : actual2026;
+                  proj2026[ft][sz] = { boxes: projected, m2: parseFloat((projected * (FILM_M2_PER_BOX[ft]?.[sz] ?? 0)).toFixed(1)) };
+                });
+              });
+
+              // Helper: get 2026 data based on current mode
+              const get2026 = (ft: string, sz: string) =>
+                (isCurrentYear2026 && comparativo2026Mode === 'real')
+                  ? fujiByYearSizeType[2026][ft as 'DIHT'|'DIHL'][sz]
+                  : proj2026[ft][sz];
+
+              const YEARS = [2024, 2025, 2026] as const;
+              const YEAR_COLORS: Record<number, string> = {
+                2024: darkMode ? 'text-gray-400' : 'text-gray-600',
+                2025: darkMode ? 'text-cyan-400' : 'text-cyan-600',
+                2026: darkMode ? 'text-emerald-400' : 'text-emerald-600',
+              };
+              const YEAR_BG: Record<number, string> = {
+                2024: darkMode ? 'bg-gray-500/10 border-gray-500/20' : 'bg-gray-50 border-gray-200',
+                2025: darkMode ? 'bg-cyan-500/8 border-cyan-500/20' : 'bg-cyan-50 border-cyan-200',
+                2026: darkMode ? 'bg-emerald-500/8 border-emerald-500/20' : 'bg-emerald-50 border-emerald-200',
+              };
+
+              // Grand totals per year
+              const grandTotal = (y: number) => {
+                let boxes = 0, m2 = 0;
+                FT_ALL.forEach(ft => SIZES_FJ.forEach(sz => {
+                  const src = y === 2026 ? get2026(ft, sz) : fujiByYearSizeType[y][ft][sz];
+                  boxes += src.boxes; m2 += src.m2;
+                }));
+                // Add TXE
+                SIZES_TXE.forEach(sz => { boxes += txeByYearSize[y][sz]?.boxes || 0; m2 += txeByYearSize[y][sz]?.m2 || 0; });
+                return { boxes, m2: parseFloat(m2.toFixed(1)) };
+              };
+
+              return (
+                <div className="space-y-5">
+                  {/* Header KPIs — one card per year */}
+                  <div className="grid grid-cols-3 gap-4">
+                    {YEARS.map(y => {
+                      const gt = grandTotal(y);
+                      const prev = y > 2024 ? grandTotal(y - 1) : null;
+                      const growth = prev && prev.m2 > 0 ? ((gt.m2 - prev.m2) / prev.m2 * 100) : null;
+                      const isCurrentYearCard = y === 2026 && isCurrentYear2026;
+                      return (
+                        <div key={y} className={cn("rounded-xl border p-5", YEAR_BG[y])}>
+                          <div className="flex items-center justify-between mb-3">
+                            <span className={cn("text-xs font-black", YEAR_COLORS[y])}>{y}</span>
+                            <div className="flex items-center gap-2">
+                              {isCurrentYearCard && (
+                                <div className={cn("flex rounded-lg overflow-hidden border text-[8px] font-bold", darkMode ? "border-white/10" : "border-gray-200")}>
+                                  <button onClick={() => setComparativo2026Mode('real')}
+                                    className={cn("px-2 py-0.5 transition-colors",
+                                      comparativo2026Mode === 'real'
+                                        ? (darkMode ? "bg-emerald-500/30 text-emerald-300" : "bg-emerald-500 text-white")
+                                        : (darkMode ? "bg-white/5 text-gray-500 hover:text-gray-300" : "bg-white text-gray-400 hover:text-gray-600"))}>
+                                    Real
+                                  </button>
+                                  <button onClick={() => setComparativo2026Mode('proyectado')}
+                                    className={cn("px-2 py-0.5 transition-colors border-l",
+                                      darkMode ? "border-white/10" : "border-gray-200",
+                                      comparativo2026Mode === 'proyectado'
+                                        ? (darkMode ? "bg-emerald-500/30 text-emerald-300" : "bg-emerald-500 text-white")
+                                        : (darkMode ? "bg-white/5 text-gray-500 hover:text-gray-300" : "bg-white text-gray-400 hover:text-gray-600"))}>
+                                    Proy.
+                                  </button>
+                                </div>
+                              )}
+                              {!isCurrentYearCard && growth !== null && (
+                                <span className={cn("text-[9px] font-bold", growth >= 0 ? "text-emerald-400" : "text-red-400")}>
+                                  {growth >= 0 ? '▲' : '▼'} {Math.abs(growth).toFixed(1)}%
+                                </span>
+                              )}
+                              {isCurrentYearCard && growth !== null && (
+                                <span className={cn("text-[9px] font-bold", growth >= 0 ? "text-emerald-400" : "text-red-400")}>
+                                  {growth >= 0 ? '▲' : '▼'} {Math.abs(growth).toFixed(1)}%
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <p className={cn("text-4xl font-black leading-none", YEAR_COLORS[y])}>{gt.m2.toLocaleString('es-EC', { maximumFractionDigits: 0 })}</p>
+                          <p className={cn("text-[10px] font-semibold mt-1", darkMode ? "text-gray-500" : "text-gray-400")}>m² totales</p>
+                          <p className={cn("text-lg font-black mt-2", darkMode ? "text-white" : "text-gray-800")}>{gt.boxes.toLocaleString()}</p>
+                          <p className={cn("text-[10px]", darkMode ? "text-gray-600" : "text-gray-400")}>cajas</p>
+                          {isCurrentYearCard && (
+                            <p className={cn("text-[9px] mt-2 pt-2 border-t", darkMode ? "border-white/8 text-gray-600" : "border-black/6 text-gray-400")}>
+                              {comparativo2026Mode === 'real'
+                                ? `${monthsElapsed2026}m registrados (hasta hoy)`
+                                : `${monthsElapsed2026}m registrados → extrapolado a 12m`}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Per film type breakdown */}
+                  {FT_ALL.map(ft => (
+                    <div key={ft} className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                      <div className={cn("px-6 py-3 border-b flex items-center gap-3", ft === 'DIHL' ? (darkMode ? "bg-blue-500/5 border-blue-500/15" : "bg-blue-50 border-blue-100") : (darkMode ? "bg-[#ED1C24]/5 border-[#ED1C24]/15" : "bg-red-50 border-red-100"))}>
+                        <span className={cn("text-[9px] font-black px-2.5 py-1 rounded-lg", ft === 'DIHL' ? "bg-blue-500/20 text-blue-400" : "bg-[#ED1C24]/15 text-[#ED1C24]")}>{ft === 'DIHT' ? 'DI-HT' : 'DI-HL'}</span>
+                        <span className={cn("text-[10px] font-bold", darkMode ? "text-gray-400" : "text-gray-600")}>Comparativo anual por medida</span>
+                        <div className="ml-auto flex items-center gap-6">
+                          {YEARS.map(y => {
+                            const total = SIZES_FJ.reduce((s, sz) => {
+                              const src = y === 2026 ? get2026(ft, sz) : fujiByYearSizeType[y][ft][sz];
+                              return { boxes: s.boxes + src.boxes, m2: s.m2 + src.m2 };
+                            }, { boxes: 0, m2: 0 });
+                            return (
+                              <div key={y} className="text-right">
+                                <span className={cn("font-black text-sm", YEAR_COLORS[y])}>{total.m2.toLocaleString('es-EC', { maximumFractionDigits: 0 })} m²</span>
+                                <span className={cn("text-[9px] ml-1", darkMode ? "text-gray-600" : "text-gray-400")}>{y}{y === 2026 && isCurrentYear2026 ? (comparativo2026Mode === 'real' ? ' real' : '*') : ''}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs min-w-[700px]">
+                          <thead className={cn("text-[9px] font-bold uppercase tracking-wider", darkMode ? "text-gray-600 bg-white/2" : "text-gray-400 bg-gray-50/60")}>
+                            <tr>
+                              <th className={cn("px-5 py-2.5 text-left sticky left-0", darkMode ? "bg-[#16161A]" : "bg-white")}>Medida</th>
+                              {YEARS.map(y => (
+                                <th key={y} colSpan={2} className={cn("px-4 py-2.5 text-center border-l", darkMode ? "border-white/6" : "border-gray-100", YEAR_COLORS[y])}>
+                                  {y}{y === 2026 && isCurrentYear2026 ? (comparativo2026Mode === 'real' ? ' (real)' : ' (proy.)') : ''}
+                                </th>
+                              ))}
+                              <th className={cn("px-4 py-2.5 text-center border-l", darkMode ? "border-white/6 text-gray-600" : "border-gray-100 text-gray-400")}>Crecimiento</th>
+                            </tr>
+                            <tr className={cn("text-[8px]", darkMode ? "text-gray-700 bg-white/1" : "text-gray-300 bg-gray-50/30")}>
+                              <th className={cn("px-5 pb-1.5 sticky left-0", darkMode ? "bg-[#16161A]" : "bg-white")} />
+                              {YEARS.map(y => (
+                                <>
+                                  <th key={`${y}-cj`} className={cn("px-3 pb-1.5 text-center border-l", darkMode ? "border-white/6" : "border-gray-100")}>Cajas</th>
+                                  <th key={`${y}-m2`} className="px-3 pb-1.5 text-center">m²</th>
+                                </>
+                              ))}
+                              <th className="px-4 pb-1.5 text-center">24→25 · 25→26</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {SIZES_FJ.map(sz => {
+                              const m2box = FILM_M2_PER_BOX[ft]?.[sz] ?? 0;
+                              const vals = YEARS.map(y => y === 2026 ? get2026(ft, sz) : fujiByYearSizeType[y][ft][sz]);
+                              const maxM2 = Math.max(...vals.map(v => v.m2), 1);
+                              const g2425 = vals[0].m2 > 0 ? ((vals[1].m2 - vals[0].m2) / vals[0].m2 * 100) : null;
+                              const g2526 = vals[1].m2 > 0 ? ((vals[2].m2 - vals[1].m2) / vals[1].m2 * 100) : null;
+                              if (vals.every(v => v.boxes === 0)) return null;
+
+                              const handleComparativoClick = (y: number, v: { boxes: number; m2: number }) => {
+                                if (v.boxes === 0 || (y === 2026 && !(isCurrentYear2026 && comparativo2026Mode === 'real'))) return;
+                                const clientMap: Record<string, { name: string; salesperson: string; province: string; boxes: number; m2: number; invoices: string[] }> = {};
+                                allConsumos.forEach(r => {
+                                  const d = new Date(r.order_date);
+                                  if (d.getFullYear() !== y) return;
+                                  if (r.size !== sz) return;
+                                  const rft = r.film_type === 'DIHL' ? 'DIHL' : 'DIHT';
+                                  if (rft !== ft) return;
+                                  const qty = r.is_return ? -r.quantity : r.quantity;
+                                  const client = allClients.find(c => c.id === r.client_id);
+                                  const name = client?.name || 'Desconocido';
+                                  if (!clientMap[name]) clientMap[name] = { name, salesperson: client?.salesperson || '', province: client?.province || '', boxes: 0, m2: 0, invoices: [] };
+                                  clientMap[name].boxes += qty;
+                                  clientMap[name].m2 = parseFloat((clientMap[name].m2 + getTotalM2(qty, sz, ft)).toFixed(2));
+                                  if (r.invoice_number && !clientMap[name].invoices.includes(r.invoice_number)) clientMap[name].invoices.push(r.invoice_number);
+                                });
+                                const clients = Object.values(clientMap).filter(c => c.boxes > 0).sort((a, b) => b.boxes - a.boxes);
+                                setComparativoCellDetail({ ft, sz, year: y, clients, totalBoxes: v.boxes, totalM2: v.m2 });
+                                setComparativoSelectedClient(null);
+                              };
+
+                              return (
+                                <tr key={sz} className={cn("border-t transition-colors", darkMode ? "border-white/5 hover:bg-white/2" : "border-gray-50 hover:bg-gray-50/40")}>
+                                  <td className={cn("px-5 py-3 sticky left-0", darkMode ? "bg-[#16161A]" : "bg-white")}>
+                                    <div className="flex flex-col gap-0.5">
+                                      <span className={cn("text-[10px] font-black px-2 py-0.5 rounded w-fit", darkMode ? "bg-white/10 text-white" : "bg-gray-800 text-white")}>{sz}</span>
+                                      <span className={cn("text-[9px]", darkMode ? "text-gray-700" : "text-gray-300")}>{m2box} m²/cj</span>
+                                    </div>
+                                  </td>
+                                  {vals.map((v, vi) => {
+                                    const y = YEARS[vi];
+                                    const barWidth = maxM2 > 0 ? (v.m2 / maxM2) * 100 : 0;
+                                    const isClickable = v.boxes > 0 && (y !== 2026 || (isCurrentYear2026 && comparativo2026Mode === 'real'));
+                                    return (
+                                      <>
+                                        <td key={`${y}-cj`} className={cn("px-3 py-3 text-center border-l", darkMode ? "border-white/6" : "border-gray-100")}>
+                                          <div className="flex flex-col items-center gap-1">
+                                            <div className={cn("h-1.5 rounded-full", ft === 'DIHL' ? "bg-blue-500" : "bg-[#ED1C24]")} style={{ width: `${Math.max(4, barWidth)}%`, minWidth: v.boxes > 0 ? '8px' : '0', opacity: 0.6 + (barWidth / 100) * 0.4 }} />
+                                            <span
+                                              onClick={() => handleComparativoClick(y, v)}
+                                              className={cn(
+                                                "font-black text-sm transition-all",
+                                                v.boxes === 0 ? (darkMode ? "text-gray-800" : "text-gray-200") : YEAR_COLORS[y],
+                                                isClickable && "cursor-pointer hover:underline hover:opacity-70"
+                                              )}
+                                            >{v.boxes > 0 ? v.boxes : '—'}</span>
+                                          </div>
+                                        </td>
+                                        <td key={`${y}-m2`} className="px-3 py-3 text-center">
+                                          <span className={cn("text-[10px] font-semibold", v.m2 === 0 ? (darkMode ? "text-gray-800" : "text-gray-200") : (darkMode ? "text-cyan-500" : "text-cyan-600"))}>{v.m2 > 0 ? `${v.m2.toLocaleString('es-EC', { maximumFractionDigits: 0 })}` : '—'}</span>
+                                        </td>
+                                      </>
+                                    );
+                                  })}
+                                  <td className="px-4 py-3 text-center">
+                                    <div className="flex flex-col gap-0.5 items-center">
+                                      {g2425 !== null && <span className={cn("text-[9px] font-bold", g2425 >= 0 ? "text-emerald-400" : "text-red-400")}>{g2425 >= 0 ? '▲' : '▼'}{Math.abs(g2425).toFixed(0)}%</span>}
+                                      {g2526 !== null && <span className={cn("text-[9px] font-bold", g2526 >= 0 ? "text-emerald-400" : "text-red-400")}>{g2526 >= 0 ? '▲' : '▼'}{Math.abs(g2526).toFixed(0)}%</span>}
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* TXE historical */}
+                  {TRIMAX_2024.totalBoxes > 0 && (
+                    <div className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                      <div className={cn("px-6 py-3 border-b flex items-center gap-3", darkMode ? "bg-orange-500/5 border-orange-500/15" : "bg-orange-50 border-orange-100")}>
+                        <span className="text-[9px] font-black px-2.5 py-1 rounded-lg bg-orange-500/20 text-orange-400">TXE</span>
+                        <span className={cn("text-[10px] font-bold", darkMode ? "text-gray-400" : "text-gray-600")}>Trimax — Histórico (ya no se vende)</span>
+                        <span className={cn("ml-auto text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>Solo 2024 · referencia histórica</span>
+                      </div>
+                      <div className="p-5 grid grid-cols-4 gap-3">
+                        {Object.entries(TRIMAX_2024.bySize).map(([sz, data]) => (
+                          <div key={sz} className={cn("rounded-xl p-3.5 border", darkMode ? "bg-white/3 border-white/6" : "bg-gray-50 border-gray-100")}>
+                            <span className={cn("text-[10px] font-black px-2 py-0.5 rounded inline-block mb-2", darkMode ? "bg-white/10 text-white" : "bg-gray-800 text-white")}>{sz}</span>
+                            <p className="text-2xl font-black text-orange-400 leading-none">{data.m2.toLocaleString('es-EC', { maximumFractionDigits: 0 })} m²</p>
+                            <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>en 2024 · {data.boxes} cajas</p>
+                            <p className={cn("text-[9px] mt-1", darkMode ? "text-gray-700" : "text-gray-300")}>{data.m2PerBox} m²/cj</p>
+                          </div>
+                        ))}
+                        <div className={cn("col-span-4 rounded-xl p-3 border text-center", darkMode ? "bg-orange-500/5 border-orange-500/15" : "bg-orange-50 border-orange-100")}>
+                          <span className="text-orange-400 font-black text-lg">{TRIMAX_2024.totalM2.toLocaleString('es-EC', { maximumFractionDigits: 0 })} m²</span>
+                          <span className={cn("text-[10px] ml-2", darkMode ? "text-gray-500" : "text-gray-400")}>total TXE 2024 · {TRIMAX_2024.totalBoxes.toLocaleString()} cajas · mercado que migró a Fujifilm</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {intelligenceTab === 'health' && (
+              <div className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                <div className={cn("px-6 py-4 border-b flex items-center justify-between", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+                  <h3 className={cn("text-[10px] font-bold uppercase tracking-wider flex items-center gap-2", darkMode ? "text-gray-400" : "text-gray-600")}>
+                    Score de Salud por Cliente — Índice 0–100
+                  </h3>
+                  <div className="flex items-center gap-2 text-[9px] font-bold">
+                    {(['A','B','C','D','F'] as const).map(g => {
+                      const active = healthGradeFilter === g;
+                      const colors = g==='A'?'bg-emerald-500/20 text-emerald-400 border-emerald-500/40':g==='B'?'bg-teal-500/20 text-teal-400 border-teal-500/40':g==='C'?'bg-amber-500/20 text-amber-400 border-amber-500/40':g==='D'?'bg-orange-500/20 text-orange-400 border-orange-500/40':'bg-red-500/20 text-red-400 border-red-500/40';
+                      const activeColors = g==='A'?'bg-emerald-500 text-white border-emerald-500':g==='B'?'bg-teal-500 text-white border-teal-500':g==='C'?'bg-amber-500 text-white border-amber-500':g==='D'?'bg-orange-500 text-white border-orange-500':'bg-red-500 text-white border-red-500';
+                      return (
+                        <button key={g} onClick={() => setHealthGradeFilter(active ? null : g)}
+                          className={cn("px-2.5 py-0.5 rounded-lg border transition-all cursor-pointer", active ? activeColors : colors)}>
+                          {g}: {clientHealthScores.filter((c:any)=>c.grade===g).length}
+                        </button>
+                      );
+                    })}
+                    {healthGradeFilter && (
+                      <button onClick={() => setHealthGradeFilter(null)}
+                        className={cn("px-2 py-0.5 rounded-lg text-[9px] font-bold transition-colors", darkMode ? "bg-white/10 text-gray-400 hover:bg-white/15" : "bg-gray-200 text-gray-500 hover:bg-gray-300")}>
+                        × todos
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="overflow-x-auto max-h-[600px] overflow-y-auto custom-scrollbar">
+                  <table className="w-full text-left text-xs">
+                    <thead className={cn("text-[9px] font-bold uppercase tracking-wider sticky top-0", darkMode ? "text-gray-600 bg-[#16161A]" : "text-gray-400 bg-white")}>
+                      <tr>
+                        <th className="px-5 py-2.5">Cliente</th>
+                        <th className="px-5 py-2.5 text-center">Score</th>
+                        <th className="px-5 py-2.5 text-center">Grado</th>
+                        <th className="px-5 py-2.5 text-center">Frecuencia /25</th>
+                        <th className="px-5 py-2.5 text-center">Recencia /25</th>
+                        <th className="px-5 py-2.5 text-center">Volumen /25</th>
+                        <th className="px-5 py-2.5 text-center">Tendencia /25</th>
+                        <th className="px-5 py-2.5 text-center">m²/mes</th>
+                        <th className="px-5 py-2.5 text-center">cj/mes</th>
+                        <th className="px-5 py-2.5 text-center">Acción</th>
+                      </tr>
+                    </thead>
+                    <tbody className={cn("divide-y", darkMode ? "divide-white/4" : "divide-gray-50")}>
+                      {clientHealthScores.filter((item: any) => !healthGradeFilter || item.grade === healthGradeFilter).map((item: any, i: number) => {
+                        const gradeColor = item.grade==='A'?'text-emerald-400 bg-emerald-500/15':item.grade==='B'?'text-teal-400 bg-teal-500/15':item.grade==='C'?'text-amber-400 bg-amber-500/15':item.grade==='D'?'text-orange-400 bg-orange-500/15':'text-red-400 bg-red-500/15';
+                        const barColor = item.grade==='A'?'bg-emerald-400':item.grade==='B'?'bg-teal-400':item.grade==='C'?'bg-amber-400':item.grade==='D'?'bg-orange-400':'bg-red-400';
+                        return (
+                          <tr key={i} className={cn("transition-colors", darkMode ? "hover:bg-white/3" : "hover:bg-gray-50/60")}>
+                            <td className="px-5 py-3">
+                              <p className="font-semibold truncate max-w-[200px]">{item.client.name}</p>
+                              <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{item.client.salesperson || '—'}</p>
+                            </td>
+                            <td className="px-5 py-3 text-center">
+                              <div className="flex items-center gap-2 justify-center">
+                                <div className={cn("h-1.5 w-16 rounded-full overflow-hidden", darkMode ? "bg-white/8" : "bg-gray-200")}>
+                                  <div className={cn("h-full rounded-full", barColor)} style={{ width: `${item.score}%` }} />
+                                </div>
+                                <span className="font-black text-sm w-8">{item.score}</span>
+                              </div>
+                            </td>
+                            <td className="px-5 py-3 text-center"><span className={cn("font-black text-sm px-2.5 py-0.5 rounded-lg", gradeColor)}>{item.grade}</span></td>
+                            <td className="px-5 py-3 text-center font-semibold">{item.freqScore}</td>
+                            <td className="px-5 py-3 text-center font-semibold">{item.recencyScore}</td>
+                            <td className="px-5 py-3 text-center font-semibold">{item.volScore}</td>
+                            <td className="px-5 py-3 text-center font-semibold">{item.trendScore}</td>
+                            <td className="px-5 py-3 text-center">
+                              <span className={cn("font-black text-sm", darkMode ? "text-cyan-400" : "text-cyan-600")}>
+                                {getTotalM2(item.avgMonthly, (() => {
+                                  // compute dominant size from consumos
+                                  const cs = filteredConsumosForView.filter((r: ConsumptionRecord) => r.client_id === item.client.id);
+                                  const sd = {} as Record<string,number>;
+                                  cs.forEach((r: ConsumptionRecord) => { sd[r.size] = (sd[r.size]||0) + r.quantity; });
+                                  return Object.entries(sd).sort((a,b)=>b[1]-a[1])[0]?.[0] || '14x17';
+                                })(), globalFilmFilter === 'DIHL' ? 'DIHL' : 'DIHT').toFixed(2)}
+                              </span>
+                              <span className={cn("text-[9px] block", darkMode ? "text-gray-600" : "text-gray-400")}>m²</span>
+                            </td>
+                            <td className="px-5 py-3 text-center">{item.avgMonthly.toFixed(1)} <span className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>cj</span></td>
+                            <td className="px-5 py-3 text-center">
+                              <button onClick={() => { setSelectedClient(item.client); setView('clients'); }}
+                                className={cn("text-[9px] font-bold px-2.5 py-1 rounded-lg transition-colors inline-flex items-center gap-1",
+                                  darkMode ? "bg-white/8 text-gray-400 hover:bg-white/12" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                                )}><ArrowRight className="w-3 h-3" /> Ver</button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* ══ TAB: PROFITABILITY ══ */}
+            {intelligenceTab === 'profitability' && (
+              <div className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                <div className={cn("px-6 py-4 border-b", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+                  <h3 className={cn("text-[10px] font-bold uppercase tracking-wider flex items-center gap-2", darkMode ? "text-gray-400" : "text-gray-600")}>
+                    Ranking por Superficie — m² consumidos por cliente (orden descendente)
+                  </h3>
+                </div>
+                <div className="overflow-x-auto max-h-[600px] overflow-y-auto custom-scrollbar">
+                  <table className="w-full text-left text-xs">
+                    <thead className={cn("text-[9px] font-bold uppercase tracking-wider sticky top-0", darkMode ? "text-gray-600 bg-[#16161A]" : "text-gray-400 bg-white")}>
+                      <tr>
+                        <th className="px-5 py-2.5 text-center">#</th>
+                        <th className="px-5 py-2.5">Cliente</th>
+                        <th className="px-5 py-2.5 text-right">m² totales</th>
+                        <th className="px-5 py-2.5 text-right">m²/mes</th>
+                        <th className="px-5 py-2.5 text-right">Ingresos totales</th>
+                        <th className="px-5 py-2.5 text-center">Total cajas</th>
+                        <th className="px-5 py-2.5 text-center">Meses activo</th>
+                        <th className="px-5 py-2.5 text-center">Inactividad</th>
+                        <th className="px-5 py-2.5">Peso relativo</th>
+                        <th className="px-5 py-2.5 text-center">Acción</th>
+                      </tr>
+                    </thead>
+                    <tbody className={cn("divide-y", darkMode ? "divide-white/4" : "divide-gray-50")}>
+                      {(() => {
+                        const totalAllM2 = profitabilityRanking.reduce((s:number, r:any) => s + r.totalM2client, 0);
+                        const totalAll = profitabilityRanking.reduce((s:number, r:any) => s + r.totalCost, 0);
+                        let cumPct = 0;
+                        return profitabilityRanking.map((item: any, i: number) => {
+                          const pct = totalAllM2 > 0 ? (item.totalM2client / totalAllM2) * 100 : 0;
+                          cumPct += pct;
+                          return (
+                            <tr key={i} className={cn("transition-colors", darkMode ? "hover:bg-white/3" : "hover:bg-gray-50/60")}>
+                              <td className="px-5 py-3 text-center">
+                                <span className={cn("font-black text-sm", i===0?'text-amber-400':i===1?'text-gray-400':i===2?'text-orange-400':(darkMode?'text-gray-600':'text-gray-300'))}>
+                                  {i+1}
+                                </span>
+                              </td>
+                              <td className="px-5 py-3">
+                                <p className="font-semibold truncate max-w-[190px]">{item.client.name}</p>
+                                <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{item.client.province} · {item.client.salesperson||'—'}</p>
+                              </td>
+                              <td className="px-5 py-3 text-right">
+                                <span className={cn("font-black text-sm", darkMode ? "text-cyan-400" : "text-cyan-600")}>{item.totalM2client.toLocaleString('es-EC',{minimumFractionDigits:2,maximumFractionDigits:2})} m²</span>
+                              </td>
+                              <td className="px-5 py-3 text-right">
+                                <span className={cn("font-semibold text-xs", darkMode ? "text-cyan-500" : "text-cyan-600")}>{item.avgMonthlyM2.toFixed(2)} m²</span>
+                              </td>
+                              <td className="px-5 py-3 text-right font-black text-[#ED1C24]">
+                                {item.totalCost > 0 ? `$${item.totalCost.toLocaleString('es-EC',{minimumFractionDigits:2,maximumFractionDigits:2})}` : '—'}
+                              </td>
+                              <td className="px-5 py-3 text-center font-bold">{item.totalQty}</td>
+                              <td className="px-5 py-3 text-center">{item.monthsActive}</td>
+                              <td className="px-5 py-3 text-center">
+                                <span className={cn("font-semibold", item.monthsSinceLast >= 3 ? 'text-red-400' : item.monthsSinceLast >= 1 ? 'text-amber-400' : 'text-emerald-400')}>
+                                  {item.monthsSinceLast === 0 ? 'Activo' : `${item.monthsSinceLast}m`}
+                                </span>
+                              </td>
+                              <td className="px-5 py-3">
+                                <div className="flex items-center gap-2">
+                                  <div className={cn("h-1.5 rounded-full overflow-hidden flex-1", darkMode ? "bg-white/8" : "bg-gray-200")}>
+                                    <div className="h-full bg-cyan-500 rounded-full" style={{ width: `${Math.min(100, pct * 3)}%` }} />
+                                  </div>
+                                  <span className={cn("text-[10px] font-bold w-10 text-right", darkMode ? "text-gray-500" : "text-gray-400")}>{pct.toFixed(1)}%</span>
+                                </div>
+                              </td>
+                              <td className="px-5 py-3 text-center">
+                                <button onClick={() => { setSelectedClient(item.client); setView('clients'); }}
+                                  className={cn("text-[9px] font-bold px-2.5 py-1 rounded-lg inline-flex items-center gap-1",
+                                    darkMode ? "bg-white/8 text-gray-400 hover:bg-white/12" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                                  )}><ArrowRight className="w-3 h-3" /> Ver</button>
+                              </td>
+                            </tr>
+                          );
+                        });
+                      })()}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* ══ TAB: SEASONALITY ══ */}
+            {intelligenceTab === 'seasonality' && (
+              <div className="space-y-5">
+                {/* Summary badges */}
+                <div className="grid grid-cols-3 gap-4">
+                  <div className={cn("rounded-xl p-5 border", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                    <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-2", darkMode ? "text-gray-600" : "text-gray-400")}>Mes pico del año</p>
+                    <p className="text-2xl font-black text-[#ED1C24]">
+                      {seasonalityData.peakMonth?.label}
+                      {seasonalityData.peakYear && <span className={cn("text-sm font-bold ml-1.5", darkMode ? "text-gray-500" : "text-gray-400")}>{seasonalityData.peakYear}</span>}
+                    </p>
+                    <p className={cn("text-xs mt-1", darkMode ? "text-gray-500" : "text-gray-400")}>{seasonalityData.peakMonth?.total} cajas · índice {seasonalityData.peakMonth?.index}</p>
+                  </div>
+                  <div className={cn("rounded-xl p-5 border", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                    <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-2", darkMode ? "text-gray-600" : "text-gray-400")}>Mes más bajo</p>
+                    <p className="text-2xl font-black text-amber-400">
+                      {seasonalityData.lowMonth?.label}
+                      {seasonalityData.lowYear && <span className={cn("text-sm font-bold ml-1.5", darkMode ? "text-gray-500" : "text-gray-400")}>{seasonalityData.lowYear}</span>}
+                    </p>
+                    <p className={cn("text-xs mt-1", darkMode ? "text-gray-500" : "text-gray-400")}>{seasonalityData.lowMonth?.total} cajas · índice {seasonalityData.lowMonth?.index}</p>
+                  </div>
+                  <div className={cn("rounded-xl p-5 border", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                    <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-2", darkMode ? "text-gray-600" : "text-gray-400")}>Variación pico vs bajo</p>
+                    <p className="text-2xl font-black text-emerald-400">
+                      {seasonalityData.variationPct !== null ? `${seasonalityData.variationPct}%` : '—'}
+                    </p>
+                    <p className={cn("text-xs mt-1", darkMode ? "text-gray-500" : "text-gray-400")}>más demanda en mes pico</p>
+                  </div>
+                </div>
+
+                {/* Bar chart total */}
+                <div className={cn("rounded-xl border p-5", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                  <h3 className={cn("text-[10px] font-bold uppercase tracking-wider mb-4", darkMode ? "text-gray-400" : "text-gray-600")}>Consumo total mensual — todos los años acumulados</h3>
+                  <ResponsiveContainer width="100%" height={200}>
+                    <BarChart data={seasonalityData.chartData} margin={{ top: 0, right: 10, left: -20, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={darkMode ? '#ffffff08' : '#f0f0f0'} />
+                      <XAxis dataKey="label" tick={{ fontSize: 10, fill: darkMode ? '#666' : '#999' }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fontSize: 10, fill: darkMode ? '#666' : '#999' }} axisLine={false} tickLine={false} />
+                      <Tooltip
+                        cursor={{ fill: darkMode ? '#ffffff06' : '#f5f5f5' }}
+                        content={({ active, payload, label }: any) => {
+                          if (!active || !payload?.length) return null;
+                          const d = payload[0]?.payload;
+                          return (
+                            <div style={{ background: darkMode ? '#1a1a1e' : '#fff', border: '1px solid #ED1C24', borderRadius: 8, padding: '10px 14px', fontSize: 11, color: darkMode ? '#fff' : '#111', minWidth: 180 }}>
+                              <p style={{ fontWeight: 700, color: darkMode ? '#9CA3AF' : '#6B7280', marginBottom: 6 }}>{label}</p>
+                              <p style={{ fontWeight: 700, marginBottom: 4 }}>{d?.total} cajas totales</p>
+                              {d?.topClientName && d.topClientName !== '—' && (
+                                <div style={{ borderTop: '1px solid ' + (darkMode ? '#ffffff12' : '#f0f0f0'), marginTop: 6, paddingTop: 6 }}>
+                                  <p style={{ color: darkMode ? '#9CA3AF' : '#6B7280', fontSize: 10, marginBottom: 2, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Top cliente</p>
+                                  <p style={{ fontWeight: 700, color: '#ED1C24', fontSize: 11 }}>{d.topClientName}</p>
+                                  <p style={{ color: darkMode ? '#9CA3AF' : '#6B7280', fontSize: 10 }}>{d.topClientQty} cajas</p>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        }}
+                      />
+                      <Bar dataKey="total" radius={[4,4,0,0]} name="Total cajas">
+                        {seasonalityData.chartData.map((entry: any, i: number) => (
+                          <Cell key={i} fill={entry.label === seasonalityData.peakMonth?.label ? '#ED1C24' : darkMode ? '#ffffff18' : '#e5e7eb'} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+
+                {/* Per-size breakdown */}
+                <div className="grid grid-cols-4 gap-4">
+                  {seasonalityData.SIZES.map(size => {
+                    const sizeData = seasonalityData.chartData.map((m: any) => ({ label: m.label, qty: m[size] || 0, topClient: m[`${size}_topClient`] || '—', topQty: m[`${size}_topQty`] || 0 }));
+                    const peakIdx = sizeData.reduce((best: number, m: any, i: number) => m.qty > sizeData[best].qty ? i : best, 0);
+                    const isExpanded = expandedSize === size;
+                    const total = sizeData.reduce((s: number, m: any) => s + m.qty, 0);
+                    const avg = (total / sizeData.filter((m:any) => m.qty > 0).length || 0).toFixed(0);
+                    return (
+                      <div key={size}
+                        onClick={() => setExpandedSize(isExpanded ? null : size)}
+                        className={cn(
+                          "rounded-xl border p-4 cursor-pointer transition-all duration-200",
+                          isExpanded
+                            ? (darkMode ? "col-span-4 bg-[#16161A] border-[#ED1C24]/40 shadow-lg shadow-[#ED1C24]/5" : "col-span-4 bg-white border-[#ED1C24]/40 shadow-md")
+                            : (darkMode ? "bg-white/4 border-white/6 hover:border-white/15 hover:bg-white/6" : "bg-gray-50 border-gray-100 hover:border-gray-300 hover:bg-white")
+                        )}>
+                        <div className="flex justify-between items-center mb-3">
+                          <div className="flex items-center gap-2">
+                            <span className={cn("text-xs font-black px-2 py-0.5 rounded", isExpanded ? "bg-[#ED1C24] text-white" : (darkMode ? "bg-white/10 text-white" : "bg-gray-800 text-white"))}>{size}</span>
+                            {isExpanded && (
+                              <span className={cn("text-[9px] font-medium", darkMode ? "text-gray-500" : "text-gray-400")}>
+                                {total} cajas totales · prom. {avg} cj/mes activo
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[9px] font-bold text-[#ED1C24]">Pico: {sizeData[peakIdx]?.label}</span>
+                            <span className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>{isExpanded ? '▲ cerrar' : '▼ expandir'}</span>
+                          </div>
+                        </div>
+                        <ResponsiveContainer width="100%" height={isExpanded ? 220 : 80}>
+                          <BarChart data={sizeData} margin={{ top: 4, right: isExpanded ? 20 : 0, left: isExpanded ? -10 : -30, bottom: 0 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke={darkMode ? '#ffffff06' : '#f0f0f0'} vertical={false} style={{ display: isExpanded ? 'block' : 'none' }} />
+                            <XAxis dataKey="label" tick={{ fontSize: isExpanded ? 11 : 7, fill: darkMode ? '#666' : '#bbb' }} axisLine={false} tickLine={false} />
+                            {isExpanded && <YAxis tick={{ fontSize: 10, fill: darkMode ? '#555' : '#aaa' }} axisLine={false} tickLine={false} />}
+                            <Tooltip
+                              cursor={{ fill: darkMode ? '#ffffff08' : '#f5f5f5' }}
+                              content={({ active, payload, label }: any) => {
+                                if (!active || !payload?.length) return null;
+                                const d = payload[0]?.payload;
+                                return (
+                                  <div style={{ background: darkMode ? '#1a1a1e' : '#fff', border: '1px solid #ED1C24', borderRadius: 8, padding: '10px 14px', fontSize: 11, color: darkMode ? '#fff' : '#111', minWidth: 160 }}>
+                                    <p style={{ fontWeight: 700, color: darkMode ? '#9CA3AF' : '#6B7280', marginBottom: 6 }}>{label}</p>
+                                    <p style={{ fontWeight: 700, marginBottom: 4 }}>{d?.qty} cajas · {size}</p>
+                                    {d?.topClient && d.topClient !== '—' && (
+                                      <div style={{ borderTop: '1px solid ' + (darkMode ? '#ffffff12' : '#f0f0f0'), marginTop: 6, paddingTop: 6 }}>
+                                        <p style={{ color: darkMode ? '#9CA3AF' : '#6B7280', fontSize: 10, marginBottom: 2, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Top cliente</p>
+                                        <p style={{ fontWeight: 700, color: '#ED1C24', fontSize: 11 }}>{d.topClient}</p>
+                                        <p style={{ color: darkMode ? '#9CA3AF' : '#6B7280', fontSize: 10 }}>{d.topQty} cajas</p>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              }}
+                            />
+                            <Bar dataKey="qty" radius={[4,4,0,0]} maxBarSize={isExpanded ? 60 : 20}>
+                              {sizeData.map((_: any, i: number) => (
+                                <Cell key={i} fill={i === peakIdx ? '#ED1C24' : darkMode ? '#ffffff15' : '#e5e7eb'} />
+                              ))}
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                        {isExpanded && (
+                          <div className="mt-4 grid grid-cols-12 gap-2">
+                            {sizeData.map((m: any, i: number) => (
+                              <div key={i} className={cn("text-center p-2 rounded-lg", i === peakIdx ? (darkMode ? "bg-[#ED1C24]/15 border border-[#ED1C24]/30" : "bg-red-50 border border-red-200") : (darkMode ? "bg-white/3" : "bg-gray-50"))}>
+                                <p className={cn("text-[9px] font-bold uppercase", i === peakIdx ? "text-[#ED1C24]" : (darkMode ? "text-gray-500" : "text-gray-400"))}>{m.label}</p>
+                                <p className={cn("text-sm font-black mt-0.5", i === peakIdx ? "text-[#ED1C24]" : (darkMode ? "text-white" : "text-gray-800"))}>{m.qty}</p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* ══ TAB: GROWTH POTENTIAL ══ */}
+            {intelligenceTab === 'potential' && (
+              <div className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                <div className={cn("px-6 py-4 border-b", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+                  <h3 className={cn("text-[10px] font-bold uppercase tracking-wider flex items-center gap-2", darkMode ? "text-gray-400" : "text-gray-600")}>
+                    Clientes con Potencial de Crecimiento — tienen impresora pero compran menos de lo esperado
+                  </h3>
+                  <p className={cn("text-[9px] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>Benchmarck: ~2 cajas/impresora/mes. Oportunidad de captura = diferencia entre lo esperado y lo actual.</p>
+                </div>
+                <div className="overflow-x-auto max-h-[560px] overflow-y-auto custom-scrollbar">
+                  <table className="w-full text-left text-xs">
+                    <thead className={cn("text-[9px] font-bold uppercase tracking-wider sticky top-0", darkMode ? "text-gray-600 bg-[#16161A]" : "text-gray-400 bg-white")}>
+                      <tr>
+                        <th className="px-5 py-2.5">Cliente</th>
+                        <th className="px-5 py-2.5 text-center">Impresoras</th>
+                        <th className="px-5 py-2.5 text-center">m²/mes actual</th>
+                        <th className="px-5 py-2.5 text-center">m²/mes esperado</th>
+                        <th className="px-5 py-2.5 text-center">Captura %</th>
+                        <th className="px-5 py-2.5 text-center">Oportunidad</th>
+                        <th className="px-5 py-2.5 text-center">Acción</th>
+                      </tr>
+                    </thead>
+                    <tbody className={cn("divide-y", darkMode ? "divide-white/4" : "divide-gray-50")}>
+                      {growthPotentialClients.map((item: any, i: number) => (
+                        <tr key={i} className={cn("transition-colors", darkMode ? "hover:bg-white/3" : "hover:bg-gray-50/60")}>
+                          <td className="px-5 py-3">
+                            <p className="font-semibold truncate max-w-[200px]">{item.client.name}</p>
+                            <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{item.client.province} · {item.client.salesperson||'—'}</p>
+                          </td>
+                          <td className="px-5 py-3 text-center font-black">{item.printerCount}</td>
+                          <td className="px-5 py-3 text-center">
+                            <span className={cn("font-black", darkMode ? "text-cyan-400" : "text-cyan-600")}>
+                              {(item.avgMonthly * (getM2PerBox((() => {
+                                const cs = filteredConsumosForView.filter((r: ConsumptionRecord) => r.client_id === item.client.id);
+                                const sd = {} as Record<string,number>;
+                                cs.forEach((r: ConsumptionRecord) => { sd[r.size] = (sd[r.size]||0) + r.quantity; });
+                                return Object.entries(sd).sort((a,b)=>b[1]-a[1])[0]?.[0] || '14x17';
+                              })(), globalFilmFilter === 'DIHL' ? 'DIHL' : 'DIHT'))).toFixed(1)} m²
+                            </span>
+                            <span className={cn("text-[9px] block", darkMode ? "text-gray-600" : "text-gray-400")}>{item.avgMonthly} cj</span>
+                          </td>
+                          <td className="px-5 py-3 text-center">
+                            <span className={cn("font-semibold", darkMode ? "text-gray-400" : "text-gray-600")}>
+                              {(item.expectedMonthly * 9.03).toFixed(1)} m²
+                            </span>
+                            <span className={cn("text-[9px] block", darkMode ? "text-gray-600" : "text-gray-400")}>{item.expectedMonthly} cj</span>
+                          </td>
+                          <td className="px-5 py-3 text-center">
+                            <div className="flex items-center gap-2 justify-center">
+                              <div className={cn("h-1.5 w-14 rounded-full overflow-hidden", darkMode ? "bg-white/8" : "bg-gray-200")}>
+                                <div className="h-full rounded-full bg-amber-400" style={{ width: `${item.captureRate}%` }} />
+                              </div>
+                              <span className="font-black text-amber-400">{item.captureRate}%</span>
+                            </div>
+                          </td>
+                          <td className="px-5 py-3 text-center">
+                            <span className="font-black text-emerald-400">+{item.untappedBoxes.toFixed(1)} cj/mes</span>
+                          </td>
+                          <td className="px-5 py-3 text-center">
+                            <button onClick={() => { setSelectedClient(item.client); setView('clients'); }}
+                              className={cn("text-[9px] font-bold px-2.5 py-1 rounded-lg inline-flex items-center gap-1 bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 transition-colors")}>
+                              <ArrowRight className="w-3 h-3" /> Visitar
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                      {growthPotentialClients.length === 0 && (
+                        <tr><td colSpan={7} className={cn("px-5 py-10 text-center text-xs", darkMode ? "text-gray-600" : "text-gray-400")}>
+                          <Trophy className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                          No hay clientes con potencial de crecimiento identificado aún.
+                        </td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* ══ TAB: PROVINCES ══ */}
+            {intelligenceTab === 'provinces' && (
+              <div className="space-y-5">
+                <div className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                  <div className={cn("px-6 py-4 border-b", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+                    <h3 className={cn("text-[10px] font-bold uppercase tracking-wider", darkMode ? "text-gray-400" : "text-gray-600")}>
+                      Comparativa por Provincia — Volumen · Ingresos · Tendencia
+                    </h3>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className={cn("text-[9px] font-bold uppercase tracking-wider", darkMode ? "text-gray-600 bg-white/2" : "text-gray-400 bg-gray-50/60")}>
+                        <tr>
+                          <th className="px-5 py-2.5">#</th>
+                          <th className="px-5 py-2.5">Provincia</th>
+                          <th className="px-5 py-2.5 text-center">Clientes</th>
+                          <th className="px-5 py-2.5 text-center">m² totales</th>
+                          <th className="px-5 py-2.5 text-center">Total cajas</th>
+                          <th className="px-5 py-2.5 text-right">Ingresos</th>
+                          <th className="px-5 py-2.5 text-center">m²/cliente</th>
+                          <th className="px-5 py-2.5 text-center">Tendencia 6m</th>
+                          <th className="px-5 py-2.5">Participación</th>
+                        </tr>
+                      </thead>
+                      <tbody className={cn("divide-y", darkMode ? "divide-white/4" : "divide-gray-50")}>
+                        {(() => {
+                          const totalM2All = provinceComparison.reduce((s,p) => s + p.m2, 0);
+                          const totalQtyAll = provinceComparison.reduce((s,p) => s+p.qty, 0);
+                          return provinceComparison.map((item, i) => {
+                            const pct = totalM2All > 0 ? (item.m2 / totalM2All) * 100 : 0;
+                            return (
+                              <tr key={i} className={cn("transition-colors", darkMode ? "hover:bg-white/3" : "hover:bg-gray-50/60")}>
+                                <td className={cn("px-5 py-3 font-black text-sm", i<3 ? 'text-[#ED1C24]' : (darkMode?'text-gray-600':'text-gray-300'))}>{i+1}</td>
+                                <td className="px-5 py-3 font-semibold">{item.province}</td>
+                                <td className="px-5 py-3 text-center">{item.clients}</td>
+                                <td className="px-5 py-3 text-center">
+                                  <span className={cn("font-black", darkMode ? "text-cyan-400" : "text-cyan-600")}>{item.m2.toLocaleString('es-EC', {minimumFractionDigits:1,maximumFractionDigits:1})} m²</span>
+                                </td>
+                                <td className="px-5 py-3 text-center font-bold text-gray-500">{item.qty}</td>
+                                <td className="px-5 py-3 text-right font-bold text-[#ED1C24]">
+                                  {item.revenue > 0 ? `$${item.revenue.toLocaleString('es-EC',{minimumFractionDigits:0,maximumFractionDigits:0})}` : '—'}
+                                </td>
+                                <td className="px-5 py-3 text-center">
+                                  <span className={cn("font-semibold", darkMode ? "text-cyan-500" : "text-cyan-600")}>{item.avgM2PerClient} m²</span>
+                                </td>
+                                <td className="px-5 py-3 text-center">
+                                  {item.trend !== null ? (
+                                    <span className={cn("font-bold flex items-center gap-1 justify-center",
+                                      item.trend > 5 ? 'text-emerald-400' : item.trend < -5 ? 'text-red-400' : 'text-amber-400'
+                                    )}>
+                                      {item.trend > 0 ? '▲' : item.trend < 0 ? '▼' : '—'}
+                                      {Math.abs(item.trend).toFixed(0)}%
+                                    </span>
+                                  ) : <span className={cn(darkMode ? "text-gray-600" : "text-gray-300")}>—</span>}
+                                </td>
+                                <td className="px-5 py-3 w-40">
+                                  <div className="flex items-center gap-2">
+                                    <div className={cn("h-1.5 flex-1 rounded-full overflow-hidden", darkMode ? "bg-white/8" : "bg-gray-200")}>
+                                      <div className="h-full bg-cyan-500 rounded-full" style={{ width: `${Math.min(100, pct * 2.5)}%` }} />
+                                    </div>
+                                    <span className={cn("text-[10px] font-bold w-8 text-right", darkMode ? "text-gray-500" : "text-gray-400")}>{pct.toFixed(1)}%</span>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          });
+                        })()}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                {/* Province bar chart */}
+                <div className={cn("rounded-xl border p-5", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                  <h3 className={cn("text-[10px] font-bold uppercase tracking-wider mb-4", darkMode ? "text-gray-400" : "text-gray-600")}>Top 10 provincias por m²</h3>
+                  <ResponsiveContainer width="100%" height={220}>
+                    <BarChart data={provinceComparison.slice(0,10)} layout="vertical" margin={{ top: 0, right: 40, left: 20, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={darkMode ? '#ffffff08' : '#f0f0f0'} horizontal={false} />
+                      <XAxis type="number" tick={{ fontSize: 10, fill: darkMode ? '#666' : '#999' }} axisLine={false} tickLine={false} tickFormatter={(v) => `${v}m²`} />
+                      <YAxis type="category" dataKey="province" tick={{ fontSize: 10, fill: darkMode ? '#888' : '#666' }} axisLine={false} tickLine={false} width={90} />
+                      <Tooltip
+                        contentStyle={{ background: darkMode ? '#1a1a1e' : '#fff', border: '1px solid #06B6D4', borderRadius: 8, fontSize: 11, color: darkMode ? '#fff' : '#111' }}
+                        labelStyle={{ color: darkMode ? '#9CA3AF' : '#6B7280', fontWeight: 700, marginBottom: 4 }}
+                        itemStyle={{ color: darkMode ? '#fff' : '#111', fontWeight: 600 }}
+                        cursor={{ fill: darkMode ? '#ffffff06' : '#f5f5f5' }}
+                        formatter={(v: any) => [`${v} m²`, 'Superficie']}
+                      />
+                      <Bar dataKey="m2" radius={[0,4,4,0]} name="m²">
+                        {provinceComparison.slice(0,10).map((_,i) => <Cell key={i} fill={i===0?'#06B6D4':darkMode?'#ffffff18':'#e5e7eb'} />)}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            )}
+
+            {/* ══ TAB: ANOMALIES ══ */}
+            {intelligenceTab === 'anomalies' && (
+              <div className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                <div className={cn("px-6 py-4 border-b flex items-center justify-between", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+                  <div>
+                    <h3 className={cn("text-[10px] font-bold uppercase tracking-wider flex items-center gap-2", darkMode ? "text-gray-400" : "text-gray-600")}>
+                      Detección de Anomalías — Comportamiento inusual vs histórico del cliente
+                    </h3>
+                    <p className={cn("text-[9px] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>Clientes cuyo consumo reciente se desvía significativamente de su promedio histórico (z-score ≥ 1.8)</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="text-[9px] font-bold px-2 py-0.5 rounded-lg bg-emerald-500/15 text-emerald-400">{anomalies.filter((a:any)=>a.type==='spike').length} picos</span>
+                    <span className="text-[9px] font-bold px-2 py-0.5 rounded-lg bg-red-500/15 text-red-400">{anomalies.filter((a:any)=>a.type==='drop').length} caídas</span>
+                  </div>
+                </div>
+                <div className="overflow-x-auto max-h-[560px] overflow-y-auto custom-scrollbar">
+                  <table className="w-full text-left text-xs">
+                    <thead className={cn("text-[9px] font-bold uppercase tracking-wider sticky top-0", darkMode ? "text-gray-600 bg-[#16161A]" : "text-gray-400 bg-white")}>
+                      <tr>
+                        <th className="px-5 py-2.5">Tipo</th>
+                        <th className="px-5 py-2.5">Cliente</th>
+                        <th className="px-5 py-2.5 text-center">Período</th>
+                        <th className="px-5 py-2.5 text-center">Valor actual</th>
+                        <th className="px-5 py-2.5 text-center">Promedio hist.</th>
+                        <th className="px-5 py-2.5 text-center">Desv. estándar</th>
+                        <th className="px-5 py-2.5 text-center">Z-score</th>
+                        <th className="px-5 py-2.5 text-center">Acción</th>
+                      </tr>
+                    </thead>
+                    <tbody className={cn("divide-y", darkMode ? "divide-white/4" : "divide-gray-50")}>
+                      {anomalies.map((item: any, i: number) => (
+                        <tr key={i} className={cn("transition-colors", darkMode ? "hover:bg-white/3" : "hover:bg-gray-50/60")}>
+                          <td className="px-5 py-3">
+                            <span className={cn("text-[9px] font-black px-2 py-0.5 rounded-lg",
+                              item.type==='spike' ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/15 text-red-400"
+                            )}>
+                              {item.type==='spike' ? '▲ PICO' : '▼ CAÍDA'}
+                            </span>
+                          </td>
+                          <td className="px-5 py-3">
+                            <p className="font-semibold truncate max-w-[190px]">{item.client.name}</p>
+                            <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{item.client.salesperson||'—'}</p>
+                          </td>
+                          <td className={cn("px-5 py-3 text-center font-mono text-[10px]", darkMode ? "text-gray-500" : "text-gray-400")}>{item.monthLabel}</td>
+                          <td className="px-5 py-3 text-center">
+                            <span className="font-black">{item.currentVal} <span className="font-normal text-gray-400">cj</span></span>
+                          </td>
+                          <td className={cn("px-5 py-3 text-center", darkMode ? "text-gray-500" : "text-gray-400")}>{item.mean} cj</td>
+                          <td className={cn("px-5 py-3 text-center", darkMode ? "text-gray-500" : "text-gray-400")}>±{item.std}</td>
+                          <td className="px-5 py-3 text-center">
+                            <span className={cn("font-black", item.type==='spike'?'text-emerald-400':'text-red-400')}>{item.zScore}σ</span>
+                          </td>
+                          <td className="px-5 py-3 text-center">
+                            <button onClick={() => { setSelectedClient(item.client); setView('clients'); }}
+                              className={cn("text-[9px] font-bold px-2.5 py-1 rounded-lg inline-flex items-center gap-1",
+                                item.type==='drop'
+                                  ? "bg-red-500/15 text-red-400 hover:bg-red-500/25"
+                                  : "bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25"
+                              )}><ArrowRight className="w-3 h-3" /> Investigar</button>
+                          </td>
+                        </tr>
+                      ))}
+                      {anomalies.length === 0 && (
+                        <tr><td colSpan={8} className={cn("px-5 py-10 text-center text-xs", darkMode ? "text-gray-600" : "text-gray-400")}>
+                          No se detectaron anomalías estadísticas significativas en el período actual.
+                        </td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {intelligenceTab === 'projection' && (
+              <div className="space-y-5">
+                {/* Header summary */}
+                <div className={cn("rounded-xl border p-5 flex items-center gap-6 flex-wrap", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                  <div className="text-center px-5 border-r border-white/8">
+                    <p className="text-3xl font-black text-[#ED1C24]">{clientProjection.length}</p>
+                    <p className={cn("text-[9px] font-bold uppercase tracking-wider mt-0.5", darkMode ? "text-gray-500" : "text-gray-400")}>Clientes con proyección</p>
+                  </div>
+                  <div className="text-center px-5 border-r border-white/8">
+                    <p className={cn("text-3xl font-black", darkMode ? "text-cyan-400" : "text-cyan-600")}>
+                      {clientProjection.reduce((s: number, c: any) => {
+                        const DYN_SIZES = globalFilmFilter === 'DIML' ? ['8x10','10x14'] : ['8x10','10x12','10x14','14x17'];
+                        const sizeTotal = Object.values(c.sizeAvg as Record<string,number>).reduce((a:number,b:number)=>a+b,0);
+                        return s + DYN_SIZES.reduce((ss: number, size: string) => {
+                          const share = sizeTotal > 0 ? (c.sizeAvg[size]||0)/sizeTotal : 0;
+                          const qty = c.annualTotal * share;
+                          const ft = globalFilmFilter === 'DIHL' ? 'DIHL' : globalFilmFilter === 'DIML' ? 'DIML' : 'DIHT';
+                          return ss + getTotalM2(qty, size, ft);
+                        }, 0);
+                      }, 0).toFixed(0)}
+                    </p>
+                    <p className={cn("text-[9px] font-bold uppercase tracking-wider mt-0.5", darkMode ? "text-gray-500" : "text-gray-400")}>m² proyectados 12 meses</p>
+                    <p className={cn("text-[10px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{clientProjection.reduce((s: number, c: any) => s + c.annualTotal, 0).toLocaleString()} cajas</p>
+                  </div>
+                  <div className="text-center px-5 border-r border-white/8">
+                    <p className="text-3xl font-black text-emerald-400">${clientProjection.reduce((s: number, c: any) => s + c.annualRevenue, 0).toLocaleString('es-EC')}</p>
+                    <p className={cn("text-[9px] font-bold uppercase tracking-wider mt-0.5", darkMode ? "text-gray-500" : "text-gray-400")}>Ingresos proyectados anuales</p>
+                  </div>
+
+                </div>
+
+                {/* ── PURCHASE RECOMMENDATION — powered by Fujifilm Planning Film ── */}
+                {(() => {
+                  const FILM_TYPES = (globalFilmFilter === 'DIHL' ? ['DIHL'] : globalFilmFilter === 'DIHT' ? ['DIHT'] : globalFilmFilter === 'DIML' ? ['DIML'] : ['DIHT', 'DIHL']) as ('DIHT' | 'DIHL' | 'DIML')[];
+
+                  const periodLabel = { 1: 'Mensual', 3: 'Trimestral', 6: 'Semestral', 12: 'Anual' }[projectionPeriod];
+                  const periodSuffix = { 1: '1 mes', 3: '3 meses', 6: '6 meses', 12: '12 meses' }[projectionPeriod];
+
+                  // Build per-product data merging Fujifilm planning + real consumos
+                  const buildProductData = (ft: 'DIHT' | 'DIHL' | 'DIML') => {
+                    const sizes = ft === 'DIHL' ? ['8x10', '10x14', '14x17'] : ft === 'DIML' ? ['8x10', '10x14'] : ['8x10', '10x12', '10x14', '14x17'];
+                    return sizes.map(size => {
+                      const key = `${ft}_${size}`;
+                      const fuji = FUJI_PLANNING[key];
+                      if (!fuji) return null;
+
+                      const m2box = FILM_M2_PER_BOX[ft]?.[size] ?? 0;
+
+                      // Real demand from allConsumos last 12 months
+                      const now = new Date();
+                      let realTotal = 0;
+                      for (let i = 0; i < 12; i++) {
+                        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                        allConsumos.forEach(r => {
+                          const rd = new Date(r.order_date);
+                          if (rd.getFullYear() !== d.getFullYear() || rd.getMonth() !== d.getMonth()) return;
+                          if (r.size !== size) return;
+                          const rft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type === 'DIHL' ? 'DIHL' : 'DIHT';
+                          if (rft !== ft) return;
+                          realTotal += r.is_return ? -r.quantity : r.quantity;
+                        });
+                      }
+                      const realAvgMonthly = realTotal / 12;
+
+                      // Stock from Film Planning (source of truth)
+                      const availYears = Object.keys(stockFilmData).map(Number).filter(y => y <= now.getFullYear()).sort((a,b)=>b-a);
+                      const cy = availYears[0] || now.getFullYear();
+                      const cm = cy === now.getFullYear() ? now.getMonth() : 11;
+                      let filmStock = 0;
+                      const prod = STOCK_FILM_PRODUCTS.find(p => p.type === ft && p.size === size);
+                      if (prod) {
+                        const yd = stockFilmData[String(cy)]?.[prod.key] || { openingBoxes: 0, openingM2: 0, months: {} };
+                        let running = yd.openingBoxes || 0;
+                        STOCK_FILM_MONTHS.forEach((month, mi) => {
+                          if (mi > cm) return;
+                          const inB = yd.months?.[month]?.inBoxes || 0;
+                          const outB = allConsumos.reduce((s, r) => {
+                            const rd2 = new Date(r.order_date);
+                            if (rd2.getFullYear() !== cy || rd2.getMonth() !== mi) return s;
+                            if (r.size !== size) return s;
+                            const rft2 = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type === 'DIHL' ? 'DIHL' : 'DIHT';
+                            if (rft2 !== ft) return s;
+                            return s + (r.is_return ? -r.quantity : r.quantity);
+                          }, 0);
+                          running = running + inB - outB;
+                        });
+                        filmStock = Math.max(0, running);
+                      }
+
+                      // Use Film Planning stock if available, else Fujifilm Excel stock
+                      const currentStock = filmStock > 0 ? filmStock : fuji.stockBodega;
+
+                      // Real transit from Stock Film Transit state (user-entered)
+                      const prodKey = `${ft}_${size}`;
+                      const transitByMonth = stockFilmTransit[String(cy)]?.[prodKey] || {};
+                      const realTransit = STOCK_FILM_MONTHS.reduce((s, m) => s + (transitByMonth[m] || 0), 0);
+                      const totalWithTransit = currentStock + realTransit;
+
+                      // Demand for selected period — use real avg or Fujifilm avg (whichever is available)
+                      const avgMonthly = realAvgMonthly > 0 ? realAvgMonthly : fuji.avgMayDec25;
+                      const demandPeriod = Math.round(avgMonthly * projectionPeriod);
+                      const demandM2 = parseFloat((demandPeriod * m2box).toFixed(1));
+
+                      // Safety stock = 2 months of avg consumption (dynamic colchón)
+                      const safetyStock = Math.round(avgMonthly * 2);
+
+                      // Coverage metrics
+                      const coverageCurrent = avgMonthly > 0 ? currentStock / avgMonthly : null;
+                      const coverageWithTransit = avgMonthly > 0 ? totalWithTransit / avgMonthly : null;
+                      const coverageFujiCurrent = fuji.coverageCurrentM;
+                      const coverageFujiHistoric = fuji.coverageHistoricM;
+
+                      // Need to order = demand - (stock + transit - safetyStock)
+                      const usableStock = Math.max(0, totalWithTransit - safetyStock);
+                      const toOrder = Math.max(0, demandPeriod - usableStock);
+                      const toOrderM2 = parseFloat((toOrder * m2box).toFixed(1));
+
+                      const status = toOrder > 0 ? 'urgent'
+                        : coverageWithTransit !== null && coverageWithTransit < 3 ? 'warning'
+                        : 'ok';
+
+                      // Top clients
+                      const clientMap = {} as Record<string, number>;
+                      for (let i = 0; i < Math.max(projectionPeriod, 3); i++) {
+                        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                        allConsumos.forEach(r => {
+                          const rd = new Date(r.order_date);
+                          if (rd.getFullYear() !== d.getFullYear() || rd.getMonth() !== d.getMonth()) return;
+                          if (r.size !== size) return;
+                          const rft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type === 'DIHL' ? 'DIHL' : 'DIHT';
+                          if (rft !== ft) return;
+                          const name = allClients.find(c => c.id === r.client_id)?.name || '?';
+                          clientMap[name] = (clientMap[name] || 0) + (r.is_return ? -r.quantity : r.quantity);
+                        });
+                      }
+                      const topClients = Object.entries(clientMap)
+                        .filter(([,v]) => v > 0).sort((a,b) => b[1]-a[1]).slice(0,3);
+
+                      return { size, key, fuji, m2box, currentStock, totalWithTransit, realTransit, avgMonthly, demandPeriod, demandM2, safetyStock, coverageCurrent, coverageWithTransit, coverageFujiCurrent, coverageFujiHistoric, toOrder, toOrderM2, status, topClients };
+                    }).filter(Boolean);
+                  };
+
+                  return (
+                    <div className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                      {/* Header */}
+                      <div className={cn("px-6 py-4 border-b flex items-center gap-3 flex-wrap", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+                        <Boxes className="w-4 h-4 text-[#ED1C24] shrink-0" />
+                        <div>
+                          <h3 className={cn("text-[10px] font-bold uppercase tracking-wider", darkMode ? "text-gray-300" : "text-gray-700")}>
+                            Recomendación de compra a Fujifilm
+                          </h3>
+                          <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>
+                            Basado en Planning Film Fujifilm/Orimec 2026-2027 · Stock real + tránsito · Stock de seguridad incluido
+                          </p>
+                        </div>
+                        {/* Period selector */}
+                        <div className={cn("flex items-center gap-1 p-1 rounded-xl ml-auto", darkMode ? "bg-white/5" : "bg-gray-100")}>
+                          {([1, 3, 6, 12] as const).map(p => (
+                            <button key={p} onClick={() => setProjectionPeriod(p)}
+                              className={cn("px-3 py-1 rounded-lg text-[10px] font-black transition-all",
+                                projectionPeriod === p
+                                  ? "bg-[#ED1C24] text-white shadow-sm"
+                                  : (darkMode ? "text-gray-500 hover:text-gray-300 hover:bg-white/5" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200")
+                              )}>
+                              {{ 1: 'Mensual', 3: 'Trimestral', 6: 'Semestral', 12: 'Anual' }[p]}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {FILM_TYPES.map(ft => {
+                        const products = buildProductData(ft);
+                        if (!products.length) return null;
+                        const ftBoxes = products.reduce((s, p) => s + (p?.toOrder || 0), 0);
+                        const ftM2 = products.reduce((s, p) => s + (p?.toOrderM2 || 0), 0);
+                        const ftColor = ft === 'DIHL' ? (darkMode ? 'text-blue-400' : 'text-blue-600') : (darkMode ? 'text-red-400' : 'text-red-600');
+
+                        return (
+                          <div key={ft}>
+                            {/* Film type header */}
+                            <div className={cn("px-6 py-2.5 flex items-center gap-3 border-b flex-wrap",
+                              ft === 'DIHL'
+                                ? (darkMode ? "bg-blue-500/5 border-blue-500/15" : "bg-blue-50/60 border-blue-100")
+                                : (darkMode ? "bg-[#ED1C24]/5 border-[#ED1C24]/15" : "bg-red-50/60 border-red-100")
+                            )}>
+                              <span className={cn("text-[9px] font-black px-2.5 py-1 rounded-lg shrink-0",
+                                ft === 'DIHL' ? "bg-blue-500/20 text-blue-400" : "bg-[#ED1C24]/15 text-[#ED1C24]"
+                              )}>{ft === 'DIHT' ? 'DI-HT' : 'DI-HL'}</span>
+                              <span className={cn("text-[10px] font-bold", darkMode ? "text-gray-400" : "text-gray-600")}>
+                                {periodLabel} — a pedir a Fujifilm
+                              </span>
+                              <div className="ml-auto flex items-center gap-5 shrink-0">
+                                {ftBoxes > 0 ? (
+                                  <>
+                                    <div className="text-right">
+                                      <span className={cn("font-black text-base", ftColor)}>{ftBoxes}</span>
+                                      <span className={cn("text-[9px] ml-1", darkMode ? "text-gray-600" : "text-gray-400")}>cajas a pedir</span>
+                                    </div>
+                                    <div className="text-right">
+                                      <span className={cn("font-black text-base", darkMode ? "text-cyan-400" : "text-cyan-600")}>{products.reduce((s,p) => s + (p?.toOrderM2||0), 0).toFixed(1)}</span>
+                                      <span className={cn("text-[9px] ml-1", darkMode ? "text-gray-600" : "text-gray-400")}>m²</span>
+                                    </div>
+                                  </>
+                                ) : (
+                                  <span className="text-[9px] font-bold text-emerald-400">✓ Stock suficiente para {periodSuffix}</span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Size cards — wider, clearer */}
+                            <div className="p-4 grid grid-cols-2 gap-4">
+                              {products.map(p => {
+                                if (!p) return null;
+                                const { size, fuji, m2box, currentStock, totalWithTransit, realTransit, avgMonthly, demandPeriod, demandM2, safetyStock, coverageCurrent, coverageFujiCurrent, coverageFujiHistoric, toOrder, toOrderM2, status, topClients } = p;
+
+                                return (
+                                  <div key={size} className={cn("rounded-xl border overflow-hidden",
+                                    status === 'urgent'
+                                      ? (darkMode ? "bg-red-500/8 border-red-500/20" : "bg-red-50 border-red-200")
+                                      : status === 'warning'
+                                      ? (darkMode ? "bg-amber-500/8 border-amber-500/20" : "bg-amber-50 border-amber-200")
+                                      : (darkMode ? "bg-emerald-500/5 border-emerald-500/15" : "bg-emerald-50/60 border-emerald-200")
+                                  )}>
+                                    {/* Card header */}
+                                    <div className={cn("px-5 py-3 flex items-center justify-between border-b",
+                                      status === 'urgent' ? (darkMode ? "border-red-500/20 bg-red-500/5" : "border-red-200 bg-red-100/40") :
+                                      status === 'warning' ? (darkMode ? "border-amber-500/20 bg-amber-500/5" : "border-amber-200 bg-amber-100/40") :
+                                      (darkMode ? "border-emerald-500/15 bg-emerald-500/5" : "border-emerald-200 bg-emerald-100/30")
+                                    )}>
+                                      <div className="flex items-center gap-2">
+                                        <span className={cn("text-sm font-black px-2.5 py-1 rounded-lg", darkMode ? "bg-white/10 text-white" : "bg-gray-800 text-white")}>{size}</span>
+                                        <span className={cn("text-[10px]", darkMode ? "text-gray-500" : "text-gray-400")}>{m2box} m²/caja</span>
+                                      </div>
+                                      <span className={cn("text-[9px] font-black px-2 py-1 rounded-lg",
+                                        status === 'urgent' ? "bg-red-500/20 text-red-400" :
+                                        status === 'warning' ? "bg-amber-500/20 text-amber-400" :
+                                        "bg-emerald-500/20 text-emerald-400"
+                                      )}>{status === 'urgent' ? '⚠ PEDIR' : status === 'warning' ? '↓ BAJO' : '✓ OK'}</span>
+                                    </div>
+
+                                    <div className="p-5">
+                                      {/* TWO MAIN COLUMNS: demanda | a pedir */}
+                                      <div className="grid grid-cols-2 gap-4 mb-4">
+                                        {/* Demanda */}
+                                        <div className={cn("rounded-xl p-3.5", darkMode ? "bg-white/5" : "bg-white/80 border border-black/6")}>
+                                          <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-2", darkMode ? "text-gray-500" : "text-gray-400")}>Demanda · {periodSuffix}</p>
+                                          <p className={cn("text-3xl font-black leading-none", darkMode ? "text-cyan-400" : "text-cyan-600")}>{demandM2}</p>
+                                          <p className={cn("text-[10px] font-semibold mt-0.5", darkMode ? "text-cyan-500/60" : "text-cyan-600/60")}>m²</p>
+                                          <p className={cn("text-base font-black mt-1", darkMode ? "text-cyan-400/70" : "text-cyan-600/70")}>{demandPeriod} cajas</p>
+                                        </div>
+                                        {/* A pedir */}
+                                        <div className={cn("rounded-xl p-3.5",
+                                          toOrder > 0
+                                            ? (darkMode ? "bg-red-500/15 border border-red-500/25" : "bg-red-100/60 border border-red-200")
+                                            : (darkMode ? "bg-emerald-500/10 border border-emerald-500/20" : "bg-emerald-100/60 border border-emerald-200")
+                                        )}>
+                                          <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-2", darkMode ? "text-gray-500" : "text-gray-400")}>A pedir a Fujifilm</p>
+                                          {toOrder > 0 ? (
+                                            <>
+                                              <p className={cn("text-3xl font-black leading-none", darkMode ? "text-red-400" : "text-red-600")}>{toOrderM2}</p>
+                                              <p className={cn("text-[10px] font-semibold mt-0.5", darkMode ? "text-red-500/60" : "text-red-600/60")}>m²</p>
+                                              <p className={cn("text-base font-black mt-1", darkMode ? "text-red-400/70" : "text-red-500")}>{toOrder} cajas</p>
+                                            </>
+                                          ) : (
+                                            <>
+                                              <p className="text-2xl font-black leading-none text-emerald-400">0</p>
+                                              <p className={cn("text-[10px] font-semibold mt-0.5 text-emerald-400/60")}>m²</p>
+                                              <p className={cn("text-sm font-bold mt-1 text-emerald-400")}>
+                                                +{Math.max(0, totalWithTransit - safetyStock - demandPeriod)} cj sobrantes
+                                              </p>
+                                            </>
+                                          )}
+                                        </div>
+                                      </div>
+
+                                      {/* Stats row */}
+                                      <div className={cn("grid grid-cols-4 gap-2 text-[9px] pt-3 border-t", darkMode ? "border-white/8" : "border-black/6")}>
+                                        <div>
+                                          <p className={darkMode ? "text-gray-600" : "text-gray-400"}>Stock bodega</p>
+                                          <p className={cn("font-black text-xs", darkMode ? "text-cyan-400" : "text-cyan-600")}>{currentStock} cj</p>
+                                          <p className={cn(darkMode ? "text-gray-700" : "text-gray-300")}>{parseFloat((currentStock * m2box).toFixed(1))} m²</p>
+                                        </div>
+                                        {realTransit > 0 && (
+                                          <div>
+                                            <p className="text-amber-400/80">En tránsito</p>
+                                            <p className="font-black text-xs text-amber-400">{realTransit} cj</p>
+                                            <p className="text-amber-400/60">{parseFloat((realTransit * m2box).toFixed(1))} m²</p>
+                                          </div>
+                                        )}
+                                        <div>
+                                          <p className={darkMode ? "text-gray-600" : "text-gray-400"}>Stock seg.</p>
+                                          <p className={cn("font-black text-xs", safetyStock > currentStock ? "text-red-400" : (darkMode ? "text-gray-400" : "text-gray-600"))}>{safetyStock} cj</p>
+                                          <p className={cn("text-[8px]", darkMode ? "text-gray-700" : "text-gray-400")}>2 meses avg</p>
+                                        </div>
+                                        <div>
+                                          <p className={darkMode ? "text-gray-600" : "text-gray-400"}>Avg/mes</p>
+                                          <p className={cn("font-black text-xs", darkMode ? "text-gray-300" : "text-gray-700")}>{avgMonthly.toFixed(1)} cj</p>
+                                          <p className={cn(darkMode ? "text-gray-700" : "text-gray-300")}>{parseFloat((avgMonthly * m2box).toFixed(1))} m²</p>
+                                        </div>
+                                        <div>
+                                          <p className={darkMode ? "text-gray-600" : "text-gray-400"}>Cobertura</p>
+                                          <p className={cn("font-black text-xs",
+                                            coverageFujiCurrent < 3 ? "text-red-400" : coverageFujiCurrent < 6 ? "text-amber-400" : (darkMode ? "text-emerald-400" : "text-emerald-600")
+                                          )}>{coverageFujiCurrent > 99 ? '>99m' : `${coverageFujiCurrent.toFixed(1)}m`}</p>
+                                          <p className={cn("text-[8px]", darkMode ? "text-gray-700" : "text-gray-400")}>Jan26</p>
+                                        </div>
+                                      </div>
+
+                                      {/* Órdenes activas */}
+                                      {fuji.orders.length > 0 && (
+                                        <div className="mt-3 flex items-center gap-2 flex-wrap">
+                                          <p className={cn("text-[8px] font-bold uppercase tracking-wider", darkMode ? "text-gray-700" : "text-gray-300")}>Órdenes:</p>
+                                          {fuji.orders.map(o => (
+                                            <span key={o} className={cn("text-[8px] font-mono px-1.5 py-0.5 rounded", darkMode ? "bg-white/8 text-gray-500" : "bg-gray-100 text-gray-500")}>{o}</span>
+                                          ))}
+                                        </div>
+                                      )}
+
+                                      {/* ── Alerta: cuándo hay que hacer el pedido ── */}
+                                      {(() => {
+                                        if (avgMonthly <= 0) return null;
+                                        // Months until stock (with transit) hits safety stock
+                                        const monthsUntilSafety = (totalWithTransit - safetyStock) / avgMonthly;
+                                        // Need to order AT LEAST 2 months before running out (Fujifilm lead time)
+                                        const LEAD_TIME_MONTHS = 2;
+                                        const monthsUntilOrderNeeded = monthsUntilSafety - LEAD_TIME_MONTHS;
+                                        if (monthsUntilOrderNeeded > 6) return null; // plenty of time, no alert needed
+                                        const now = new Date();
+                                        const orderByDate = new Date(now.getFullYear(), now.getMonth() + Math.max(0, Math.floor(monthsUntilOrderNeeded)), 1);
+                                        const MONTH_NAMES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+                                        const orderByLabel = `${MONTH_NAMES[orderByDate.getMonth()]} ${orderByDate.getFullYear()}`;
+                                        const isUrgent = monthsUntilOrderNeeded <= 0;
+                                        const isSoon = monthsUntilOrderNeeded <= 1;
+                                        // How much to order: use same formula as main recommendation
+                                        const qtyToOrder = toOrder > 0 ? toOrder : Math.round(avgMonthly * 4 + safetyStock - totalWithTransit);
+                                        if (qtyToOrder <= 0 && !isUrgent) return null;
+                                        return (
+                                          <div className={cn("mt-3 rounded-xl p-3 border",
+                                            isUrgent ? (darkMode ? "bg-red-500/15 border-red-500/30" : "bg-red-50 border-red-200")
+                                            : isSoon  ? (darkMode ? "bg-amber-500/10 border-amber-500/25" : "bg-amber-50 border-amber-200")
+                                            : (darkMode ? "bg-blue-500/8 border-blue-500/20" : "bg-blue-50 border-blue-100")
+                                          )}>
+                                            <div className="flex items-start gap-2">
+                                              <span className="text-base leading-none mt-0.5">
+                                                {isUrgent ? '🚨' : isSoon ? '⚠️' : '📅'}
+                                              </span>
+                                              <div className="flex-1 min-w-0">
+                                                <p className={cn("text-[10px] font-black",
+                                                  isUrgent ? "text-red-400"
+                                                  : isSoon  ? "text-amber-400"
+                                                  : (darkMode ? "text-blue-400" : "text-blue-600")
+                                                )}>
+                                                  {isUrgent ? '¡Pedir YA!' : `Pedir antes de ${orderByLabel}`}
+                                                </p>
+                                                <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-500" : "text-gray-500")}>
+                                                  {isUrgent
+                                                    ? `Stock llega al colchón mínimo este mes`
+                                                    : `En ${Math.max(0, Math.floor(monthsUntilOrderNeeded))} mes${Math.floor(monthsUntilOrderNeeded) !== 1 ? 'es' : ''} debes hacer el pedido`
+                                                  }
+                                                </p>
+                                                {qtyToOrder > 0 && (
+                                                  <p className={cn("text-[9px] font-bold mt-1",
+                                                    isUrgent ? "text-red-400" : isSoon ? "text-amber-400" : (darkMode ? "text-blue-400" : "text-blue-600")
+                                                  )}>
+                                                    Pedir ~{qtyToOrder} cj ({parseFloat((qtyToOrder * m2box).toFixed(0))} m²) para cubrir {{ 1: '1 mes', 3: '3 meses', 6: '6 meses', 12: '12 meses' }[projectionPeriod]}
+                                                  </p>
+                                                )}
+                                              </div>
+                                            </div>
+                                          </div>
+                                        );
+                                      })()}
+
+                                      {/* Top clients */}
+                                      {topClients.length > 0 && (
+                                        <div className={cn("mt-3 pt-3 border-t space-y-1", darkMode ? "border-white/8" : "border-black/6")}>
+                                          <p className={cn("text-[8px] font-bold uppercase tracking-wider mb-1.5", darkMode ? "text-gray-600" : "text-gray-400")}>Top consumidores</p>
+                                          {topClients.map(([name, qty], ci) => (
+                                            <div key={ci} className="flex justify-between items-center">
+                                              <span className={cn("text-[10px] truncate max-w-[55%]", darkMode ? "text-gray-400" : "text-gray-600")}>{name.split(' ').slice(0,3).join(' ')}</span>
+                                              <span className={cn("text-[10px] font-bold shrink-0", darkMode ? "text-cyan-500" : "text-cyan-600")}>
+                                                {parseFloat((qty / Math.max(projectionPeriod, 3) * m2box).toFixed(1))} m²/m
+                                              </span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {/* Fujifilm data footnote */}
+                      <div className={cn("px-6 py-3 border-t flex items-center gap-2", darkMode ? "border-white/6 bg-white/2" : "border-gray-100 bg-gray-50/40")}>
+                        <FileText className={cn("w-3 h-3 shrink-0", darkMode ? "text-gray-600" : "text-gray-400")} />
+                        <p className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>
+                          Fuente: <span className="font-bold">Planning Film — Sales Report Fujifilm/Orimec 2026-2027</span> · Stock bodega al 26-Ene-2026 · Promedio histórico May-Dic 2025 · Stock de seguridad definido por Fujifilm · Tránsito: órdenes FJ-2001/2007/2009/2011/2012/2019/2025/2028
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                                {/* Monthly chart — m² + cajas dual */}
+                <div className={cn("rounded-xl border p-5", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                  <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                    <h3 className={cn("text-[10px] font-bold uppercase tracking-wider", darkMode ? "text-gray-400" : "text-gray-600")}>
+                      Proyección mensual total — próximos 12 meses
+                    </h3>
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2.5 h-2.5 rounded bg-[#ED1C24] inline-block shrink-0" />
+                        <span className={cn("text-[9px]", darkMode ? "text-gray-500" : "text-gray-400")}>Cajas</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2.5 h-2.5 rounded bg-cyan-400 inline-block shrink-0" />
+                        <span className={cn("text-[9px]", darkMode ? "text-gray-500" : "text-gray-400")}>m²</span>
+                      </div>
+                    </div>
+                  </div>
+                  <ResponsiveContainer width="100%" height={220}>
+                    <BarChart
+                      data={Array.from({ length: 12 }, (_, i) => {
+                        const d = new Date(new Date().getFullYear(), new Date().getMonth() + 1 + i, 1);
+                        const label = d.toLocaleDateString('es-EC', { month: 'short', year: '2-digit' });
+                        const totalBoxes = clientProjection.reduce((s: number, c: any) => s + (c.forecast[i]?.projected || 0), 0);
+                        // Compute total m² for this forecast month across all clients/sizes
+                        const totalM2 = parseFloat(clientProjection.reduce((s: number, c: any) => {
+                          const projected = c.forecast[i]?.projected || 0;
+                          const SZZES = ['8x10','10x12','10x14','14x17'];
+                          const sizeTotal = Object.values(c.sizeAvg as Record<string,number>).reduce((a:number,b:number)=>a+b,0);
+                          return s + SZZES.reduce((ss: number, sz: string) => {
+                            const share = sizeTotal > 0 ? (c.sizeAvg[sz]||0)/sizeTotal : 0;
+                            return ss + getTotalM2(projected * share, sz, globalFilmFilter === 'DIHL' ? 'DIHL' : 'DIHT');
+                          }, 0);
+                        }, 0).toFixed(1));
+                        return { label, cajas: totalBoxes, m2: totalM2 };
+                      })}
+                      margin={{ top: 4, right: 10, left: -10, bottom: 0 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke={darkMode ? '#ffffff08' : '#f0f0f0'} />
+                      <XAxis dataKey="label" tick={{ fontSize: 10, fill: darkMode ? '#666' : '#999' }} axisLine={false} tickLine={false} />
+                      <YAxis yAxisId="left" tick={{ fontSize: 10, fill: darkMode ? '#666' : '#999' }} axisLine={false} tickLine={false} />
+                      <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: darkMode ? '#06B6D4' : '#0891B2' }} axisLine={false} tickLine={false} tickFormatter={(v) => `${v}m²`} />
+                      <Tooltip
+                        cursor={{ fill: darkMode ? '#ffffff06' : '#f5f5f5' }}
+                        contentStyle={{ background: darkMode ? '#1a1a1e' : '#fff', border: '1px solid #ED1C24', borderRadius: 8, fontSize: 11 }}
+                        formatter={(v: any, name: string) => [
+                          name === 'cajas' ? `${v} cajas` : `${v} m²`,
+                          name === 'cajas' ? 'Cajas proyectadas' : 'Superficie proyectada'
+                        ]}
+                      />
+                      <Bar yAxisId="left" dataKey="cajas" fill="#ED1C24" radius={[4, 4, 0, 0]} opacity={0.85} />
+                      <Bar yAxisId="right" dataKey="m2" fill="#06B6D4" radius={[4, 4, 0, 0]} opacity={0.5} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+
+                {/* Per-client table */}
+                <div className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                  <div className={cn("px-6 py-4 border-b", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <h3 className={cn("text-[10px] font-bold uppercase tracking-wider", darkMode ? "text-gray-400" : "text-gray-600")}>
+                        Proyección por cliente — próximos 12 meses · basado en historial + estacionalidad propia de cada cliente
+                      </h3>
+                      <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 inline-block shrink-0" />
+                          <span className={cn("text-[9px]", darkMode ? "text-gray-500" : "text-gray-400")}>Mes alto — comprará más de su promedio (+20%)</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-full bg-amber-400 inline-block shrink-0" />
+                          <span className={cn("text-[9px]", darkMode ? "text-gray-500" : "text-gray-400")}>Mes bajo — comprará menos de su promedio (−20%)</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className={cn("w-2.5 h-2.5 rounded-full inline-block shrink-0", darkMode ? "bg-white/40" : "bg-gray-400")} />
+                          <span className={cn("text-[9px]", darkMode ? "text-gray-500" : "text-gray-400")}>Mes normal — dentro del promedio</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className={cn("w-2.5 h-2.5 rounded-full inline-block shrink-0", darkMode ? "bg-white/10" : "bg-gray-200")} />
+                          <span className={cn("text-[9px]", darkMode ? "text-gray-500" : "text-gray-400")}>Sin demanda prevista</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="overflow-x-auto max-h-[520px] overflow-y-auto custom-scrollbar">
+                    <table className="w-full text-left text-xs">
+                      <thead className={cn("text-[9px] font-bold uppercase tracking-wider sticky top-0", darkMode ? "text-gray-600 bg-[#16161A]" : "text-gray-400 bg-white")}>
+                        <tr>
+                          <th className="px-5 py-2.5 sticky left-0 z-10" style={{ background: 'inherit' }}>Cliente</th>
+                          <th className="px-4 py-2.5 text-center whitespace-nowrap">m²/mes</th>
+                          {Array.from({ length: 12 }, (_, i) => {
+                            const d = new Date(new Date().getFullYear(), new Date().getMonth() + 1 + i, 1);
+                            return <th key={i} className="px-3 py-2.5 text-center whitespace-nowrap">{d.toLocaleDateString('es-EC', { month: 'short' })}</th>;
+                          })}
+                          <th className="px-4 py-2.5 text-center whitespace-nowrap">m² anual</th>
+                          <th className="px-5 py-2.5 text-right whitespace-nowrap">Ingreso Est.</th>
+                        </tr>
+                      </thead>
+                      <tbody className={cn("divide-y", darkMode ? "divide-white/4" : "divide-gray-50")}>
+                        {clientProjection.map((item: any, i: number) => (
+                          <tr key={i}
+                            className={cn("transition-colors cursor-pointer", darkMode ? "hover:bg-white/3" : "hover:bg-gray-50/60")}
+                            onClick={() => { setSelectedClient(item.client); setView('clients'); }}>
+                            <td className="px-5 py-3 max-w-[180px]">
+                              <p className="font-semibold truncate">{item.client.name}</p>
+                              <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{item.client.province} · {item.client.salesperson || '—'}</p>
+                            </td>
+                            <td className="px-4 py-3 text-center">
+                              <span className={cn("font-black text-sm", darkMode ? "text-cyan-400" : "text-cyan-600")}>
+                                {(() => {
+                                  const SIZES = ['8x10','10x12','10x14','14x17'];
+                                  const sizeTotal = Object.values(item.sizeAvg as Record<string,number>).reduce((a:number,b:number)=>a+b,0);
+                                  return SIZES.reduce((s: number, size: string) => {
+                                    const share = sizeTotal > 0 ? (item.sizeAvg[size]||0)/sizeTotal : 0;
+                                    return s + getTotalM2(item.monthlyAvg * share, size, globalFilmFilter === 'DIHL' ? 'DIHL' : 'DIHT');
+                                  }, 0).toFixed(1);
+                                })()}
+                              </span>
+                              <span className={cn("text-[9px] block", darkMode ? "text-gray-600" : "text-gray-400")}>{item.monthlyAvg} cj</span>
+                            </td>
+                            {item.forecast.map((m: any, mi: number) => (
+                              <td key={mi} className="px-3 py-3 text-center">
+                                <span className={cn("font-bold text-xs",
+                                  m.projected === 0 ? (darkMode ? "text-gray-700" : "text-gray-300") :
+                                  m.projected > item.monthlyAvg * 1.2 ? "text-emerald-400" :
+                                  m.projected < item.monthlyAvg * 0.8 ? "text-amber-400" : ""
+                                )}>{m.projected || '—'}</span>
+                              </td>
+                            ))}
+                            <td className="px-4 py-3 text-center">
+                              <span className={cn("font-black text-sm", darkMode ? "text-cyan-400" : "text-cyan-600")}>
+                                {(() => {
+                                  const SIZES = ['8x10','10x12','10x14','14x17'];
+                                  const sizeTotal = Object.values(item.sizeAvg as Record<string,number>).reduce((a:number,b:number)=>a+b,0);
+                                  return SIZES.reduce((s: number, size: string) => {
+                                    const share = sizeTotal > 0 ? (item.sizeAvg[size]||0)/sizeTotal : 0;
+                                    return s + getTotalM2(item.annualTotal * share, size, globalFilmFilter === 'DIHL' ? 'DIHL' : 'DIHT');
+                                  }, 0).toFixed(0);
+                                })()} m²
+                              </span>
+                              <span className={cn("text-[9px] block", darkMode ? "text-gray-600" : "text-gray-400")}>{item.annualTotal} cj</span>
+                            </td>
+                            <td className="px-5 py-3 text-right font-bold text-emerald-400">
+                              ${item.annualRevenue.toLocaleString('es-EC')}
+                            </td>
+                          </tr>
+                        ))}
+                        {clientProjection.length === 0 && (
+                          <tr><td colSpan={16} className={cn("px-5 py-12 text-center text-xs", darkMode ? "text-gray-600" : "text-gray-400")}>
+                            No hay suficiente historial para generar proyecciones. Se necesitan al menos 2 registros por cliente.
+                          </td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+              <div className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                    <div className={cn("px-6 py-4 border-b flex items-center gap-3", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+                      <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse shrink-0" />
+                      <div>
+                        <h3 className={cn("text-[10px] font-bold uppercase tracking-wider", darkMode ? "text-gray-300" : "text-gray-700")}>
+                          Stock Film Planning vs Demanda Real — {stockFilmPlanningVsReal.useYear}
+                        </h3>
+                        <p className={cn("text-[9px] mt.0.5", darkMode ? "text-gray-600" : "text-gray-400")}>Comparativo mensual: salidas planificadas (bodega) vs consumo real de clientes · Balance proyectado de bodega</p>
+                      </div>
+                      <div className="ml-auto flex gap-2">
+                        {([2024, 2025, 2026] as const).map(y => (
+                          <button key={y} onClick={() => setStockFilmYear(y)}
+                            className={cn("px-3 py-1 rounded-lg text-[10px] font-black transition-all",
+                              stockFilmYear === y ? "bg-cyan-500 text-white" : (darkMode ? "bg-white/8 text-gray-400 hover:text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200")
+                            )}>{y}</button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs min-w-[1000px]">
+                        <thead className={cn("text-[9px] font-bold uppercase tracking-wider", darkMode ? "text-gray-600 bg-white/2" : "text-gray-400 bg-gray-50/60")}>
+                          <tr>
+                            <th className="px-5 py-2.5 text-left sticky left-0" style={{ background: 'inherit' }}>Métrica</th>
+                            {stockFilmPlanningVsReal.months.map(m => {
+                              const d = new Date(stockFilmPlanningVsReal.useYear, stockFilmPlanningVsReal.months.indexOf(m), 1);
+                              const isPast = d < new Date(stockFilmPlanningVsReal.now.getFullYear(), stockFilmPlanningVsReal.now.getMonth(), 1) && d.getFullYear() === stockFilmPlanningVsReal.now.getFullYear();
+                              const isCurrent = d.getFullYear() === stockFilmPlanningVsReal.now.getFullYear() && d.getMonth() === stockFilmPlanningVsReal.now.getMonth();
+                              return (
+                                <th key={m} className={cn("px-3 py-2.5 text-center whitespace-nowrap",
+                                  isCurrent ? (darkMode ? "text-cyan-400" : "text-cyan-600") :
+                                  isPast ? (darkMode ? "text-gray-600" : "text-gray-300") : ""
+                                )}>
+                                  {m}
+                                  {isCurrent && <span className="ml-1 text-[8px] font-black text-cyan-400">●</span>}
+                                </th>
+                              );
+                            })}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr className={cn(darkMode ? "bg-purple-500/5" : "bg-purple-50/50")}>
+                            <td className={cn("px-5 py-2.5 font-bold text-[10px] sticky left-0 whitespace-nowrap", darkMode ? "text-purple-400 bg-[#16161A]" : "text-purple-700 bg-white")}>
+                              📦 Salida Planificada (cj)
+                            </td>
+                            {stockFilmPlanningVsReal.months.map(m => (
+                              <td key={m} className="px-3 py-2.5 text-center">
+                                <span className={cn("font-semibold", stockFilmPlanningVsReal.plannedOutByMonth[m].boxes > 0 ? (darkMode ? "text-purple-400" : "text-purple-600") : (darkMode ? "text-gray-700" : "text-gray-300"))}>
+                                  {stockFilmPlanningVsReal.plannedOutByMonth[m].boxes || '—'}
+                                </span>
+                              </td>
+                            ))}
+                          </tr>
+                          <tr className={cn(darkMode ? "bg-purple-500/3" : "bg-purple-50/20")}>
+                            <td className={cn("px-5 py-1.5 font-semibold text-[9px] sticky left-0 whitespace-nowrap", darkMode ? "text-purple-500/60 bg-[#16161A]" : "text-purple-400 bg-white")}>
+                              📦 Salida Planificada (m²)
+                            </td>
+                            {stockFilmPlanningVsReal.months.map(m => (
+                              <td key={m} className={cn("px-3 py-1.5 text-center text-[10px]", stockFilmPlanningVsReal.plannedOutByMonth[m].m2 > 0 ? (darkMode ? "text-purple-500" : "text-purple-500") : (darkMode ? "text-gray-700" : "text-gray-300"))}>
+                                {stockFilmPlanningVsReal.plannedOutByMonth[m].m2 > 0 ? stockFilmPlanningVsReal.plannedOutByMonth[m].m2.toFixed(1) : '—'}
+                              </td>
+                            ))}
+                          </tr>
+                          <tr className={cn(darkMode ? "bg-red-500/5" : "bg-red-50/50")}>
+                            <td className={cn("px-5 py-2.5 font-bold text-[10px] sticky left-0 whitespace-nowrap", darkMode ? "text-red-400 bg-[#16161A]" : "text-red-700 bg-white")}>
+                              📊 Consumo Real Clientes (cj)
+                            </td>
+                            {stockFilmPlanningVsReal.months.map(m => {
+                              const d2 = new Date(stockFilmPlanningVsReal.useYear, stockFilmPlanningVsReal.months.indexOf(m), 1);
+                              const isFuture2 = d2 > new Date(stockFilmPlanningVsReal.now.getFullYear(), stockFilmPlanningVsReal.now.getMonth(), 1) || d2.getFullYear() > stockFilmPlanningVsReal.now.getFullYear();
+                              const val2 = stockFilmPlanningVsReal.realOutByMonth[m].boxes;
+                              const planned2 = stockFilmPlanningVsReal.plannedOutByMonth[m].boxes;
+                              const diff2 = planned2 > 0 ? ((val2 - planned2) / planned2 * 100).toFixed(0) : null;
+                              return (
+                                <td key={m} className="px-3 py-2.5 text-center">
+                                  {isFuture2 ? (
+                                    <span className={cn("text-[9px]", darkMode ? "text-gray-700" : "text-gray-300")}>—</span>
+                                  ) : (
+                                    <div>
+                                      <span className={cn("font-black",
+                                        val2 === 0 ? (darkMode ? "text-gray-600" : "text-gray-300") :
+                                        diff2 && parseInt(diff2) > 15 ? "text-emerald-400" :
+                                        diff2 && parseInt(diff2) < -15 ? "text-amber-400" :
+                                        (darkMode ? "text-red-400" : "text-red-500")
+                                      )}>{val2 || '—'}</span>
+                                      {diff2 && val2 > 0 && (
+                                        <span className={cn("block text-[8px] font-bold", parseInt(diff2) > 0 ? "text-emerald-400" : "text-amber-400")}>
+                                          {parseInt(diff2) > 0 ? '+' : ''}{diff2}%
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                          <tr className={cn(darkMode ? "bg-red-500/3" : "bg-red-50/20")}>
+                            <td className={cn("px-5 py-1.5 font-semibold text-[9px] sticky left-0 whitespace-nowrap", darkMode ? "text-red-500/60 bg-[#16161A]" : "text-red-400 bg-white")}>
+                              📊 Consumo Real Clientes (m²)
+                            </td>
+                            {stockFilmPlanningVsReal.months.map(m => {
+                              const d3 = new Date(stockFilmPlanningVsReal.useYear, stockFilmPlanningVsReal.months.indexOf(m), 1);
+                              const isFuture3 = d3 > new Date(stockFilmPlanningVsReal.now.getFullYear(), stockFilmPlanningVsReal.now.getMonth(), 1) || d3.getFullYear() > stockFilmPlanningVsReal.now.getFullYear();
+                              return (
+                                <td key={m} className={cn("px-3 py-1.5 text-center text-[10px]", stockFilmPlanningVsReal.realOutByMonth[m].m2 > 0 ? (darkMode ? "text-red-400" : "text-red-500") : (darkMode ? "text-gray-700" : "text-gray-300"))}>
+                                  {isFuture3 ? '—' : stockFilmPlanningVsReal.realOutByMonth[m].m2 > 0 ? stockFilmPlanningVsReal.realOutByMonth[m].m2.toFixed(1) : '—'}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                          <tr className={cn("border-t-2", darkMode ? "border-white/10 bg-cyan-500/8" : "border-cyan-100 bg-cyan-50/50")}>
+                            <td className={cn("px-5 py-2.5 font-black text-[10px] sticky left-0 whitespace-nowrap uppercase tracking-wide", darkMode ? "text-cyan-400 bg-[#1a1a20]" : "text-cyan-700 bg-cyan-50")}>
+                              ≡ Balance Bodega (cj)
+                            </td>
+                            {stockFilmPlanningVsReal.months.map((m, idx) => {
+                              const bal = stockFilmPlanningVsReal.plannedBalanceByMonth[m].boxes;
+                              const isFutureMonth = idx > stockFilmPlanningVsReal.currentMonthIdx;
+                              return (
+                                <td key={m} className="px-3 py-2.5 text-center">
+                                  <span className={cn("font-black text-sm",
+                                    bal < 50 ? 'text-red-400' : bal < 150 ? 'text-amber-400' : (darkMode ? "text-cyan-400" : "text-cyan-600")
+                                  )}>{bal}</span>
+                                  {isFutureMonth && bal > 0 && (
+                                    <span className={cn("block text-[7px] font-bold mt-0.5", darkMode ? "text-cyan-600" : "text-cyan-400")}>proy.</span>
+                                  )}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                          <tr className={cn(darkMode ? "bg-cyan-500/4" : "bg-cyan-50/30")}>
+                            <td className={cn("px-5 py-1.5 font-semibold text-[9px] sticky left-0 whitespace-nowrap", darkMode ? "text-cyan-500/60 bg-[#1a1a20]" : "text-cyan-500 bg-cyan-50")}>
+                              ≡ Balance Bodega (m²)
+                            </td>
+                            {stockFilmPlanningVsReal.months.map(m => {
+                              const bal2 = stockFilmPlanningVsReal.plannedBalanceByMonth[m].m2;
+                              return (
+                                <td key={m} className={cn("px-3 py-1.5 text-center text-[10px] font-semibold",
+                                  bal2 < 500 ? 'text-red-400/70' : bal2 < 1500 ? 'text-amber-400/70' : (darkMode ? "text-cyan-500/70" : "text-cyan-600/70")
+                                )}>{bal2.toFixed(0)} m²</td>
+                              );
+                            })}
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className={cn("px-5 py-3 text-[9px] flex items-center gap-4 flex-wrap", darkMode ? "text-gray-600 border-t border-white/5" : "text-gray-400 border-t border-gray-100")}>
+                      <span>📦 Salida planificada = total OUT del Stock Film Planning (meses futuros)</span>
+                      <span>📊 Consumo real = ventas reales registradas a clientes (meses pasados y actual)</span>
+                      <span className="text-cyan-400">≡ Balance bodega = usa consumo real en meses pasados · salidas planificadas en meses futuros</span>
+                      <span className="text-emerald-400">▲ verde = demanda mayor a lo planificado</span>
+                      <span className="text-amber-400">▼ amber = demanda menor a lo planificado</span>
+                    </div>
+              </div>
+            </div>
+            )}
+
+          </div>
+        )}
+
+      </main>
+
+      {/* ── STOCK TIEMPO CELL DETAIL MODAL ── */}
+      {stockTiempoModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          onClick={() => { setStockTiempoModal(null); setStockTiempoModalClient(null); }}>
+          <div className={cn("rounded-2xl shadow-2xl flex overflow-hidden", darkMode ? "bg-[#16161A] border border-white/10" : "bg-white")}
+            style={{ width: stockTiempoModalClient ? '900px' : '560px', maxWidth: '95vw', maxHeight: '85vh' }}
+            onClick={e => e.stopPropagation()}>
+
+            {/* LEFT PANEL — client list */}
+            <div className="flex flex-col" style={{ width: stockTiempoModalClient ? '340px' : '100%', minWidth: '340px' }}>
+              <div className={cn("px-5 py-4 border-b flex items-center justify-between shrink-0",
+                stockTiempoModal.ft === 'DIHL'
+                  ? (darkMode ? "bg-blue-500/8 border-blue-500/20" : "bg-blue-50 border-blue-100")
+                  : (darkMode ? "bg-red-500/8 border-red-500/20" : "bg-red-50 border-red-100")
+              )}>
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className={cn("w-8 h-8 rounded-xl flex items-center justify-center shrink-0",
+                    stockTiempoModal.ft === 'DIHL' ? "bg-blue-500/20" : "bg-red-500/20"
+                  )}>
+                    <span className={cn("font-black text-sm", stockTiempoModal.ft === 'DIHL' ? "text-blue-400" : "text-red-400")}>↓</span>
+                  </div>
+                  <div className="min-w-0">
+                    <p className={cn("text-[9px] font-bold uppercase tracking-widest", stockTiempoModal.ft === 'DIHL' ? (darkMode ? "text-blue-400/60" : "text-blue-400") : (darkMode ? "text-red-400/60" : "text-red-400"))}>
+                      {stockTiempoModal.ft === 'DIHT' ? 'DI-HT' : 'DI-HL'} · {stockTiempoModal.sz} · {stockTiempoModal.monthLabel}
+                    </p>
+                    <h3 className="text-sm font-black leading-tight">Ventas del mes</h3>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  <div className="text-right">
+                    <p className={cn("text-lg font-black leading-none", stockTiempoModal.ft === 'DIHL' ? (darkMode ? "text-blue-400" : "text-blue-600") : "text-red-400")}>{stockTiempoModal.boxes}</p>
+                    <p className={cn("text-[9px]", darkMode ? "text-gray-500" : "text-gray-400")}>cj</p>
+                  </div>
+                  <div className="text-right">
+                    <p className={cn("text-lg font-black leading-none", darkMode ? "text-cyan-400" : "text-cyan-600")}>{stockTiempoModal.m2.toFixed(1)}</p>
+                    <p className={cn("text-[9px]", darkMode ? "text-gray-500" : "text-gray-400")}>m²</p>
+                  </div>
+                  <button onClick={() => { setStockTiempoModal(null); setStockTiempoModalClient(null); }}
+                    className={cn("p-1.5 rounded-lg", darkMode ? "hover:bg-white/10 text-gray-500" : "hover:bg-red-100 text-red-400")}>
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="overflow-y-auto flex-1 custom-scrollbar p-3 space-y-1.5">
+                <p className={cn("text-[9px] font-bold uppercase tracking-widest px-1 mb-2", darkMode ? "text-gray-600" : "text-gray-400")}>
+                  {stockTiempoModal.clients.length} clientes
+                </p>
+                {stockTiempoModal.clients.map((c, i) => {
+                  const isSelected = stockTiempoModalClient === c.name;
+                  return (
+                    <div key={i}
+                      onClick={() => setStockTiempoModalClient(isSelected ? null : c.name)}
+                      className={cn("rounded-xl p-3 border flex items-center gap-2.5 cursor-pointer transition-all",
+                        isSelected
+                          ? (darkMode ? "bg-red-500/15 border-red-500/40" : "bg-red-50 border-red-300")
+                          : (darkMode ? "bg-white/3 border-white/6 hover:bg-white/6" : "bg-gray-50 border-gray-100 hover:bg-red-50/50")
+                      )}>
+                      <div className={cn("w-6 h-6 rounded-md flex items-center justify-center font-black text-[10px] shrink-0",
+                        i === 0
+                          ? (stockTiempoModal.ft === 'DIHL' ? "bg-blue-500/20 text-blue-400" : "bg-red-500/20 text-red-400")
+                          : (darkMode ? "bg-white/8 text-gray-500" : "bg-gray-200 text-gray-500")
+                      )}>{i + 1}</div>
+                      <div className="flex-1 min-w-0">
+                        <p className={cn("font-bold text-xs truncate", isSelected ? "text-red-400" : "")}>{c.name}</p>
+                        <p className={cn("text-[9px] truncate", darkMode ? "text-gray-600" : "text-gray-400")}>{c.salesperson} · {c.province}</p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className={cn("font-black text-sm", stockTiempoModal.ft === 'DIHL' ? (darkMode ? "text-blue-400" : "text-blue-600") : "text-red-400")}>{c.boxes} cj</p>
+                        <p className={cn("text-[9px] font-semibold", darkMode ? "text-cyan-500" : "text-cyan-600")}>{c.m2.toFixed(1)} m²</p>
+                      </div>
+                      <div className="w-1 self-stretch rounded-full bg-red-500/15 relative shrink-0">
+                        <div className={cn("absolute bottom-0 left-0 w-full rounded-full", stockTiempoModal.ft === 'DIHL' ? "bg-blue-400" : "bg-red-400")}
+                          style={{ height: `${stockTiempoModal.boxes > 0 ? (c.boxes / stockTiempoModal.boxes) * 100 : 0}%` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* RIGHT PANEL — client invoice detail */}
+            {stockTiempoModalClient && (() => {
+              const c = stockTiempoModal.clients.find(x => x.name === stockTiempoModalClient);
+              const client = allClients.find(cl => cl.name === stockTiempoModalClient);
+              const m2box = FILM_M2_PER_BOX[stockTiempoModal.ft]?.[stockTiempoModal.sz] ?? 0;
+              const records = allConsumos.filter(r => {
+                if (!client || r.client_id !== client.id) return false;
+                const d = new Date(r.order_date);
+                if (d.getFullYear() !== stockTiempoModal.year || d.getMonth() !== stockTiempoModal.month) return false;
+                if (r.size !== stockTiempoModal.sz) return false;
+                const rft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type === 'DIHL' ? 'DIHL' : 'DIHT';
+                return rft === stockTiempoModal.ft;
+              }).sort((a, b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime());
+              const totalBoxes = records.reduce((s, r) => s + (r.is_return ? -r.quantity : r.quantity), 0);
+              const totalM2 = parseFloat((totalBoxes * m2box).toFixed(2));
+              const totalRevenue = records.reduce((s, r) => s + r.quantity * (r.unit_cost || 0), 0);
+              return (
+                <div className={cn("flex-1 flex flex-col border-l overflow-hidden", darkMode ? "border-white/8" : "border-gray-100")}>
+                  <div className={cn("px-5 py-4 border-b shrink-0", darkMode ? "border-white/8 bg-white/2" : "border-gray-100 bg-gray-50/60")}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className={cn("text-[9px] font-bold uppercase tracking-widest mb-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>Cliente</p>
+                        <h4 className="font-black text-sm leading-snug">{stockTiempoModalClient}</h4>
+                        <p className={cn("text-[10px] mt-0.5", darkMode ? "text-gray-500" : "text-gray-400")}>{client?.salesperson || '—'} · {client?.province || '—'}</p>
+                      </div>
+                      <button onClick={() => setStockTiempoModalClient(null)}
+                        className={cn("p-1 rounded-lg shrink-0", darkMode ? "hover:bg-white/10 text-gray-600" : "hover:bg-gray-200 text-gray-400")}>
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 mt-3">
+                      {[
+                        { v: totalBoxes, label: 'cajas', color: 'text-red-400' },
+                        { v: `${totalM2.toFixed(1)}`, label: 'm²', color: darkMode ? 'text-cyan-400' : 'text-cyan-600' },
+                        { v: `$${totalRevenue.toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, label: 'ingresos', color: 'text-emerald-400' },
+                      ].map((k, i) => (
+                        <div key={i} className={cn("rounded-lg p-2 text-center", darkMode ? "bg-white/5" : "bg-white border border-gray-100")}>
+                          <p className={cn("font-black text-base leading-none", k.color)}>{k.v}</p>
+                          <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{k.label}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="overflow-y-auto flex-1 custom-scrollbar">
+                    <table className="w-full text-xs">
+                      <thead className={cn("text-[9px] font-bold uppercase tracking-wider sticky top-0", darkMode ? "bg-[#16161A] text-gray-600" : "bg-white text-gray-400")}>
+                        <tr>
+                          <th className="px-4 py-2 text-left">Fecha</th>
+                          <th className="px-4 py-2 text-left">Factura</th>
+                          <th className="px-4 py-2 text-center">Cajas</th>
+                          <th className="px-4 py-2 text-center">m²</th>
+                          <th className="px-4 py-2 text-right">P. Unit.</th>
+                          <th className="px-4 py-2 text-right">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody className={cn("divide-y", darkMode ? "divide-white/5" : "divide-gray-50")}>
+                        {records.map((r, ri) => {
+                          const qty = r.is_return ? -r.quantity : r.quantity;
+                          const m2r = parseFloat((qty * m2box).toFixed(2));
+                          const total = r.quantity * (r.unit_cost || 0);
+                          return (
+                            <tr key={ri} className={cn("transition-colors", darkMode ? "hover:bg-white/3" : "hover:bg-gray-50/60")}>
+                              <td className={cn("px-4 py-2.5", darkMode ? "text-gray-400" : "text-gray-600")}>{r.order_date}</td>
+                              <td className={cn("px-4 py-2.5 font-mono text-[10px] max-w-[120px] truncate", darkMode ? "text-gray-500" : "text-gray-400")}>{r.invoice_number || '—'}</td>
+                              <td className="px-4 py-2.5 text-center">
+                                <span className={cn("font-black", r.is_return ? "text-amber-400" : "text-red-400")}>{r.is_return ? `-${r.quantity}` : r.quantity}</span>
+                              </td>
+                              <td className={cn("px-4 py-2.5 text-center font-semibold", darkMode ? "text-cyan-500" : "text-cyan-600")}>{Math.abs(m2r).toFixed(2)}</td>
+                              <td className={cn("px-4 py-2.5 text-right font-mono text-[10px]", darkMode ? "text-gray-500" : "text-gray-400")}>{r.unit_cost ? `$${r.unit_cost.toFixed(2)}` : '—'}</td>
+                              <td className={cn("px-4 py-2.5 text-right font-bold", r.is_return ? "text-amber-400" : (darkMode ? "text-emerald-400" : "text-emerald-600"))}>
+                                {total > 0 ? `$${total.toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                      {records.length > 1 && (
+                        <tfoot className={cn("border-t-2 text-xs font-black sticky bottom-0", darkMode ? "border-white/10 bg-[#16161A]" : "border-gray-200 bg-white")}>
+                          <tr>
+                            <td colSpan={2} className="px-4 py-2.5">TOTAL</td>
+                            <td className="px-4 py-2.5 text-center text-red-400">{totalBoxes}</td>
+                            <td className={cn("px-4 py-2.5 text-center", darkMode ? "text-cyan-400" : "text-cyan-600")}>{totalM2.toFixed(2)}</td>
+                            <td />
+                            <td className={cn("px-4 py-2.5 text-right", darkMode ? "text-emerald-400" : "text-emerald-600")}>
+                              ${totalRevenue.toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </td>
+                          </tr>
+                        </tfoot>
+                      )}
+                    </table>
+                  </div>
+                  <div className={cn("px-4 py-3 border-t shrink-0", darkMode ? "border-white/8" : "border-gray-100")}>
+                    <button
+                      onClick={() => { if (client) { setSelectedClient(client); setView('clients'); setStockTiempoModal(null); setStockTiempoModalClient(null); } }}
+                      className={cn("w-full py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors",
+                        darkMode ? "bg-white/8 hover:bg-white/12 text-gray-300" : "bg-gray-100 hover:bg-gray-200 text-gray-700"
+                      )}>
+                      <ArrowRight className="w-3.5 h-3.5" /> Ir al perfil completo
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
+
+      {/* ── COMPARATIVO CELL DETAIL MODAL ── */}
+      {comparativoCellDetail && (() => {
+        const { ft, sz, year, clients, totalBoxes, totalM2 } = comparativoCellDetail;
+        const m2box = FILM_M2_PER_BOX[ft]?.[sz] ?? 0;
+        const clientInfo = clients.find(c => c.name === comparativoSelectedClient);
+        const ftColor = ft === 'DIHL' ? 'text-blue-400' : 'text-[#ED1C24]';
+        const ftBg = ft === 'DIHL' ? 'bg-blue-500/20' : 'bg-[#ED1C24]/15';
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+            onClick={() => { setComparativoCellDetail(null); setComparativoSelectedClient(null); }}>
+            <div className={cn("rounded-2xl shadow-2xl flex overflow-hidden", darkMode ? "bg-[#16161A] border border-white/10" : "bg-white")}
+              style={{ maxWidth: '95vw', maxHeight: '85vh', width: comparativoSelectedClient ? '900px' : 'auto' }}
+              onClick={e => e.stopPropagation()}>
+
+              {/* Left panel — client list */}
+              <div className="flex flex-col w-[360px] shrink-0" style={{ maxHeight: '85vh' }}>
+                <div className={cn("px-5 py-4 border-b shrink-0 relative", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+                  <div className="flex items-center gap-2 mb-1 pr-8">
+                    <span className={cn("text-[9px] font-black px-2 py-0.5 rounded", ftBg, ftColor)}>{ft === 'DIHT' ? 'DI-HT' : 'DI-HL'}</span>
+                    <span className={cn("text-[9px] font-black px-2 py-0.5 rounded", darkMode ? "bg-white/10 text-white" : "bg-gray-800 text-white")}>{sz}</span>
+                    <span className={cn("text-[9px] font-semibold ml-auto", darkMode ? "text-gray-500" : "text-gray-400")}>{year}</span>
+                  </div>
+                  <div className="flex items-end gap-4 mt-2">
+                    <div><p className={cn("text-2xl font-black leading-none", ftColor)}>{totalBoxes}</p><p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>cajas</p></div>
+                    <div><p className={cn("text-lg font-black leading-none", darkMode ? "text-cyan-400" : "text-cyan-600")}>{totalM2.toFixed(1)}</p><p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>m²</p></div>
+                  </div>
+                  <button onClick={() => { setComparativoCellDetail(null); setComparativoSelectedClient(null); }}
+                    className={cn("absolute top-3 right-3 p-1.5 rounded-lg transition-colors", darkMode ? "hover:bg-white/10 text-gray-500" : "hover:bg-gray-100 text-gray-400")}>
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <div className={cn("px-3 py-2 text-[9px] font-bold uppercase tracking-wider shrink-0", darkMode ? "text-gray-600" : "text-gray-400")}>
+                  {clients.length} clientes
+                </div>
+                <div className="flex-1 overflow-y-auto custom-scrollbar">
+                  {clients.map((c, i) => (
+                    <button key={i} onClick={() => setComparativoSelectedClient(comparativoSelectedClient === c.name ? null : c.name)}
+                      className={cn("w-full px-4 py-3 text-left transition-colors border-b flex items-center gap-3",
+                        darkMode ? "border-white/5 hover:bg-white/5" : "border-gray-50 hover:bg-gray-50",
+                        comparativoSelectedClient === c.name && (darkMode ? "bg-white/8" : "bg-gray-100"))}>
+                      <div className="flex-1 min-w-0">
+                        <p className={cn("text-xs font-bold truncate", darkMode ? "text-white" : "text-gray-900")}>{c.name}</p>
+                        <p className={cn("text-[9px] truncate mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{c.province} · {c.salesperson || 'Sin vendedor'}</p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className={cn("text-xs font-black", ftColor)}>{c.boxes}</p>
+                        <p className={cn("text-[9px]", darkMode ? "text-cyan-500" : "text-cyan-600")}>{c.m2.toFixed(1)} m²</p>
+                      </div>
+                      <div className={cn("w-1 rounded-full self-stretch", ft === 'DIHL' ? "bg-blue-500/30" : "bg-[#ED1C24]/30")}
+                        style={{ opacity: totalBoxes > 0 ? 0.3 + (c.boxes / totalBoxes) * 0.7 : 0.3 }} />
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Right panel — client detail */}
+              {comparativoSelectedClient && clientInfo && (() => {
+                const client = allClients.find(c => c.name === clientInfo.name);
+                const clientConsumos = allConsumos.filter(r => {
+                  const d = new Date(r.order_date);
+                  if (d.getFullYear() !== year) return false;
+                  if (r.size !== sz) return false;
+                  const rft = r.film_type === 'DIHL' ? 'DIHL' : 'DIHT';
+                  return rft === ft && r.client_id === client?.id;
+                }).sort((a, b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime());
+                const totalRevenue = clientConsumos.reduce((s, r) => s + (r.quantity * (r.unit_cost || 0)), 0);
+                return (
+                  <div className={cn("flex flex-col border-l flex-1 min-w-0", darkMode ? "border-white/8" : "border-gray-100")} style={{ maxHeight: '85vh' }}>
+                    <div className={cn("px-5 py-4 border-b shrink-0", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+                      <p className={cn("text-xs font-black truncate", darkMode ? "text-white" : "text-gray-900")}>{clientInfo.name}</p>
+                      <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-500" : "text-gray-400")}>{clientInfo.province} · {clientInfo.salesperson || 'Sin vendedor'}</p>
+                      <div className="flex gap-4 mt-3">
+                        <div><p className={cn("text-lg font-black", ftColor)}>{clientInfo.boxes}</p><p className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>cajas {year}</p></div>
+                        <div><p className={cn("text-lg font-black", darkMode ? "text-cyan-400" : "text-cyan-600")}>{clientInfo.m2.toFixed(1)}</p><p className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>m² {year}</p></div>
+                        <div><p className={cn("text-lg font-black", darkMode ? "text-emerald-400" : "text-emerald-600")}>${totalRevenue.toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p><p className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>facturado</p></div>
+                      </div>
+                    </div>
+                    <div className="flex-1 overflow-y-auto custom-scrollbar">
+                      <table className="w-full text-xs">
+                        <thead className={cn("text-[9px] font-bold uppercase tracking-wider sticky top-0", darkMode ? "bg-[#16161A] text-gray-600" : "bg-white text-gray-400")}>
+                          <tr>
+                            <th className="px-4 py-2.5 text-left">Fecha</th>
+                            <th className="px-4 py-2.5 text-left">Factura</th>
+                            <th className="px-4 py-2.5 text-center">Cajas</th>
+                            <th className="px-4 py-2.5 text-center">m²</th>
+                            <th className="px-4 py-2.5 text-right">Total</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {clientConsumos.map((r, i) => {
+                            const qty = r.is_return ? -r.quantity : r.quantity;
+                            const m2r = parseFloat((qty * m2box).toFixed(2));
+                            return (
+                              <tr key={i} className={cn("border-t", darkMode ? "border-white/5" : "border-gray-50")}>
+                                <td className={cn("px-4 py-2.5", darkMode ? "text-gray-400" : "text-gray-600")}>{r.order_date}</td>
+                                <td className={cn("px-4 py-2.5 font-mono text-[10px]", darkMode ? "text-gray-600" : "text-gray-400")}>{r.invoice_number || '—'}</td>
+                                <td className={cn("px-4 py-2.5 text-center font-bold", ftColor)}>{qty}</td>
+                                <td className={cn("px-4 py-2.5 text-center", darkMode ? "text-cyan-500" : "text-cyan-600")}>{m2r.toFixed(2)}</td>
+                                <td className={cn("px-4 py-2.5 text-right font-bold", darkMode ? "text-emerald-400" : "text-emerald-600")}>${(qty * (r.unit_cost || 0)).toFixed(2)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        {clientConsumos.length > 1 && (
+                          <tfoot className={cn("text-[9px] font-bold", darkMode ? "bg-white/3 text-gray-500" : "bg-gray-50 text-gray-500")}>
+                            <tr><td colSpan={2} className="px-4 py-2.5">TOTAL</td>
+                              <td className={cn("px-4 py-2.5 text-center", ftColor)}>{clientInfo.boxes}</td>
+                              <td className={cn("px-4 py-2.5 text-center", darkMode ? "text-cyan-400" : "text-cyan-600")}>{clientInfo.m2.toFixed(2)}</td>
+                              <td className={cn("px-4 py-2.5 text-right", darkMode ? "text-emerald-400" : "text-emerald-600")}>${totalRevenue.toFixed(2)}</td>
+                            </tr>
+                          </tfoot>
+                        )}
+                      </table>
+                    </div>
+                    <div className={cn("px-4 py-3 border-t shrink-0", darkMode ? "border-white/8" : "border-gray-100")}>
+                      <button onClick={() => { if (client) { setSelectedClient(client); setView('clients'); setComparativoCellDetail(null); setComparativoSelectedClient(null); } }}
+                        className={cn("w-full py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors",
+                          darkMode ? "bg-white/8 hover:bg-white/12 text-gray-300" : "bg-gray-100 hover:bg-gray-200 text-gray-700")}>
+                        <ArrowRight className="w-3.5 h-3.5" /> Ir al perfil completo
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── STOCK FILM CELL DETAIL MODAL ── */}
+      {stockFilmCellDetail && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          onClick={() => { setStockFilmCellDetail(null); setStockFilmSelectedClient(null); }}>
+          <div className={cn("rounded-2xl shadow-2xl flex overflow-hidden", darkMode ? "bg-[#16161A] border border-white/10" : "bg-white")}
+            style={{ width: stockFilmSelectedClient ? '900px' : '560px', maxWidth: '95vw', maxHeight: '85vh' }}
+            onClick={e => e.stopPropagation()}>
+
+            {/* LEFT PANEL — client list */}
+            <div className="flex flex-col" style={{ width: stockFilmSelectedClient ? '340px' : '100%', minWidth: '340px' }}>
+              {/* Header */}
+              <div className={cn("px-5 py-4 border-b flex items-center justify-between shrink-0",
+                stockFilmCellDetail.prod.type === 'DIHL'
+                  ? (darkMode ? "bg-blue-500/8 border-blue-500/20" : "bg-blue-50 border-blue-100")
+                  : stockFilmCellDetail.prod.type === 'DIML'
+                  ? (darkMode ? "bg-purple-500/8 border-purple-500/20" : "bg-purple-50 border-purple-100")
+                  : (darkMode ? "bg-red-500/8 border-red-500/20" : "bg-red-50 border-red-100")
+              )}>
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className={cn("w-8 h-8 rounded-xl flex items-center justify-center shrink-0",
+                    stockFilmCellDetail.prod.type === 'DIHL' ? "bg-blue-500/20"
+                    : stockFilmCellDetail.prod.type === 'DIML' ? "bg-purple-500/20"
+                    : "bg-red-500/20"
+                  )}>
+                    <span className={cn("font-black text-sm",
+                      stockFilmCellDetail.prod.type === 'DIHL' ? "text-blue-400"
+                      : stockFilmCellDetail.prod.type === 'DIML' ? "text-purple-400"
+                      : "text-red-400"
+                    )}>▼</span>
+                  </div>
+                  <div className="min-w-0">
+                    <p className={cn("text-[9px] font-bold uppercase tracking-widest",
+                      stockFilmCellDetail.prod.type === 'DIHL' ? (darkMode ? "text-blue-400/60" : "text-blue-400")
+                      : stockFilmCellDetail.prod.type === 'DIML' ? (darkMode ? "text-purple-400/60" : "text-purple-400")
+                      : (darkMode ? "text-red-400/60" : "text-red-400")
+                    )}>
+                      OUT — {stockFilmCellDetail.month} {stockFilmCellDetail.year}
+                    </p>
+                    <h3 className="text-sm font-black leading-tight truncate">{stockFilmCellDetail.prod.label}</h3>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  <div className="text-right">
+                    <p className={cn("text-lg font-black leading-none",
+                      stockFilmCellDetail.prod.type === 'DIHL' ? "text-blue-400"
+                      : stockFilmCellDetail.prod.type === 'DIML' ? "text-purple-400"
+                      : "text-red-400"
+                    )}>{stockFilmCellDetail.totalBoxes}</p>
+                    <p className={cn("text-[9px]", darkMode ? "text-gray-500" : "text-gray-400")}>cj</p>
+                  </div>
+                  <div className="text-right">
+                    <p className={cn("text-lg font-black leading-none", darkMode ? "text-cyan-400" : "text-cyan-600")}>{stockFilmCellDetail.totalM2.toFixed(1)}</p>
+                    <p className={cn("text-[9px]", darkMode ? "text-gray-500" : "text-gray-400")}>m²</p>
+                  </div>
+                  <button onClick={() => { setStockFilmCellDetail(null); setStockFilmSelectedClient(null); }}
+                    className={cn("p-1.5 rounded-lg", darkMode ? "hover:bg-white/10 text-gray-500" : "hover:bg-red-100 text-red-400")}>
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Client list */}
+              <div className="overflow-y-auto flex-1 custom-scrollbar p-3 space-y-1.5">
+                <p className={cn("text-[9px] font-bold uppercase tracking-widest px-1 mb-2", darkMode ? "text-gray-600" : "text-gray-400")}>
+                  {stockFilmCellDetail.clients.length} clientes
+                </p>
+                {stockFilmCellDetail.clients.map((c, i) => {
+                  const isSelected = stockFilmSelectedClient === c.name;
+                  return (
+                    <div key={i}
+                      onClick={() => setStockFilmSelectedClient(isSelected ? null : c.name)}
+                      className={cn("rounded-xl p-3 border flex items-center gap-2.5 cursor-pointer transition-all",
+                        isSelected
+                          ? (darkMode ? "bg-red-500/15 border-red-500/40" : "bg-red-50 border-red-300")
+                          : (darkMode ? "bg-white/3 border-white/6 hover:bg-white/6 hover:border-red-500/20" : "bg-gray-50 border-gray-100 hover:bg-red-50/50 hover:border-red-200")
+                      )}
+                    >
+                      <div className={cn("w-6 h-6 rounded-md flex items-center justify-center font-black text-[10px] shrink-0",
+                        i === 0 ? "bg-red-500/20 text-red-400" : (darkMode ? "bg-white/8 text-gray-500" : "bg-gray-200 text-gray-500")
+                      )}>{i + 1}</div>
+                      <div className="flex-1 min-w-0">
+                        <p className={cn("font-bold text-xs truncate", isSelected ? "text-red-400" : "")}>{c.name}</p>
+                        <p className={cn("text-[9px] truncate", darkMode ? "text-gray-600" : "text-gray-400")}>{c.salesperson} · {c.province}</p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="font-black text-sm text-red-400">{c.boxes} cj</p>
+                        <p className={cn("text-[9px] font-semibold", darkMode ? "text-cyan-500" : "text-cyan-600")}>{c.m2.toFixed(1)} m²</p>
+                      </div>
+                      <div className="w-1 self-stretch rounded-full bg-red-500/15 relative shrink-0">
+                        <div className="absolute bottom-0 left-0 w-full rounded-full bg-red-400"
+                          style={{ height: `${stockFilmCellDetail.totalBoxes > 0 ? (c.boxes / stockFilmCellDetail.totalBoxes) * 100 : 0}%` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* RIGHT PANEL — client invoice detail */}
+            {stockFilmSelectedClient && (() => {
+              const clientInfo = stockFilmCellDetail.clients.find(c => c.name === stockFilmSelectedClient);
+              const client = allClients.find(c => c.name === stockFilmSelectedClient);
+              const monthIdx = STOCK_FILM_MONTHS.indexOf(stockFilmCellDetail.month);
+              // Get all records for this client in this month/year/product
+              const records = allConsumos.filter(r => {
+                if (!client || r.client_id !== client.id) return false;
+                const d = new Date(r.order_date);
+                if (d.getFullYear() !== stockFilmCellDetail.year || d.getMonth() !== monthIdx) return false;
+                if (r.size !== stockFilmCellDetail.prod.size) return false;
+                const rft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type === 'DIHL' ? 'DIHL' : r.film_type === 'DIML' ? 'DIML' : 'DIHT';
+                return rft === stockFilmCellDetail.prod.type;
+              }).sort((a, b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime());
+
+              const totalBoxes = records.reduce((s, r) => s + (r.is_return ? -r.quantity : r.quantity), 0);
+              const totalM2 = parseFloat((totalBoxes * stockFilmCellDetail.prod.m2box).toFixed(2));
+              const totalRevenue = records.reduce((s, r) => s + r.quantity * (r.unit_cost || 0), 0);
+
+              return (
+                <div className={cn("flex-1 flex flex-col border-l overflow-hidden", darkMode ? "border-white/8" : "border-gray-100")}>
+                  {/* Preview header */}
+                  <div className={cn("px-5 py-4 border-b shrink-0", darkMode ? "border-white/8 bg-white/2" : "border-gray-100 bg-gray-50/60")}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className={cn("text-[9px] font-bold uppercase tracking-widest mb-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>Cliente</p>
+                        <h4 className="font-black text-sm leading-snug">{stockFilmSelectedClient}</h4>
+                        <p className={cn("text-[10px] mt-0.5", darkMode ? "text-gray-500" : "text-gray-400")}>{client?.salesperson || '—'} · {client?.province || '—'}</p>
+                      </div>
+                      <button onClick={() => setStockFilmSelectedClient(null)}
+                        className={cn("p-1 rounded-lg shrink-0 mt-0.5", darkMode ? "hover:bg-white/10 text-gray-600" : "hover:bg-gray-200 text-gray-400")}>
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    {/* KPIs */}
+                    <div className="grid grid-cols-3 gap-2 mt-3">
+                      <div className={cn("rounded-lg p-2 text-center", darkMode ? "bg-white/5" : "bg-white border border-gray-100")}>
+                        <p className="font-black text-base text-red-400 leading-none">{totalBoxes}</p>
+                        <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>cajas</p>
+                      </div>
+                      <div className={cn("rounded-lg p-2 text-center", darkMode ? "bg-white/5" : "bg-white border border-gray-100")}>
+                        <p className={cn("font-black text-base leading-none", darkMode ? "text-cyan-400" : "text-cyan-600")}>{totalM2.toFixed(1)}</p>
+                        <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>m²</p>
+                      </div>
+                      <div className={cn("rounded-lg p-2 text-center", darkMode ? "bg-white/5" : "bg-white border border-gray-100")}>
+                        <p className="font-black text-base text-emerald-400 leading-none">${totalRevenue.toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                        <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>ingresos</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Invoice rows */}
+                  <div className="overflow-y-auto flex-1 custom-scrollbar">
+                    <table className="w-full text-xs">
+                      <thead className={cn("text-[9px] font-bold uppercase tracking-wider sticky top-0", darkMode ? "bg-[#16161A] text-gray-600" : "bg-white text-gray-400")}>
+                        <tr>
+                          <th className="px-4 py-2 text-left">Fecha</th>
+                          <th className="px-4 py-2 text-left">Factura</th>
+                          <th className="px-4 py-2 text-center">Cajas</th>
+                          <th className="px-4 py-2 text-center">m²</th>
+                          <th className="px-4 py-2 text-right">P. Unit.</th>
+                          <th className="px-4 py-2 text-right">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody className={cn("divide-y", darkMode ? "divide-white/5" : "divide-gray-50")}>
+                        {records.map((r, ri) => {
+                          const qty = r.is_return ? -r.quantity : r.quantity;
+                          const m2r = parseFloat((qty * stockFilmCellDetail.prod.m2box).toFixed(2));
+                          const total = r.quantity * (r.unit_cost || 0);
+                          return (
+                            <tr key={ri} className={cn("transition-colors", darkMode ? "hover:bg-white/3" : "hover:bg-gray-50/60")}>
+                              <td className={cn("px-4 py-2.5 whitespace-nowrap", darkMode ? "text-gray-400" : "text-gray-600")}>{r.order_date}</td>
+                              <td className={cn("px-4 py-2.5 font-mono text-[10px] max-w-[120px] truncate", darkMode ? "text-gray-500" : "text-gray-400")}>
+                                {r.invoice_number || '—'}
+                              </td>
+                              <td className="px-4 py-2.5 text-center">
+                                <span className={cn("font-black", r.is_return ? "text-amber-400" : "text-red-400")}>
+                                  {r.is_return ? `-${r.quantity}` : r.quantity}
+                                </span>
+                              </td>
+                              <td className={cn("px-4 py-2.5 text-center font-semibold", darkMode ? "text-cyan-500" : "text-cyan-600")}>
+                                {Math.abs(m2r).toFixed(2)}
+                              </td>
+                              <td className={cn("px-4 py-2.5 text-right font-mono text-[10px]", darkMode ? "text-gray-500" : "text-gray-400")}>
+                                {r.unit_cost ? `$${r.unit_cost.toFixed(2)}` : '—'}
+                              </td>
+                              <td className={cn("px-4 py-2.5 text-right font-bold", r.is_return ? "text-amber-400" : (darkMode ? "text-emerald-400" : "text-emerald-600"))}>
+                                {total > 0 ? `$${total.toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                      {records.length > 1 && (
+                        <tfoot className={cn("border-t-2 text-xs font-black sticky bottom-0", darkMode ? "border-white/10 bg-[#16161A]" : "border-gray-200 bg-white")}>
+                          <tr>
+                            <td colSpan={2} className="px-4 py-2.5">TOTAL</td>
+                            <td className="px-4 py-2.5 text-center text-red-400">{totalBoxes}</td>
+                            <td className={cn("px-4 py-2.5 text-center", darkMode ? "text-cyan-400" : "text-cyan-600")}>{totalM2.toFixed(2)}</td>
+                            <td />
+                            <td className={cn("px-4 py-2.5 text-right", darkMode ? "text-emerald-400" : "text-emerald-600")}>
+                              ${totalRevenue.toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </td>
+                          </tr>
+                        </tfoot>
+                      )}
+                    </table>
+                    {records.length === 0 && (
+                      <p className={cn("text-xs text-center py-8", darkMode ? "text-gray-600" : "text-gray-400")}>Sin registros encontrados</p>
+                    )}
+                  </div>
+
+                  {/* Go to profile button */}
+                  <div className={cn("px-4 py-3 border-t shrink-0", darkMode ? "border-white/8" : "border-gray-100")}>
+                    <button
+                      onClick={() => { if (client) { setSelectedClient(client); setView('clients'); setStockFilmCellDetail(null); setStockFilmSelectedClient(null); } }}
+                      className={cn("w-full py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors",
+                        darkMode ? "bg-white/8 hover:bg-white/12 text-gray-300" : "bg-gray-100 hover:bg-gray-200 text-gray-700"
+                      )}
+                    >
+                      <ArrowRight className="w-3.5 h-3.5" /> Ir al perfil completo
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Registro */}
+      {isModalOpen && editingRecord && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className={cn(
+            "rounded-2xl w-full max-w-md overflow-hidden shadow-2xl",
+            darkMode ? "bg-[#16161A] border border-white/10" : "bg-white"
+          )}>
+            <div className={cn(
+              "px-8 py-6 border-b flex justify-between items-center",
+              darkMode ? "bg-white/4 border-white/8" : "bg-gray-50/80 border-gray-100/80"
+            )}>
+              <h3 className="text-lg font-black tracking-tight">
+                {editingRecord.id ? 'Editar Registro' : 'Nuevo Registro de Compra'}
+              </h3>
+              <button onClick={() => setIsModalOpen(false)} className={cn(
+                "p-2 rounded-full transition-colors",
+                darkMode ? "hover:bg-white/10 text-gray-400" : "hover:bg-gray-200"
+              )}>
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleSaveRecord} className="p-8 space-y-6">
+              <div className="space-y-4">
+                {!selectedClient || !editingRecord.id ? (
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Cliente</label>
+                    <select 
+                      required
+                      value={editingRecord.client_id}
+                      onChange={e => setEditingRecord({...editingRecord, client_id: parseInt(e.target.value)})}
+                      className={cn(
+                        "w-full px-4 py-3 rounded-xl border-none focus:ring-2 focus:ring-[#ED1C24]/20 outline-none font-bold appearance-none",
+                        darkMode ? "bg-white/5 text-white" : "bg-gray-50"
+                      )}
+                    >
+                      <option value="0" className={darkMode ? "bg-[#16161A] text-white" : "bg-white text-black"}>Seleccionar Cliente...</option>
+                      {allClients.map(c => (
+                        <option key={c.id} value={c.id} className={darkMode ? "bg-[#16161A] text-white" : "bg-white text-black"}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Cliente</label>
+                    <div className={cn(
+                      "w-full px-4 py-3 rounded-xl font-bold",
+                      darkMode ? "bg-white/10 text-gray-400" : "bg-gray-100 text-gray-500"
+                    )}>
+                      {allClients.find(c => c.id === editingRecord.client_id)?.name}
+                    </div>
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Fecha de Pedido</label>
+                    <input 
+                      type="date" 
+                      required
+                      value={editingRecord.order_date || ''}
+                      onChange={e => setEditingRecord({...editingRecord, order_date: e.target.value})}
+                      className={cn(
+                        "w-full px-4 py-3 rounded-xl border-none focus:ring-2 focus:ring-[#ED1C24]/20 outline-none font-bold",
+                        darkMode ? "bg-white/5 text-white" : "bg-gray-50"
+                      )}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Nº Factura</label>
+                    <input 
+                      type="text" 
+                      placeholder="Ej: 001-001-000123"
+                      value={editingRecord.invoice_number || ''}
+                      onChange={e => setEditingRecord({...editingRecord, invoice_number: e.target.value})}
+                      className={cn(
+                        "w-full px-4 py-3 rounded-xl border-none focus:ring-2 focus:ring-[#ED1C24]/20 outline-none font-bold",
+                        darkMode ? "bg-white/5 text-white" : "bg-gray-50"
+                      )}
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">
+                      Cantidad (Cajas)
+                      {(editingRecord as any).is_return && (
+                        <span className="ml-2 px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 text-[9px] font-black normal-case">retorno</span>
+                      )}
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      required
+                      placeholder="Ej: 3 o -3 para retorno"
+                      value={(editingRecord as any).is_return ? -(editingRecord.quantity || 0) : (editingRecord.quantity || '')}
+                      onChange={e => {
+                        const raw = e.target.value;
+                        const val = parseInt(raw);
+                        if (raw === '' || raw === '-') { setEditingRecord({ ...editingRecord, quantity: 0, is_return: raw === '-' ? true : undefined } as any); return; }
+                        if (isNaN(val)) return;
+                        setEditingRecord({ ...editingRecord, quantity: Math.abs(val), is_return: val < 0 ? true : undefined } as any);
+                      }}
+                      className={cn(
+                        "w-full px-4 py-3 rounded-xl border-none focus:ring-2 outline-none font-bold",
+                        (editingRecord as any).is_return
+                          ? "focus:ring-amber-400/30 ring-1 ring-amber-500/50 text-amber-400"
+                          : "focus:ring-[#ED1C24]/20",
+                        darkMode ? "bg-white/5" : "bg-gray-50"
+                      )}
+                    />
+                    <p className={cn("text-[9px] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>
+                      Usa − negativo para registrar un retorno
+                    </p>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Medida</label>
+                    <select 
+                      value={editingRecord.size || '14x17'}
+                      onChange={e => setEditingRecord({...editingRecord, size: e.target.value})}
+                      className={cn(
+                        "w-full px-4 py-3 rounded-xl border-none focus:ring-2 focus:ring-[#ED1C24]/20 outline-none font-bold appearance-none",
+                        darkMode ? "bg-white/5 text-white" : "bg-gray-50"
+                      )}
+                    >
+                      <option value="14x17" className={darkMode ? "bg-[#16161A] text-white" : "bg-white text-black"}>14x17</option>
+                      <option value="8x10" className={darkMode ? "bg-[#16161A] text-white" : "bg-white text-black"}>8x10</option>
+                      <option value="10x12" className={darkMode ? "bg-[#16161A] text-white" : "bg-white text-black"}>10x12</option>
+                      <option value="10x14" className={darkMode ? "bg-[#16161A] text-white" : "bg-white text-black"}>10x14</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Tipo de Película</label>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {(['DIHT', 'DIHL', 'DIML'] as const).map(ft => (
+                        <button
+                          key={ft}
+                          type="button"
+                          onClick={() => setEditingRecord({...editingRecord, film_type: ft} as any)}
+                          className={cn(
+                            "py-3 rounded-xl text-xs font-black transition-all border",
+                            (editingRecord as any).film_type === ft || (!( editingRecord as any).film_type && ft === 'DIHT')
+                              ? ft === 'DIHL'
+                                ? "bg-blue-500/20 text-blue-400 border-blue-500/40 ring-1 ring-blue-500/30"
+                                : ft === 'DIML'
+                                ? "bg-purple-500/20 text-purple-400 border-purple-500/40 ring-1 ring-purple-500/30"
+                                : "bg-[#ED1C24]/15 text-[#ED1C24] border-[#ED1C24]/40 ring-1 ring-[#ED1C24]/30"
+                              : (darkMode ? "bg-white/5 text-gray-500 border-white/8 hover:bg-white/10" : "bg-gray-50 text-gray-400 border-gray-200 hover:bg-gray-100")
+                          )}
+                        >
+                          {ft === 'DIHT' ? 'DI-HT' : ft === 'DIHL' ? 'DI-HL' : 'DI-ML'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Lote</label>
+                    <input 
+                      type="text" 
+                      required
+                      placeholder="Ej: 72512"
+                      value={editingRecord.batch_number || ''}
+                      onChange={e => setEditingRecord({...editingRecord, batch_number: e.target.value})}
+                      className={cn(
+                        "w-full px-4 py-3 rounded-xl border-none focus:ring-2 focus:ring-[#ED1C24]/20 outline-none font-bold",
+                        darkMode ? "bg-white/5 text-white" : "bg-gray-50"
+                      )}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Fecha de Expiración</label>
+                    <input 
+                      type="date" 
+                      required
+                      value={editingRecord.expiry_date || ''}
+                      onChange={e => setEditingRecord({...editingRecord, expiry_date: e.target.value})}
+                      className={cn(
+                        "w-full px-4 py-3 rounded-xl border-none focus:ring-2 focus:ring-[#ED1C24]/20 outline-none font-bold",
+                        darkMode ? "bg-white/5 text-white" : "bg-gray-50"
+                      )}
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Costo Unitario ($)</label>
+                    <input 
+                      type="number" 
+                      step="0.01"
+                      placeholder="Ej: 150.50 o -150.50"
+                      value={editingRecord.unit_cost || ''}
+                      onChange={e => setEditingRecord({...editingRecord, unit_cost: parseFloat(e.target.value) || 0})}
+                      className={cn(
+                        "w-full px-4 py-3 rounded-xl border-none focus:ring-2 focus:ring-[#ED1C24]/20 outline-none font-bold",
+                        darkMode ? "bg-white/5 text-white" : "bg-gray-50"
+                      )}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Costo Total Calculado</label>
+                    <div className={cn(
+                      "w-full px-4 py-3 rounded-xl font-black",
+                      (editingRecord as any).is_return ? "text-amber-400" : "text-[#ED1C24]",
+                      darkMode ? "bg-white/5" : "bg-gray-50"
+                    )}>
+                      {(editingRecord as any).is_return
+                        ? `-$${(Math.abs(editingRecord.quantity || 0) * Math.abs(editingRecord.unit_cost || 0)).toFixed(2)}`
+                        : `$${((editingRecord.quantity || 0) * (editingRecord.unit_cost || 0)).toFixed(2)}`
+                      }
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <button 
+                type="submit"
+                className="w-full bg-[#ED1C24] text-white py-4 rounded-2xl font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-[#D11920] shadow-lg shadow-red-500/20 transition-all"
+              >
+                <Save className="w-5 h-5" /> Guardar Registro
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Nuevo Cliente */}
+      {isClientModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className={cn(
+            "rounded-2xl w-full max-w-md overflow-hidden shadow-2xl",
+            darkMode ? "bg-[#16161A] border border-white/10" : "bg-white"
+          )}>
+            <div className={cn(
+              "px-8 py-6 border-b flex justify-between items-center",
+              darkMode ? "bg-white/4 border-white/8" : "bg-gray-50/80 border-gray-100/80"
+            )}>
+              <h3 className="text-lg font-black tracking-tight">
+                {newClient.id ? 'Editar Centro Médico' : 'Nuevo Centro Médico'}
+              </h3>
+              <button onClick={() => setIsClientModalOpen(false)} className={cn(
+                "p-2 rounded-full transition-colors",
+                darkMode ? "hover:bg-white/10 text-gray-400" : "hover:bg-gray-200"
+              )}>
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleSaveClient} className="p-8 space-y-6">
+              <div className="space-y-4">
+                <div>
+                  <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Nombre del Centro</label>
+                  <input 
+                    type="text" 
+                    required
+                    placeholder="Ej: Hospital Metropolitano"
+                    value={newClient.name || ''}
+                    onChange={e => setNewClient({...newClient, name: e.target.value})}
+                    className={cn(
+                      "w-full px-4 py-3 rounded-xl border-none focus:ring-2 focus:ring-[#ED1C24]/20 outline-none font-bold",
+                      darkMode ? "bg-white/5 text-white" : "bg-gray-50"
+                    )}
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Provincia</label>
+                  <input 
+                    type="text" 
+                    required
+                    placeholder="Ej: Pichincha"
+                    value={newClient.province || ''}
+                    onChange={e => setNewClient({...newClient, province: e.target.value})}
+                    className={cn(
+                      "w-full px-4 py-3 rounded-xl border-none focus:ring-2 focus:ring-[#ED1C24]/20 outline-none font-bold",
+                      darkMode ? "bg-white/5 text-white" : "bg-gray-50"
+                    )}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">COD Cliente</label>
+                    <input 
+                      type="text" 
+                      required
+                      placeholder="Ej: CL-001"
+                      value={newClient.client_code || ''}
+                      onChange={e => setNewClient({...newClient, client_code: e.target.value})}
+                      className={cn(
+                        "w-full px-4 py-3 rounded-xl border-none focus:ring-2 focus:ring-[#ED1C24]/20 outline-none font-bold",
+                        darkMode ? "bg-white/5 text-white" : "bg-gray-50"
+                      )}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Vendedor</label>
+                    <input 
+                      type="text" 
+                      required
+                      placeholder="Ej: JUAN PÉREZ"
+                      value={newClient.salesperson || ''}
+                      onChange={e => setNewClient({...newClient, salesperson: e.target.value.toUpperCase()})}
+                      className={cn(
+                        "w-full px-4 py-3 rounded-xl border-none focus:ring-2 focus:ring-[#ED1C24]/20 outline-none font-bold",
+                        darkMode ? "bg-white/5 text-white" : "bg-gray-50"
+                      )}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">RUC / ID</label>
+                  <input 
+                    type="text" 
+                    required
+                    placeholder="Ej: 1792345678001"
+                    value={newClient.ruc_id || ''}
+                    onChange={e => setNewClient({...newClient, ruc_id: e.target.value})}
+                    className={cn(
+                      "w-full px-4 py-3 rounded-xl border-none focus:ring-2 focus:ring-[#ED1C24]/20 outline-none font-bold",
+                      darkMode ? "bg-white/5 text-white" : "bg-gray-50"
+                    )}
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Contacto / Teléfono</label>
+                  <input 
+                    type="text" 
+                    placeholder="Ej: Dr. Pérez - 0991234567"
+                    value={newClient.contact || ''}
+                    onChange={e => setNewClient({...newClient, contact: e.target.value})}
+                    className={cn(
+                      "w-full px-4 py-3 rounded-xl border-none focus:ring-2 focus:ring-[#ED1C24]/20 outline-none font-bold",
+                      darkMode ? "bg-white/5 text-white" : "bg-gray-50"
+                    )}
+                  />
+                </div>
+              </div>
+              <button 
+                type="submit"
+                className="w-full bg-[#ED1C24] text-white py-4 rounded-2xl font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-[#D11920] shadow-lg shadow-red-500/20 transition-all"
+              >
+                <Save className="w-5 h-5" /> {newClient.id ? 'Guardar Cambios' : 'Crear Cliente'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Denominación Alternativa */}
+      {isAltNameModalOpen && selectedClient && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className={cn(
+            "rounded-2xl w-full max-w-md overflow-hidden shadow-2xl",
+            darkMode ? "bg-[#16161A] border border-white/10" : "bg-white"
+          )}>
+            <div className={cn(
+              "px-8 py-6 border-b flex justify-between items-center",
+              darkMode ? "bg-white/4 border-white/8" : "bg-gray-50/80 border-gray-100/80"
+            )}>
+              <h3 className="text-lg font-black tracking-tight">Denominación Alternativa</h3>
+              <button onClick={() => setIsAltNameModalOpen(false)} className={cn(
+                "p-2 rounded-full transition-colors",
+                darkMode ? "hover:bg-white/10 text-gray-400" : "hover:bg-gray-200"
+              )}>
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleSaveAltName} className="p-8 space-y-6">
+              <div>
+                <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Nombre Alternativo</label>
+                <input 
+                  type="text" 
+                  autoFocus
+                  placeholder="Ej: Clínica Central - Sucursal Norte"
+                  value={tempAltName || ''}
+                  onChange={e => setTempAltName(e.target.value)}
+                  className={cn(
+                    "w-full px-4 py-3 rounded-xl border-none focus:ring-2 focus:ring-[#ED1C24]/20 outline-none font-bold",
+                    darkMode ? "bg-white/5 text-white" : "bg-gray-50"
+                  )}
+                />
+              </div>
+              <button 
+                type="submit"
+                className="w-full bg-[#ED1C24] text-white py-4 rounded-2xl font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-[#D11920] shadow-lg shadow-red-500/20 transition-all"
+              >
+                <Save className="w-5 h-5" /> Guardar Denominación
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Merge Clients Modal */}
+      {isMergeModalOpen && selectedClient && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className={cn("rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl", darkMode ? "bg-[#16161A] border border-white/10" : "bg-white")}>
+            {/* Header */}
+            <div className={cn("px-6 py-5 border-b flex justify-between items-start", darkMode ? "bg-white/4 border-white/8" : "bg-gray-50 border-gray-100")}>
+              <div>
+                <h3 className="text-base font-black tracking-tight flex items-center gap-2">
+                  <Users className="w-4 h-4 text-amber-400" /> Fusionar Clientes
+                </h3>
+                <p className={cn("text-[10px] mt-0.5", darkMode ? "text-gray-500" : "text-gray-400")}>
+                  Los consumos del duplicado se moverán a <strong>{selectedClient.name}</strong> y el duplicado se eliminará.
+                </p>
+              </div>
+              <button onClick={() => setIsMergeModalOpen(false)} className={cn("p-1.5 rounded-full", darkMode ? "hover:bg-white/10 text-gray-400" : "hover:bg-gray-200")}>
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {/* Principal (fixed) */}
+              <div>
+                <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-2", darkMode ? "text-gray-600" : "text-gray-400")}>Cliente principal (se conserva)</p>
+                <div className={cn("p-3 rounded-xl border flex items-center gap-3", darkMode ? "bg-emerald-500/8 border-emerald-500/20" : "bg-emerald-50 border-emerald-200")}>
+                  <div className="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center text-white text-xs font-black shrink-0">
+                    {selectedClient.name.charAt(0)}
+                  </div>
+                  <div>
+                    <p className="font-bold text-sm">{selectedClient.name}</p>
+                    <p className={cn("text-[10px]", darkMode ? "text-gray-500" : "text-gray-400")}>{selectedClient.client_code} · {selectedClient.province}</p>
+                  </div>
+                  <span className="ml-auto text-[9px] font-black px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400">PRINCIPAL</span>
+                </div>
+              </div>
+
+              {/* Search for duplicate */}
+              <div>
+                <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-2", darkMode ? "text-gray-600" : "text-gray-400")}>Cliente duplicado a fusionar (se eliminará)</p>
+                <input
+                  type="text" autoFocus
+                  placeholder="Buscar por nombre o código..."
+                  value={mergeSearchQuery}
+                  onChange={e => { setMergeSearchQuery(e.target.value); setMergeTarget(null); }}
+                  className={cn("w-full px-3 py-2.5 rounded-xl text-sm outline-none border", darkMode ? "bg-white/5 text-white border-white/10 focus:border-amber-400/40" : "bg-gray-50 border-gray-200 focus:border-amber-400")}
+                />
+                {/* Results list */}
+                {mergeSearchQuery.length >= 2 && (
+                  <div className={cn("mt-2 rounded-xl border overflow-hidden max-h-48 overflow-y-auto custom-scrollbar", darkMode ? "border-white/8" : "border-gray-200")}>
+                    {allClients
+                      .filter(c => c.id !== selectedClient.id &&
+                        (c.name.toLowerCase().includes(mergeSearchQuery.toLowerCase()) ||
+                         (c.client_code || '').toLowerCase().includes(mergeSearchQuery.toLowerCase())))
+                      .slice(0, 8)
+                      .map(c => (
+                        <div key={c.id} onClick={() => setMergeTarget(c)}
+                          className={cn("px-3 py-2.5 cursor-pointer flex items-center gap-3 transition-colors text-sm",
+                            mergeTarget?.id === c.id
+                              ? (darkMode ? "bg-amber-500/15 border-l-2 border-amber-400" : "bg-amber-50 border-l-2 border-amber-400")
+                              : (darkMode ? "hover:bg-white/5" : "hover:bg-gray-50")
+                          )}>
+                          <div className={cn("w-7 h-7 rounded-full flex items-center justify-center text-xs font-black shrink-0", darkMode ? "bg-white/10" : "bg-gray-200")}>
+                            {c.name.charAt(0)}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-semibold truncate">{c.name}</p>
+                            <p className={cn("text-[10px]", darkMode ? "text-gray-500" : "text-gray-400")}>{c.client_code} · {c.province}</p>
+                          </div>
+                          <span className={cn("text-[9px] font-bold", darkMode ? "text-gray-600" : "text-gray-300")}>
+                            {allConsumos.filter(r => r.client_id === c.id).length} registros
+                          </span>
+                          {mergeTarget?.id === c.id && <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />}
+                        </div>
+                      ))}
+                    {allClients.filter(c => c.id !== selectedClient.id && (c.name.toLowerCase().includes(mergeSearchQuery.toLowerCase()) || (c.client_code||'').toLowerCase().includes(mergeSearchQuery.toLowerCase()))).length === 0 && (
+                      <p className={cn("px-4 py-3 text-xs", darkMode ? "text-gray-600" : "text-gray-400")}>No se encontraron clientes</p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Preview of what will happen */}
+              {mergeTarget && (
+                  <div className={cn("p-3 rounded-xl border", darkMode ? "bg-amber-500/8 border-amber-500/20" : "bg-amber-50 border-amber-200")}>
+                  <p className="text-[10px] font-bold text-amber-400 uppercase mb-2">Vista previa de la fusión</p>
+                  <div className="space-y-1 text-xs">
+                    <p className={darkMode ? "text-gray-300" : "text-gray-700"}>
+                      ✓ <strong>{allConsumos.filter(r => r.client_id === mergeTarget.id).length} registros</strong> de "{mergeTarget.name}" se moverán a "{selectedClient.name}"
+                    </p>
+                    {mergeTarget.client_code && (
+                      <p className={darkMode ? "text-gray-300" : "text-gray-700"}>
+                        ✓ Código alternativo añadido: <strong className="text-amber-400">{mergeTarget.client_code}</strong> (para futuros CSV)
+                      </p>
+                    )}
+                    {(mergeTarget.printers || []).length > 0 && (
+                      <p className={darkMode ? "text-gray-300" : "text-gray-700"}>
+                        ✓ <strong>{(mergeTarget.printers || []).length} impresora(s)</strong> absorbidas al perfil principal
+                      </p>
+                    )}
+                    <p className={darkMode ? "text-gray-300" : "text-gray-700"}>
+                      ✓ Nombre alternativo añadido: "<em>{mergeTarget.name}</em>"
+                    </p>
+                    <p className="text-red-400">
+                      ✗ Cliente "{mergeTarget.name}" ({mergeTarget.client_code}) será eliminado
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Action buttons */}
+              <div className="flex gap-3 pt-1">
+                <button onClick={() => setIsMergeModalOpen(false)}
+                  className={cn("flex-1 py-3 rounded-xl text-sm font-bold transition-colors", darkMode ? "bg-white/8 text-gray-300 hover:bg-white/12" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}>
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleMergeClients}
+                  disabled={!mergeTarget || isMerging}
+                  className={cn("flex-1 py-3 rounded-xl text-sm font-black transition-all flex items-center justify-center gap-2",
+                    mergeTarget && !isMerging
+                      ? "bg-amber-500 text-white hover:bg-amber-600 shadow-lg shadow-amber-500/20"
+                      : (darkMode ? "bg-white/5 text-gray-600 cursor-not-allowed" : "bg-gray-100 text-gray-400 cursor-not-allowed")
+                  )}>
+                  {isMerging ? (
+                    <><span className="animate-spin w-4 h-4 border-2 border-white/30 border-t-white rounded-full inline-block" /> Fusionando...</>
+                  ) : (
+                    <><Users className="w-4 h-4" /> Fusionar clientes</>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Client Modal */}
+      {clientToDelete && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className={cn(
+            "w-full max-w-md rounded-2xl p-7 shadow-2xl",
+            darkMode ? "bg-[#16161A] border border-white/10" : "bg-white"
+          )}>
+            <div className="flex items-center gap-4 mb-6 text-red-500">
+              <AlertCircle className="w-8 h-8" />
+              <h3 className="text-xl font-bold">Eliminar Cliente</h3>
+            </div>
+            <p className={cn("mb-8", darkMode ? "text-gray-300" : "text-gray-600")}>
+              ¿Estás seguro de que deseas eliminar al cliente <strong>"{clientToDelete.name}"</strong>?
+              <br /><br />
+              Esta acción también eliminará todos sus registros de consumo y no se puede deshacer.
+            </p>
+            <div className="flex justify-end gap-4">
+              <button
+                onClick={() => setClientToDelete(null)}
+                className={cn(
+                  "px-6 py-3 rounded-xl font-bold transition-colors",
+                  darkMode ? "bg-white/5 hover:bg-white/10 text-white" : "bg-gray-100 hover:bg-gray-200 text-gray-700"
+                )}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleDeleteClient}
+                className="px-6 py-3 rounded-xl font-bold bg-red-500 hover:bg-red-600 text-white transition-colors"
+              >
+                Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Clientes por Tipo de Impresora */}
+      {selectedPrinterType && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className={cn(
+            "rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col max-h-[80vh]",
+            darkMode ? "bg-[#16161A] border border-white/10" : "bg-white"
+          )}>
+            <div className={cn(
+              "px-8 py-6 border-b flex justify-between items-center shrink-0",
+              darkMode ? "bg-white/4 border-white/8" : "bg-gray-50/80 border-gray-100/80"
+            )}>
+              <div>
+                <h3 className="text-lg font-black tracking-tight">Clientes con {selectedPrinterType}</h3>
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">
+                  {allClients.filter(c => c.printers?.some(p => p.type?.toUpperCase().trim() === selectedPrinterType)).length} Clientes encontrados
+                </p>
+              </div>
+              <button onClick={() => setSelectedPrinterType(null)} className={cn(
+                "p-2 rounded-full transition-colors",
+                darkMode ? "hover:bg-white/10 text-gray-400" : "hover:bg-gray-200"
+              )}>
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-8 overflow-y-auto custom-scrollbar">
+              <div className="space-y-3">
+                {allClients
+                  .filter(c => c.printers?.some(p => p.type?.toUpperCase().trim() === selectedPrinterType))
+                  .map(client => (
+                    <div key={client.id} className={cn(
+                      "p-4 rounded-2xl border flex items-center justify-between",
+                      darkMode ? "bg-white/5 border-white/10" : "bg-gray-50 border-gray-100"
+                    )}>
+                      <div>
+                        <p className="font-bold text-sm">{client.name}</p>
+                        <div className="flex gap-3 mt-1 text-xs text-gray-500">
+                          <span className="flex items-center gap-1"><MapPin className="w-3 h-3" /> {client.province}</span>
+                          <span className="flex items-center gap-1"><User className="w-3 h-3" /> {client.salesperson || 'Sin vendedor'}</span>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={() => {
+                          setSelectedPrinterType(null);
+                          setSelectedClient(client);
+                          setView('clients');
+                        }}
+                        className={cn(
+                          "px-4 py-2 rounded-xl text-xs font-bold transition-colors",
+                          darkMode ? "bg-white/10 hover:bg-white/20 text-white" : "bg-white hover:bg-gray-100 text-gray-700 border border-gray-200 shadow-sm"
+                        )}
+                      >
+                        Ver Cliente
+                      </button>
+                    </div>
+                  ))
+                }
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Hidden CSV file input */}
+      <input
+        ref={csvFileInputRef}
+        type="file"
+        accept=".csv,.txt"
+        className="hidden"
+        onChange={handleCsvFileChange}
+      />
+
+      {/* Duplicate Serial Modal */}
+      {selectedDuplicateSerial && (() => {
+        const clientObjs = allClients.filter(c =>
+          selectedDuplicateSerial.clients.includes(c.name)
+        );
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+            onClick={() => setSelectedDuplicateSerial(null)}>
+            <div className={cn("rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl", darkMode ? "bg-[#16161A] border border-white/10" : "bg-white")}
+              onClick={e => e.stopPropagation()}>
+
+              {/* Header */}
+              <div className={cn("px-6 py-5 border-b", darkMode ? "bg-red-500/10 border-red-500/20" : "bg-red-50 border-red-100")}>
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-red-500/20 flex items-center justify-center">
+                      <Printer className="w-5 h-5 text-red-400" />
+                    </div>
+                    <div>
+                      <p className={cn("text-[10px] font-bold uppercase tracking-widest mb-0.5", darkMode ? "text-red-400/60" : "text-red-400")}>Serial Duplicado</p>
+                      <h3 className="text-lg font-black tracking-tight text-red-500">{selectedDuplicateSerial.serial}</h3>
+                    </div>
+                  </div>
+                  <button onClick={() => setSelectedDuplicateSerial(null)}
+                    className={cn("p-1.5 rounded-lg mt-1", darkMode ? "hover:bg-white/10 text-gray-500" : "hover:bg-red-100 text-red-400")}>
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <p className={cn("text-xs mt-3 font-medium", darkMode ? "text-gray-500" : "text-gray-500")}>
+                  Este serial está registrado en <span className="font-black text-red-400">{selectedDuplicateSerial.clients.length} clientes</span> distintos. Posible impresora compartida o error de registro.
+                </p>
+              </div>
+
+              {/* Client list */}
+              <div className="p-5 space-y-3">
+                {selectedDuplicateSerial.clients.map((clientName, i) => {
+                  const client = clientObjs.find(c => c.name === clientName);
+                  const printer = client?.printers?.find(p => p.serial === selectedDuplicateSerial.serial);
+                  const consumos = client ? allConsumos.filter(r => r.client_id === client.id) : [];
+                  const totalQty = consumos.reduce((s, r) => s + effectiveQty(r), 0);
+                  return (
+                    <div key={i} className={cn("rounded-xl p-4 border", darkMode ? "bg-white/4 border-white/8" : "bg-gray-50 border-gray-100")}>
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className={cn("w-9 h-9 rounded-lg flex items-center justify-center font-black text-sm shrink-0",
+                            i === 0 ? "bg-red-500/20 text-red-400" : (darkMode ? "bg-white/10 text-gray-400" : "bg-gray-200 text-gray-600")
+                          )}>
+                            {clientName.charAt(0)}
+                          </div>
+                          <div>
+                            <p className="font-bold text-sm leading-tight">{clientName}</p>
+                            {client && (
+                              <p className={cn("text-[10px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>
+                                {client.province} {client.salesperson ? `· ${client.salesperson}` : ''}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                        {totalQty > 0 && (
+                          <span className={cn("text-[10px] font-bold px-2 py-1 rounded-lg", darkMode ? "bg-white/8 text-gray-400" : "bg-gray-100 text-gray-500")}>
+                            {totalQty} cajas
+                          </span>
+                        )}
+                      </div>
+                      {printer && (
+                        <div className={cn("mt-3 pt-3 border-t grid grid-cols-3 gap-2", darkMode ? "border-white/6" : "border-gray-100")}>
+                          <div>
+                            <p className={cn("text-[9px] font-bold uppercase tracking-wide", darkMode ? "text-gray-600" : "text-gray-400")}>Modelo</p>
+                            <p className="text-xs font-semibold mt-0.5">{printer.type || '—'}</p>
+                          </div>
+                          <div>
+                            <p className={cn("text-[9px] font-bold uppercase tracking-wide", darkMode ? "text-gray-600" : "text-gray-400")}>Instalación</p>
+                            <p className="text-xs font-semibold mt-0.5">{printer.installDate || '—'}</p>
+                          </div>
+                          <div>
+                            <p className={cn("text-[9px] font-bold uppercase tracking-wide", darkMode ? "text-gray-600" : "text-gray-400")}>Ubicación</p>
+                            <p className="text-xs font-semibold mt-0.5 truncate">{printer.location || '—'}</p>
+                          </div>
+                        </div>
+                      )}
+                      {client && (
+                        <button
+                          onClick={() => { setSelectedClient(client); setView('clients'); setSelectedDuplicateSerial(null); }}
+                          className={cn("mt-3 w-full text-[10px] font-bold py-1.5 rounded-lg flex items-center justify-center gap-1.5 transition-colors",
+                            darkMode ? "bg-white/6 hover:bg-white/12 text-gray-400" : "bg-gray-100 hover:bg-gray-200 text-gray-600"
+                          )}>
+                          <ArrowRight className="w-3 h-3" /> Ver perfil del cliente
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className={cn("px-5 pb-5")}>
+                <button onClick={() => setSelectedDuplicateSerial(null)}
+                  className={cn("w-full py-2.5 rounded-xl text-xs font-bold transition-colors",
+                    darkMode ? "bg-white/8 hover:bg-white/12 text-gray-300" : "bg-gray-100 hover:bg-gray-200 text-gray-600"
+                  )}>
+                  Cerrar
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Stock Entry Modal */}
+      {isStockEntryModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className={cn("rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl", darkMode ? "bg-[#16161A] border border-white/10" : "bg-white")}>
+            <div className={cn("px-6 py-4 border-b flex items-center justify-between", darkMode ? "bg-white/4 border-white/8" : "bg-gray-50 border-gray-100")}>
+              <div className="flex items-center gap-3">
+                <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center", darkMode ? "bg-emerald-500/20" : "bg-emerald-50")}>
+                  <Plus className="w-4 h-4 text-emerald-500" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black">Nueva Entrada de Stock</h3>
+                  <p className={cn("text-[10px] mt-0.5", darkMode ? "text-gray-500" : "text-gray-400")}>Registrar compra a Fujifilm</p>
+                </div>
+              </div>
+              <button onClick={() => setIsStockEntryModalOpen(false)} className={cn("p-1.5 rounded-lg", darkMode ? "hover:bg-white/10 text-gray-500" : "hover:bg-gray-200 text-gray-400")}>
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              {/* Film type selector */}
+              <div>
+                <label className={cn("text-[9px] font-bold uppercase tracking-wider block mb-1.5", darkMode ? "text-gray-500" : "text-gray-400")}>Tipo de Película *</label>
+                <div className="flex gap-2">
+                  {(['DIHT', 'DIHL', 'DIML'] as const).map(ft => (
+                    <button key={ft} onClick={() => setNewStockEntry(p => ({ ...p, film_type: ft }))}
+                      className={cn("flex-1 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all border",
+                        (newStockEntry.film_type || 'DIHT') === ft
+                          ? ft === 'DIHL'
+                            ? "bg-blue-500/20 text-blue-400 border-blue-500/40"
+                            : ft === 'DIML'
+                            ? "bg-purple-500/20 text-purple-400 border-purple-500/40"
+                            : "bg-[#ED1C24]/15 text-[#ED1C24] border-[#ED1C24]/40"
+                          : (darkMode ? "bg-white/5 text-gray-500 border-white/10 hover:bg-white/8" : "bg-gray-100 text-gray-400 border-gray-200 hover:bg-gray-200")
+                      )}>
+                      {ft === 'DIHT' ? 'DI-HT' : ft === 'DIHL' ? 'DI-HL' : 'DI-ML'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                {/* Date */}
+                <div>
+                  <label className={cn("text-[9px] font-bold uppercase tracking-wider block mb-1.5", darkMode ? "text-gray-500" : "text-gray-400")}>Fecha *</label>
+                  <input type="date" value={newStockEntry.date || ''} onChange={e => setNewStockEntry(p => ({ ...p, date: e.target.value }))}
+                    className={cn("w-full px-3 py-2 rounded-xl text-xs outline-none border focus:ring-2 focus:ring-emerald-500/30", darkMode ? "bg-white/8 border-white/10 text-white" : "bg-white border-gray-200 text-gray-800")} />
+                </div>
+                {/* Size */}
+                <div>
+                  <label className={cn("text-[9px] font-bold uppercase tracking-wider block mb-1.5", darkMode ? "text-gray-500" : "text-gray-400")}>Medida *</label>
+                  <select value={newStockEntry.size || ''} onChange={e => setNewStockEntry(p => ({ ...p, size: e.target.value }))}
+                    className={cn("w-full px-3 py-2 rounded-xl text-xs outline-none border focus:ring-2 focus:ring-emerald-500/30 cursor-pointer", darkMode ? "bg-white/8 border-white/10 text-white" : "bg-white border-gray-200 text-gray-800")}>
+                    <option value="">Seleccionar...</option>
+                    {['8x10','10x12','10x14','14x17'].map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+                {/* Quantity */}
+                <div>
+                  <label className={cn("text-[9px] font-bold uppercase tracking-wider block mb-1.5", darkMode ? "text-gray-500" : "text-gray-400")}>Cantidad (cajas) *</label>
+                  <input type="number" min={1} placeholder="0" value={newStockEntry.quantity || ''} onChange={e => setNewStockEntry(p => ({ ...p, quantity: parseInt(e.target.value) || 0 }))}
+                    className={cn("w-full px-3 py-2 rounded-xl text-xs outline-none border focus:ring-2 focus:ring-emerald-500/30", darkMode ? "bg-white/8 border-white/10 text-white" : "bg-white border-gray-200 text-gray-800")} />
+                </div>
+                {/* Unit cost */}
+                <div>
+                  <label className={cn("text-[9px] font-bold uppercase tracking-wider block mb-1.5", darkMode ? "text-gray-500" : "text-gray-400")}>Costo unitario ($)</label>
+                  <input type="number" step="0.01" min={0} placeholder="0.00" value={newStockEntry.unit_cost || ''} onChange={e => setNewStockEntry(p => ({ ...p, unit_cost: parseFloat(e.target.value) || 0 }))}
+                    className={cn("w-full px-3 py-2 rounded-xl text-xs outline-none border focus:ring-2 focus:ring-emerald-500/30", darkMode ? "bg-white/8 border-white/10 text-white" : "bg-white border-gray-200 text-gray-800")} />
+                </div>
+                {/* Batch */}
+                <div>
+                  <label className={cn("text-[9px] font-bold uppercase tracking-wider block mb-1.5", darkMode ? "text-gray-500" : "text-gray-400")}>Número de lote</label>
+                  <input type="text" placeholder="Ej: 72620" value={newStockEntry.batch_number || ''} onChange={e => setNewStockEntry(p => ({ ...p, batch_number: e.target.value }))}
+                    className={cn("w-full px-3 py-2 rounded-xl text-xs outline-none border focus:ring-2 focus:ring-emerald-500/30", darkMode ? "bg-white/8 border-white/10 text-white" : "bg-white border-gray-200 text-gray-800")} />
+                </div>
+                {/* Expiry */}
+                <div>
+                  <label className={cn("text-[9px] font-bold uppercase tracking-wider block mb-1.5", darkMode ? "text-gray-500" : "text-gray-400")}>Fecha de vencimiento</label>
+                  <input type="date" value={newStockEntry.expiry_date || ''} onChange={e => setNewStockEntry(p => ({ ...p, expiry_date: e.target.value }))}
+                    className={cn("w-full px-3 py-2 rounded-xl text-xs outline-none border focus:ring-2 focus:ring-emerald-500/30", darkMode ? "bg-white/8 border-white/10 text-white" : "bg-white border-gray-200 text-gray-800")} />
+                </div>
+              </div>
+              {/* Supplier invoice */}
+              <div>
+                <label className={cn("text-[9px] font-bold uppercase tracking-wider block mb-1.5", darkMode ? "text-gray-500" : "text-gray-400")}>Factura del proveedor</label>
+                <input type="text" placeholder="Ej: 001-001-000012345" value={newStockEntry.supplier_invoice || ''} onChange={e => setNewStockEntry(p => ({ ...p, supplier_invoice: e.target.value }))}
+                  className={cn("w-full px-3 py-2 rounded-xl text-xs outline-none border focus:ring-2 focus:ring-emerald-500/30", darkMode ? "bg-white/8 border-white/10 text-white" : "bg-white border-gray-200 text-gray-800")} />
+              </div>
+              {/* Notes */}
+              <div>
+                <label className={cn("text-[9px] font-bold uppercase tracking-wider block mb-1.5", darkMode ? "text-gray-500" : "text-gray-400")}>Notas</label>
+                <input type="text" placeholder="Observaciones opcionales..." value={newStockEntry.notes || ''} onChange={e => setNewStockEntry(p => ({ ...p, notes: e.target.value }))}
+                  className={cn("w-full px-3 py-2 rounded-xl text-xs outline-none border focus:ring-2 focus:ring-emerald-500/30", darkMode ? "bg-white/8 border-white/10 text-white" : "bg-white border-gray-200 text-gray-800")} />
+              </div>
+              {/* Total preview */}
+              {newStockEntry.quantity && newStockEntry.unit_cost && (
+                <div className={cn("p-3 rounded-xl flex justify-between items-center", darkMode ? "bg-emerald-500/10 border border-emerald-500/20" : "bg-emerald-50 border border-emerald-100")}>
+                  <span className="text-xs font-semibold text-emerald-500">Total de la entrada</span>
+                  <span className="text-base font-black text-emerald-500">${((newStockEntry.quantity || 0) * (newStockEntry.unit_cost || 0)).toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                </div>
+              )}
+            </div>
+            <div className={cn("px-6 py-4 border-t flex justify-end gap-3", darkMode ? "border-white/8" : "border-gray-100")}>
+              <button onClick={() => setIsStockEntryModalOpen(false)} className={cn("px-4 py-2 rounded-xl text-xs font-semibold", darkMode ? "bg-white/8 hover:bg-white/12 text-gray-300" : "bg-gray-100 hover:bg-gray-200 text-gray-600")}>Cancelar</button>
+              <button
+                onClick={handleSaveStockEntry}
+                disabled={!newStockEntry.size || !newStockEntry.quantity || !newStockEntry.date}
+                className="px-5 py-2 rounded-xl text-xs font-bold bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm shadow-emerald-500/20"
+              >
+                Registrar Entrada
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Salesperson Detail Modal */}
+      {selectedSalesperson && (() => {
+        const spName = selectedSalesperson;
+        // All consumos for this salesperson
+        const spConsumos = allConsumos.filter(r => {
+          const c = allClients.find(x => x.id === r.client_id);
+          return (c?.salesperson || '').toUpperCase().trim() === spName;
+        });
+        const spClients = allClients.filter(c => (c.salesperson || '').toUpperCase().trim() === spName);
+
+        // Total metrics
+        const totalCajas = spConsumos.reduce((s, r) => s + effectiveQty(r), 0);
+        const totalRevenue = spConsumos.reduce((s, r) => s + r.quantity * (r.unit_cost || 0), 0);
+        const totalClients = spClients.length;
+        const totalM2sp = parseFloat(spConsumos.reduce((s, r) => s + getTotalM2(effectiveQty(r), r.size, r.film_type), 0).toFixed(1));
+
+        // Monthly trend (last 12 months)
+        const now = new Date();
+        const monthlyData = Array.from({ length: 12 }, (_, i) => {
+          const d = new Date(now.getFullYear(), now.getMonth() - (11 - i), 1);
+          const label = d.toLocaleDateString('es-EC', { month: 'short', year: '2-digit' });
+          const monthConsumos = spConsumos.filter(r => {
+            const rd = new Date(r.order_date);
+            return rd.getFullYear() === d.getFullYear() && rd.getMonth() === d.getMonth();
+          });
+          const cajas = monthConsumos.reduce((s, r) => s + effectiveQty(r), 0);
+          const m2 = parseFloat(monthConsumos.reduce((s, r) => s + getTotalM2(effectiveQty(r), r.size, r.film_type), 0).toFixed(1));
+          const revenue = monthConsumos.reduce((s, r) => s + r.quantity * (r.unit_cost || 0), 0);
+          return { label, cajas, m2, revenue };
+        });
+
+        // Top clients
+        const clientDist = {} as Record<number, { qty: number; m2: number }>;
+        spConsumos.forEach(r => {
+          if (!clientDist[r.client_id]) clientDist[r.client_id] = { qty: 0, m2: 0 };
+          clientDist[r.client_id].qty += effectiveQty(r);
+          clientDist[r.client_id].m2 = parseFloat((clientDist[r.client_id].m2 + getTotalM2(effectiveQty(r), r.size, r.film_type)).toFixed(1));
+        });
+        const topClients = Object.entries(clientDist)
+          .map(([id, v]) => ({ name: allClients.find(c => c.id === parseInt(id))?.name || '?', qty: v.qty, m2: v.m2 }))
+          .sort((a, b) => b.m2 - a.m2).slice(0, 8);
+        const maxM2tc = topClients[0]?.m2 || 1;
+
+        // Size distribution
+        const sizeDist = {} as Record<string, number>;
+        spConsumos.forEach(r => { sizeDist[r.size || 'N/A'] = (sizeDist[r.size || 'N/A'] || 0) + r.quantity; });
+        const sizeData = Object.entries(sizeDist).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+
+        // Province distribution
+        const provDist = {} as Record<string, number>;
+        spConsumos.forEach(r => {
+          const prov = allClients.find(c => c.id === r.client_id)?.province || 'Otra';
+          provDist[prov] = (provDist[prov] || 0) + r.quantity;
+        });
+        const provData = Object.entries(provDist).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 6);
+
+        // Best month
+        const bestMonth = [...monthlyData].sort((a, b) => b.cajas - a.cajas)[0];
+        // Avg monthly
+        const activeMonths = monthlyData.filter(m => m.cajas > 0).length || 1;
+        const avgMonthly = (totalCajas / activeMonths).toFixed(1);
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm" onClick={() => setSelectedSalesperson(null)}>
+            <div
+              onClick={e => e.stopPropagation()}
+              className={cn(
+                "rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto shadow-2xl custom-scrollbar",
+                darkMode ? "bg-[#0F0F11] border border-white/10" : "bg-white border border-gray-200"
+              )}
+            >
+              {/* Header */}
+              <div className={cn("px-7 py-5 border-b flex items-center justify-between sticky top-0 z-10", darkMode ? "bg-[#0F0F11] border-white/8" : "bg-white border-gray-100")}>
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-xl bg-[#ED1C24] flex items-center justify-center font-black text-white text-lg">
+                    {spName.charAt(0)}
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-black leading-none">{spName}</h2>
+                    <p className={cn("text-xs mt-1 font-medium", darkMode ? "text-gray-500" : "text-gray-400")}>Estadísticas del vendedor · todos los períodos</p>
+                  </div>
+                </div>
+                <button onClick={() => setSelectedSalesperson(null)} className={cn("p-2 rounded-xl transition-colors", darkMode ? "hover:bg-white/10 text-gray-500" : "hover:bg-gray-100 text-gray-400")}>
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-7 space-y-7">
+                {/* KPI Cards */}
+                <div className="grid grid-cols-4 gap-4">
+                  {[
+                    { label: 'Total Cajas', value: totalCajas.toLocaleString(), sub: 'vendidas', color: darkMode ? 'text-white' : 'text-gray-800' },
+                    { label: 'Total m²', value: totalM2sp.toLocaleString('es-EC', { maximumFractionDigits: 1 }), sub: 'metros cuadrados', color: darkMode ? 'text-cyan-400' : 'text-cyan-600' },
+                    { label: 'Ingresos Totales', value: `$${totalRevenue.toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, sub: 'generados', color: 'text-[#ED1C24]' },
+                    { label: 'Clientes Activos', value: totalClients.toString(), sub: 'centros médicos', color: darkMode ? 'text-white' : 'text-gray-800' },
+                    { label: 'Promedio Mensual', value: `${avgMonthly}`, sub: 'cajas / mes', color: darkMode ? 'text-white' : 'text-gray-800' },
+                  ].map((kpi, i) => (
+                    <div key={i} className={cn("rounded-xl p-4 border", darkMode ? "bg-white/4 border-white/6" : "bg-gray-50 border-gray-100")}>
+                      <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-2", darkMode ? "text-gray-600" : "text-gray-400")}>{kpi.label}</p>
+                      <p className={cn("text-2xl font-black leading-none", kpi.color)}>{kpi.value}</p>
+                      <p className={cn("text-[10px] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>{kpi.sub}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Monthly trend chart */}
+                <div className={cn("rounded-xl p-5 border", darkMode ? "bg-white/3 border-white/6" : "bg-gray-50 border-gray-100")}>
+                  <div className="flex items-center justify-between mb-4">
+                    <p className={cn("text-[10px] font-bold uppercase tracking-wider", darkMode ? "text-gray-500" : "text-gray-400")}>Evolución mensual — últimos 12 meses</p>
+                    {bestMonth.cajas > 0 && (
+                      <span className={cn("text-[10px] font-semibold px-2.5 py-1 rounded-lg", darkMode ? "bg-emerald-500/15 text-emerald-400" : "bg-emerald-50 text-emerald-600")}>
+                        Mejor mes: {bestMonth.label} · {bestMonth.cajas} cajas · {bestMonth.m2} m²
+                      </span>
+                    )}
+                  </div>
+                  <ResponsiveContainer width="100%" height={180}>
+                    <BarChart data={monthlyData} barSize={20}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={darkMode ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'} vertical={false} />
+                      <XAxis dataKey="label" tick={{ fontSize: 9, fill: darkMode ? '#555' : '#aaa' }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fontSize: 9, fill: darkMode ? '#555' : '#aaa' }} axisLine={false} tickLine={false} width={28} />
+                      <Tooltip
+                        contentStyle={{ background: darkMode ? '#1a1a1e' : '#fff', border: `1px solid ${darkMode ? 'rgba(255,255,255,0.08)' : '#eee'}`, borderRadius: 10, fontSize: 11 }}
+                        content={({ active, payload, label }) => {
+                          if (!active || !payload?.length) return null;
+                          const d = payload[0].payload;
+                          return (
+                            <div style={{ background: darkMode ? '#1a1a1e' : '#fff', border: `1px solid ${darkMode ? 'rgba(255,255,255,0.08)' : '#eee'}`, borderRadius: 10, padding: '8px 12px', fontSize: 11 }}>
+                              <p style={{ fontWeight: 700, color: darkMode ? '#aaa' : '#666', marginBottom: 4 }}>{label}</p>
+                              <p style={{ color: '#ED1C24', fontWeight: 800 }}>{d.cajas} cajas</p>
+                              <p style={{ color: darkMode ? '#22d3ee' : '#0891b2', fontWeight: 600 }}>{d.m2} m²</p>
+                            </div>
+                          );
+                        }}
+                        cursor={{ fill: darkMode ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)' }}
+                      />
+                      <Bar dataKey="cajas" fill="#ED1C24" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+
+                {/* Bottom: Top Clients + Size dist + Province */}
+                <div className="grid grid-cols-12 gap-5">
+                  {/* Top Clients */}
+                  <div className={cn("col-span-6 rounded-xl p-5 border", darkMode ? "bg-white/3 border-white/6" : "bg-gray-50 border-gray-100")}>
+                    <p className={cn("text-[10px] font-bold uppercase tracking-wider mb-4", darkMode ? "text-gray-500" : "text-gray-400")}>Top clientes por m²</p>
+                    <div className="space-y-2.5">
+                      {topClients.map((c, i) => (
+                        <div key={i}>
+                          <div className="flex items-center justify-between mb-1">
+                            <span className={cn("text-xs font-semibold truncate max-w-[180px]", darkMode ? "text-gray-300" : "text-gray-700")}>{c.name}</span>
+                            <div className="flex items-baseline gap-1.5 ml-2 shrink-0">
+                              <span className={cn("text-sm font-black", darkMode ? "text-cyan-400" : "text-cyan-600")}>{c.m2.toLocaleString('es-EC', { maximumFractionDigits: 1 })} m²</span>
+                              <span className={cn("text-[9px] font-semibold", darkMode ? "text-gray-600" : "text-gray-400")}>{c.qty} cj</span>
+                            </div>
+                          </div>
+                          <div className={cn("h-1.5 rounded-full overflow-hidden", darkMode ? "bg-white/6" : "bg-gray-200")}>
+                            <div className="h-full rounded-full bg-[#ED1C24] transition-all" style={{ width: `${(c.m2 / maxM2tc) * 100}%` }} />
+                          </div>
+                        </div>
+                      ))}
+                      {topClients.length === 0 && <p className={cn("text-xs", darkMode ? "text-gray-600" : "text-gray-400")}>Sin datos</p>}
+                    </div>
+                  </div>
+
+                  {/* Size + Province */}
+                  <div className="col-span-6 space-y-4">
+                    {/* Size distribution */}
+                    <div className={cn("rounded-xl p-5 border", darkMode ? "bg-white/3 border-white/6" : "bg-gray-50 border-gray-100")}>
+                      <p className={cn("text-[10px] font-bold uppercase tracking-wider mb-3", darkMode ? "text-gray-500" : "text-gray-400")}>Distribución por medida</p>
+                      <div className="space-y-2">
+                        {sizeData.map((s, i) => {
+                          const m2 = parseFloat(spConsumos.filter(r => r.size === s.name).reduce((acc, r) => acc + getTotalM2(effectiveQty(r), r.size, r.film_type), 0).toFixed(1));
+                          return (
+                          <div key={i} className="flex items-center gap-3">
+                            <span className={cn("text-[10px] font-black uppercase px-1.5 py-0.5 rounded w-12 text-center shrink-0", darkMode ? "bg-white/10 text-gray-300" : "bg-gray-200 text-gray-700")}>{s.name || 'N/A'}</span>
+                            <div className={cn("flex-1 h-2 rounded-full overflow-hidden", darkMode ? "bg-white/6" : "bg-gray-200")}>
+                              <div className="h-full rounded-full bg-[#ED1C24]/70" style={{ width: `${(s.value / (sizeData[0]?.value || 1)) * 100}%` }} />
+                            </div>
+                            <span className={cn("text-xs font-black w-20 text-right shrink-0", darkMode ? "text-gray-300" : "text-gray-700")}>
+                              {s.value} <span className={cn("text-[9px] font-normal", darkMode ? "text-cyan-500" : "text-cyan-600")}>{m2} m²</span>
+                            </span>
+                          </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    {/* Province distribution */}
+                    <div className={cn("rounded-xl p-5 border", darkMode ? "bg-white/3 border-white/6" : "bg-gray-50 border-gray-100")}>
+                      <p className={cn("text-[10px] font-bold uppercase tracking-wider mb-3", darkMode ? "text-gray-500" : "text-gray-400")}>Distribución por provincia</p>
+                      <div className="space-y-2">
+                        {provData.map((p, i) => (
+                          <div key={i} className="flex items-center gap-3">
+                            <span className={cn("text-[10px] font-semibold capitalize truncate w-24 shrink-0", darkMode ? "text-gray-400" : "text-gray-600")}>{p.name}</span>
+                            <div className={cn("flex-1 h-2 rounded-full overflow-hidden", darkMode ? "bg-white/6" : "bg-gray-200")}>
+                              <div className="h-full rounded-full bg-blue-500/70" style={{ width: `${(p.value / (provData[0]?.value || 1)) * 100}%` }} />
+                            </div>
+                            <span className={cn("text-xs font-black w-8 text-right shrink-0", darkMode ? "text-gray-300" : "text-gray-700")}>{p.value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* CSV Import Modal */}
+      {isCsvModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className={cn(
+            "rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col max-h-[85vh]",
+            darkMode ? "bg-[#16161A] border border-white/10" : "bg-white"
+          )}>
+            {/* Modal Header */}
+            <div className={cn(
+              "px-6 py-4 border-b flex items-center justify-between shrink-0",
+              darkMode ? "bg-white/4 border-white/8" : "bg-gray-50 border-gray-100"
+            )}>
+              <div className="flex items-center gap-3">
+                <div className={cn(
+                  "w-8 h-8 rounded-lg flex items-center justify-center",
+                  darkMode ? "bg-blue-500/20" : "bg-blue-50"
+                )}>
+                  <Upload className="w-4 h-4 text-blue-500" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black">Importar desde CSV</h3>
+                  <p className={cn("text-[10px] font-medium mt-0.5", darkMode ? "text-gray-500" : "text-gray-400")}>
+                    Los registros se asignan automáticamente al cliente correspondiente
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={handleCloseCsvModal}
+                className={cn("p-1.5 rounded-lg transition-colors", darkMode ? "hover:bg-white/10 text-gray-500" : "hover:bg-gray-200 text-gray-400")}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto flex-1 custom-scrollbar">
+
+              {/* IDLE — drop zone */}
+              {csvImportStatus === 'idle' && (
+                <div className="p-8">
+                  <button
+                    onClick={() => csvFileInputRef.current?.click()}
+                    className={cn(
+                      "w-full border-2 border-dashed rounded-xl p-10 flex flex-col items-center gap-3 transition-all group",
+                      darkMode
+                        ? "border-white/10 hover:border-blue-500/40 hover:bg-blue-500/5"
+                        : "border-gray-200 hover:border-blue-400 hover:bg-blue-50/30"
+                    )}
+                  >
+                    <div className={cn(
+                      "w-14 h-14 rounded-2xl flex items-center justify-center transition-colors",
+                      darkMode ? "bg-white/5 group-hover:bg-blue-500/20" : "bg-gray-100 group-hover:bg-blue-100"
+                    )}>
+                      <FileText className={cn("w-7 h-7 transition-colors", darkMode ? "text-gray-600 group-hover:text-blue-400" : "text-gray-400 group-hover:text-blue-500")} />
+                    </div>
+                    <div className="text-center">
+                      <p className="font-bold text-sm">Seleccionar archivo CSV</p>
+                      <p className={cn("text-xs mt-1", darkMode ? "text-gray-500" : "text-gray-400")}>
+                        Haz clic para buscar el archivo en tu computador
+                      </p>
+                    </div>
+                  </button>
+
+                  <div className={cn(
+                    "mt-5 p-4 rounded-xl border text-xs",
+                    darkMode ? "bg-white/3 border-white/8 text-gray-400" : "bg-gray-50 border-gray-100 text-gray-500"
+                  )}>
+                    <p className="font-bold mb-2 text-[11px] uppercase tracking-wide">Columnas reconocidas automáticamente:</p>
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-1">
+                      {[
+                        ['Cliente / Nombre', 'Para identificar el centro médico'],
+                        ['RUC / ID', 'Alternativa de identificación'],
+                        ['Fecha Pedido', 'Formato DD/MM/YYYY o YYYY-MM-DD'],
+                        ['Medida / Size', 'Ej: 14x17, 8x10, 10x12'],
+                        ['Cantidad / Qty', 'Número de cajas'],
+                        ['Factura / Invoice', 'Número de factura'],
+                        ['Lote / Batch', 'Número de lote'],
+                        ['Costo Unitario', 'Precio por caja'],
+                      ].map(([col, desc]) => (
+                        <div key={col} className="flex gap-1.5">
+                          <span className={cn("font-semibold shrink-0", darkMode ? "text-gray-300" : "text-gray-700")}>{col}:</span>
+                          <span className="opacity-70">{desc}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* DIHT Migration tool */}
+                  {allConsumos.filter(r => !r.film_type).length > 0 && (
+                    <div className={cn("mt-4 p-4 rounded-xl border", darkMode ? "bg-amber-500/8 border-amber-500/20" : "bg-amber-50 border-amber-200")}>
+                      <p className="text-[11px] font-black uppercase tracking-wider text-amber-500 mb-1">Migración pendiente</p>
+                      <p className={cn("text-[10px] mb-3", darkMode ? "text-gray-400" : "text-gray-500")}>
+                        Hay <strong>{allConsumos.filter(r => !r.film_type).length} registros</strong> sin tipo asignado. Márcalos todos como <strong>DI-HT</strong> (luego importa el CSV DI-HL para corregir los que correspondan).
+                      </p>
+                      {isMigratingFilmType ? (
+                        <div className="space-y-1.5">
+                          <div className={cn("h-2 rounded-full overflow-hidden", darkMode ? "bg-white/10" : "bg-amber-100")}>
+                            <div className="h-full bg-amber-500 transition-all duration-300 rounded-full" style={{ width: `${migrationProgress}%` }} />
+                          </div>
+                          <p className="text-[10px] text-amber-400 font-semibold">{migrationProgress}% completado...</p>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={handleMigrateAllToDIHT}
+                          className="text-[10px] font-black uppercase tracking-wider bg-amber-500 text-white px-3 py-1.5 rounded-lg hover:bg-amber-400 transition-all"
+                        >
+                          Marcar {allConsumos.filter(r => !r.film_type).length} registros como DI-HT →
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* PREVIEW */}
+              {csvImportStatus === 'preview' && (
+                <div className="p-6 space-y-5">
+                  {/* DIHL-only mode banner */}
+                  {csvImportResults.isDihlOnly && (
+                    <div className={cn("rounded-xl p-3 border flex items-center gap-3", darkMode ? "bg-blue-500/10 border-blue-500/25" : "bg-blue-50 border-blue-200")}>
+                      <span className="text-lg">🎯</span>
+                      <div>
+                        <p className="text-xs font-black text-blue-400 uppercase tracking-wider">Modo DI-HL — Todos los registros se marcan como DI-HL</p>
+                        <p className={cn("text-[10px] mt-0.5", darkMode ? "text-gray-400" : "text-gray-500")}>
+                          Los registros nuevos se crean con <strong>film_type = DIHL</strong>. Los que ya existen en Firebase se actualizan su tipo a DIHL.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                  {/* Summary badges */}
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className={cn(
+                      "rounded-xl p-4 border text-center",
+                      darkMode ? "bg-emerald-500/10 border-emerald-500/20" : "bg-emerald-50 border-emerald-200"
+                    )}>
+                      <p className="text-2xl font-black text-emerald-500">
+                        {csvImportResults.matched.filter((x: any) => !x._updateId && !x._replaceId).length + csvImportResults.toCreate.length}
+                      </p>
+                      <p className={cn("text-[10px] font-semibold uppercase tracking-wide mt-0.5", darkMode ? "text-emerald-400" : "text-emerald-600")}>Registros nuevos</p>
+                    </div>
+                    <div className={cn(
+                      "rounded-xl p-4 border text-center",
+                      csvImportResults.replaceCount > 0
+                        ? (darkMode ? "bg-red-500/10 border-red-500/20" : "bg-red-50 border-red-200")
+                        : csvImportResults.matched.some((x: any) => x._updateId)
+                        ? (darkMode ? "bg-amber-500/10 border-amber-500/20" : "bg-amber-50 border-amber-200")
+                        : (darkMode ? "bg-white/4 border-white/8" : "bg-gray-50 border-gray-100")
+                    )}>
+                      <p className={cn("text-2xl font-black",
+                        csvImportResults.replaceCount > 0 ? "text-red-400"
+                        : csvImportResults.matched.some((x: any) => x._updateId) ? "text-amber-400"
+                        : (darkMode ? "text-gray-600" : "text-gray-400"))}>
+                        {csvImportResults.replaceCount > 0
+                          ? csvImportResults.replaceCount
+                          : csvImportResults.matched.filter((x: any) => x._updateId).length}
+                      </p>
+                      <p className={cn("text-[10px] font-semibold uppercase tracking-wide mt-0.5",
+                        csvImportResults.replaceCount > 0 ? (darkMode ? "text-red-400" : "text-red-600")
+                        : csvImportResults.matched.some((x: any) => x._updateId) ? (darkMode ? "text-amber-400" : "text-amber-600")
+                        : (darkMode ? "text-gray-600" : "text-gray-400"))}>
+                        {csvImportResults.replaceCount > 0 ? "DIHT → reemplazar por DIHL" : "Tipo actualizado (DI-HT/HL)"}
+                      </p>
+                    </div>
+                    <div className={cn(
+                      "rounded-xl p-4 border text-center",
+                      csvImportResults.duplicates.length > 0
+                        ? (darkMode ? "bg-gray-500/10 border-gray-500/20" : "bg-gray-100 border-gray-200")
+                        : (darkMode ? "bg-white/4 border-white/8" : "bg-gray-50 border-gray-100")
+                    )}>
+                      <p className={cn("text-2xl font-black", darkMode ? "text-gray-500" : "text-gray-400")}>
+                        {csvImportResults.duplicates.length}
+                      </p>
+                      <p className={cn("text-[10px] font-semibold uppercase tracking-wide mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>Ya existen (omitidos)</p>
+                    </div>
+                    {(() => {
+                      const returnCount = [...csvImportResults.matched, ...csvImportResults.toCreate].filter((x: any) => {
+                        const qty = parseInt(String(x.row?.CANTIDAD || x.row?.cantidad || x.row?.quantity || 0));
+                        return qty < 0;
+                      }).length;
+                      if (returnCount === 0) return null;
+                      return (
+                        <div className={cn("rounded-xl p-4 border text-center", darkMode ? "bg-amber-500/10 border-amber-500/20" : "bg-amber-50 border-amber-200")}>
+                          <p className="text-2xl font-black text-amber-400">{returnCount}</p>
+                          <p className={cn("text-[10px] font-semibold uppercase tracking-wide mt-0.5", darkMode ? "text-amber-400" : "text-amber-600")}>Retornos de cliente</p>
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  {/* Matched (existing clients) list */}
+                  {csvImportResults.matched.length > 0 && (
+                    <div>
+                      <h4 className={cn("text-[10px] font-bold uppercase tracking-wider mb-2 flex items-center gap-1.5", darkMode ? "text-gray-500" : "text-gray-400")}>
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> Registros con cliente existente
+                      </h4>
+                      <div className={cn("rounded-xl border overflow-hidden", darkMode ? "border-white/8" : "border-gray-100")}>
+                        <div className="overflow-x-auto max-h-44 overflow-y-auto custom-scrollbar">
+                          <table className="w-full text-left text-xs min-w-[500px]">
+                            <thead className={cn("sticky top-0", darkMode ? "bg-[#16161A] text-gray-500" : "bg-gray-50 text-gray-400")}>
+                              <tr>
+                                <th className="px-4 py-2 font-bold uppercase text-[9px] tracking-wide">Cliente detectado</th>
+                                <th className="px-4 py-2 font-bold uppercase text-[9px] tracking-wide">Fecha</th>
+                                <th className="px-4 py-2 font-bold uppercase text-[9px] tracking-wide">Medida</th>
+                                <th className="px-4 py-2 font-bold uppercase text-[9px] tracking-wide text-center">Cajas</th>
+                                <th className="px-4 py-2 font-bold uppercase text-[9px] tracking-wide">Factura</th>
+                              </tr>
+                            </thead>
+                            <tbody className={cn("divide-y", darkMode ? "divide-white/5" : "divide-gray-50")}>
+                              {csvImportResults.matched.map((item, i) => {
+                                const r = mapRowToRecord(item.row, allClients.find(c => c.name === item.clientName)!.id, 0);
+                                return (
+                                  <tr key={i} className={cn(darkMode ? "hover:bg-white/3" : "hover:bg-gray-50/60")}>
+                                    <td className="px-4 py-2 font-semibold max-w-[180px] truncate">{item.clientName}</td>
+                                    <td className="px-4 py-2 text-gray-400 whitespace-nowrap">{r.order_date}</td>
+                                    <td className="px-4 py-2">
+                                      <span className={cn("px-1.5 py-0.5 rounded text-[9px] font-black uppercase", r.size ? (darkMode ? "bg-white/10 text-gray-300" : "bg-gray-800 text-white") : (darkMode ? "text-gray-600" : "text-gray-400"))}>
+                                        {r.size || '—'}
+                                      </span>
+                                    </td>
+                                    <td className="px-4 py-2 text-center font-black">{r.quantity}</td>
+                                    <td className={cn("px-4 py-2 font-mono text-[10px]", darkMode ? "text-gray-600" : "text-gray-400")}>{r.invoice_number || '—'}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* New clients to create */}
+                  {csvImportResults.toCreate.length > 0 && (() => {
+                    // Group toCreate by canonical clientName (already deduplicated by code in handleCsvFileChange)
+                    const grouped = new Map<string, { province: string; salesperson: string; clientCode: string; totalCajas: number; registros: number }>();
+                    csvImportResults.toCreate.forEach(item => {
+                      const r = mapRowToRecord(item.row, 0, 0);
+                      const existing = grouped.get(item.clientName);
+                      if (existing) {
+                        existing.totalCajas += r.quantity;
+                        existing.registros += 1;
+                      } else {
+                        grouped.set(item.clientName, {
+                          province: item.province,
+                          salesperson: item.salesperson,
+                          clientCode: item.clientCode,
+                          totalCajas: r.quantity,
+                          registros: 1,
+                        });
+                      }
+                    });
+                    const uniqueClients = [...grouped.entries()];
+                    return (
+                    <div>
+                      <h4 className={cn("text-[10px] font-bold uppercase tracking-wider mb-2 flex items-center gap-1.5", darkMode ? "text-gray-500" : "text-gray-400")}>
+                        <Plus className="w-3.5 h-3.5 text-blue-400" /> {uniqueClients.length} clientes nuevos que se crearán automáticamente
+                      </h4>
+                      <div className={cn("rounded-xl border overflow-hidden", darkMode ? "border-blue-500/20" : "border-blue-100")}>
+                        <div className="overflow-x-auto max-h-44 overflow-y-auto custom-scrollbar">
+                          <table className="w-full text-left text-xs min-w-[500px]">
+                            <thead className={cn("sticky top-0", darkMode ? "bg-blue-500/10 text-blue-400" : "bg-blue-50 text-blue-600")}>
+                              <tr>
+                                <th className="px-4 py-2 font-bold uppercase text-[9px] tracking-wide">Nuevo cliente</th>
+                                <th className="px-4 py-2 font-bold uppercase text-[9px] tracking-wide">Cód.</th>
+                                <th className="px-4 py-2 font-bold uppercase text-[9px] tracking-wide">Provincia</th>
+                                <th className="px-4 py-2 font-bold uppercase text-[9px] tracking-wide">Vendedor</th>
+                                <th className="px-4 py-2 font-bold uppercase text-[9px] tracking-wide text-center">Registros</th>
+                                <th className="px-4 py-2 font-bold uppercase text-[9px] tracking-wide text-center">Total cajas</th>
+                              </tr>
+                            </thead>
+                            <tbody className={cn("divide-y", darkMode ? "divide-white/5" : "divide-blue-50")}>
+                              {uniqueClients.map(([clientName, info], i) => (
+                                <tr key={i} className={cn(darkMode ? "hover:bg-white/3" : "hover:bg-blue-50/40")}>
+                                  <td className="px-4 py-2 font-semibold max-w-[160px] truncate text-blue-400">{clientName}</td>
+                                  <td className={cn("px-4 py-2 font-mono text-[10px]", darkMode ? "text-gray-500" : "text-gray-400")}>{info.clientCode || '—'}</td>
+                                  <td className={cn("px-4 py-2 capitalize", darkMode ? "text-gray-400" : "text-gray-500")}>{info.province || '—'}</td>
+                                  <td className={cn("px-4 py-2", darkMode ? "text-gray-400" : "text-gray-500")}>{info.salesperson || '—'}</td>
+                                  <td className="px-4 py-2 text-center text-gray-400">{info.registros}</td>
+                                  <td className="px-4 py-2 text-center font-black">{info.totalCajas}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                      <p className={cn("text-[10px] mt-2 flex items-center gap-1", darkMode ? "text-blue-400/60" : "text-blue-500/70")}>
+                        <AlertCircle className="w-3 h-3" />
+                        Los clientes nuevos se crearán con provincia, vendedor y código extraídos del CSV. Puedes editar sus datos después.
+                      </p>
+                    </div>
+                    );
+                  })()}
+                </div>
+              )}
+
+              {/* IMPORTING */}
+              {csvImportStatus === 'importing' && (
+                <div className="p-10 flex flex-col items-center gap-5">
+                  <div className={cn("w-16 h-16 rounded-2xl flex items-center justify-center", darkMode ? "bg-blue-500/20" : "bg-blue-50")}>
+                    <Upload className="w-8 h-8 text-blue-500 animate-pulse" />
+                  </div>
+                  <div className="text-center w-full max-w-xs">
+                    <p className="font-bold text-sm mb-1">Importando registros...</p>
+                    <p className={cn("text-xs mb-4", darkMode ? "text-gray-500" : "text-gray-400")}>{csvImportProgress}% completado</p>
+                    <div className={cn("h-2 rounded-full overflow-hidden", darkMode ? "bg-white/10" : "bg-gray-100")}>
+                      <div
+                        className="h-full bg-blue-500 rounded-full transition-all duration-300"
+                        style={{ width: `${csvImportProgress}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* DONE */}
+              {csvImportStatus === 'done' && (
+                <div className="p-10 flex flex-col items-center gap-4">
+                  <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 flex items-center justify-center">
+                    <CheckCircle2 className="w-8 h-8 text-emerald-500" />
+                  </div>
+                  <div className="text-center">
+                    <p className="font-black text-lg">¡Importación completada!</p>
+                    <p className={cn("text-xs mt-1", darkMode ? "text-gray-500" : "text-gray-400")}>
+                      Se importaron <strong>{csvImportSummary.records}</strong> registros exitosamente.
+                    </p>
+                    {csvImportSummary.newClients > 0 && (
+                      <p className={cn("text-xs mt-1 text-blue-400")}>
+                        + <strong>{csvImportSummary.newClients}</strong> clientes nuevos creados automáticamente.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* ERROR */}
+              {csvImportStatus === 'error' && (
+                <div className="p-10 flex flex-col items-center gap-4">
+                  <div className="w-16 h-16 rounded-2xl bg-red-500/20 flex items-center justify-center">
+                    <AlertCircle className="w-8 h-8 text-red-500" />
+                  </div>
+                  <div className="text-center">
+                    <p className="font-black text-lg">Error al procesar el archivo</p>
+                    <p className={cn("text-xs mt-1 max-w-xs", darkMode ? "text-gray-500" : "text-gray-400")}>
+                      {csvImportError || 'Asegúrate de que el archivo sea un CSV válido con encabezados.'}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className={cn(
+              "px-6 py-4 border-t flex items-center justify-between shrink-0",
+              darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50/60"
+            )}>
+              {csvImportStatus === 'idle' && (
+                <>
+                  <p className={cn("text-[10px]", darkMode ? "text-gray-600" : "text-gray-400")}>Formatos aceptados: .csv, .txt</p>
+                  <button onClick={handleCloseCsvModal} className={cn("px-4 py-2 rounded-xl text-xs font-semibold transition-colors", darkMode ? "bg-white/8 hover:bg-white/12 text-gray-300" : "bg-gray-200 hover:bg-gray-300 text-gray-600")}>
+                    Cancelar
+                  </button>
+                </>
+              )}
+              {csvImportStatus === 'preview' && (
+                <>
+                  <button
+                    onClick={() => {
+                      setCsvImportStatus('idle');
+                      if (csvFileInputRef.current) csvFileInputRef.current.value = '';
+                    }}
+                    className={cn("px-4 py-2 rounded-xl text-xs font-semibold transition-colors", darkMode ? "bg-white/8 hover:bg-white/12 text-gray-300" : "bg-gray-100 hover:bg-gray-200 text-gray-600")}
+                  >
+                    ← Cambiar archivo
+                  </button>
+                  <button
+                    onClick={handleConfirmCsvImport}
+                    disabled={csvImportResults.matched.length === 0 && csvImportResults.toCreate.length === 0}
+                    className="px-5 py-2 rounded-xl text-xs font-bold bg-[#ED1C24] text-white hover:bg-[#D11920] disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm shadow-red-500/20"
+                  >
+                    {csvImportResults.isDihlOnly
+                      ? `Importar DI-HL: ${csvImportResults.matched.filter((x: any) => !x._updateId).length + csvImportResults.toCreate.length} nuevos + ${csvImportResults.matched.filter((x: any) => x._updateId).length} actualizados →`
+                      : `Importar ${csvImportResults.matched.filter((x: any) => !x._updateId).length + csvImportResults.toCreate.length} registros`
+                        + (csvImportResults.toCreate.length > 0 ? ` + ${[...new Map(csvImportResults.toCreate.map((x: any) => [norm(x.clientCode) || norm(x.clientName), true])).keys()].length} clientes nuevos` : '')
+                        + (csvImportResults.matched.some((x: any) => x._updateId) ? ` + ${csvImportResults.matched.filter((x: any) => x._updateId).length} tipo actualizado` : '')
+                        + ' →'
+                    }
+                  </button>
+                </>
+              )}
+              {(csvImportStatus === 'done' || csvImportStatus === 'error') && (
+                <div className="flex w-full justify-between">
+                  <button
+                    onClick={() => { setCsvImportStatus('idle'); }}
+                    className={cn("px-4 py-2 rounded-xl text-xs font-semibold transition-colors", darkMode ? "bg-white/8 hover:bg-white/12 text-gray-300" : "bg-gray-100 hover:bg-gray-200 text-gray-600")}
+                  >
+                    Importar otro archivo
+                  </button>
+                  <button onClick={handleCloseCsvModal} className="px-5 py-2 rounded-xl text-xs font-bold bg-[#ED1C24] text-white hover:bg-[#D11920] transition-all">
+                    Cerrar
+                  </button>
+                </div>
+              )}
+              {csvImportStatus === 'importing' && (
+                <p className={cn("text-xs w-full text-center", darkMode ? "text-gray-500" : "text-gray-400")}>Por favor espera, no cierres esta ventana...</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <style dangerouslySetInnerHTML={{ __html: `
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800;900&display=swap');
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(160,160,160,0.2); border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(160,160,160,0.4); }
+        * { scrollbar-width: thin; scrollbar-color: rgba(160,160,160,0.2) transparent; }
+      `}} />
+      </div>
+    </div>
+  );
+}
+
+// ── Root: AuthProvider + gate ─────────────────────────────────────────────────
+function AppGate() {
+  const { appUser, authLoading } = useAuth();
+  const [darkMode] = useState(() => localStorage.getItem('orimec_theme') === 'dark');
+  if (authLoading) return null;
+  if (!appUser) return <LoginPage darkMode={darkMode} />;
+  return <App />;
+}
+
+export default function Root() {
+  return (
+    <AuthProvider>
+      <AppGate />
+    </AuthProvider>
+  );
+}
