@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, createContext, useContext } from 'react';
+import React, { useState, useMemo, useEffect, createContext, useContext, useCallback, useRef } from 'react';
 import { 
   Search, Plus, Hospital, History, TrendingDown, TrendingUp, 
   AlertCircle, Package, Calendar, MapPin, User, ChevronRight, Filter,
@@ -6,11 +6,11 @@ import {
   Sun, Moon, Printer, Download, Upload, FileText, CheckCircle2, AlertTriangle,
   Bell, Target, Brain, ShieldAlert, Zap, Trophy, ChevronDown, ChevronUp,
   Clock, PhoneCall, ArrowRight, Boxes, Layers, LogOut, Shield, Eye, UserCheck,
-  Check as CheckIcon
+  Check as CheckIcon, BarChart2
 } from 'lucide-react';
 import { 
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, 
-  Tooltip, ResponsiveContainer, Cell, AreaChart, Area,
+  Tooltip, ResponsiveContainer, Cell, AreaChart, Area, Legend,
 } from 'recharts';
 import { format, isAfter } from 'date-fns';
 import * as XLSX from 'xlsx';
@@ -30,6 +30,342 @@ import {
   updateDoc,
   getDoc
 } from 'firebase/firestore';
+
+// ── TOAST SYSTEM ─────────────────────────────────────────────────────────────
+type ToastType = 'success' | 'error' | 'warning' | 'info';
+interface Toast { id: number; message: string; type: ToastType; }
+
+interface ToastContextType {
+  showToast: (message: string, type?: ToastType) => void;
+}
+const ToastContext = createContext<ToastContextType | null>(null);
+const useToast = () => { const ctx = useContext(ToastContext); if (!ctx) throw new Error('No ToastContext'); return ctx; };
+
+function ToastProvider({ children }: { children: React.ReactNode }) {
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const counterRef = useRef(0);
+
+  const showToast = useCallback((message: string, type: ToastType = 'success') => {
+    const id = ++counterRef.current;
+    setToasts(prev => [...prev.slice(-4), { id, message, type }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500);
+  }, []);
+
+  const iconMap: Record<ToastType, React.ReactNode> = {
+    success: <svg viewBox="0 0 16 16" fill="none" className="w-4 h-4 shrink-0"><circle cx="8" cy="8" r="7.5" stroke="currentColor" strokeOpacity=".3"/><path d="M5 8.5l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+    error:   <svg viewBox="0 0 16 16" fill="none" className="w-4 h-4 shrink-0"><circle cx="8" cy="8" r="7.5" stroke="currentColor" strokeOpacity=".3"/><path d="M5.5 5.5l5 5M10.5 5.5l-5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>,
+    warning: <svg viewBox="0 0 16 16" fill="none" className="w-4 h-4 shrink-0"><path d="M8 2.5L14 13.5H2L8 2.5z" stroke="currentColor" strokeOpacity=".3" strokeLinejoin="round"/><path d="M8 7v3M8 11.5v.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>,
+    info:    <svg viewBox="0 0 16 16" fill="none" className="w-4 h-4 shrink-0"><circle cx="8" cy="8" r="7.5" stroke="currentColor" strokeOpacity=".3"/><path d="M8 7v5M8 5v.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>,
+  };
+  const colorMap: Record<ToastType, string> = {
+    success: 'bg-emerald-500 text-white shadow-emerald-500/25',
+    error:   'bg-red-500 text-white shadow-red-500/25',
+    warning: 'bg-amber-500 text-white shadow-amber-500/25',
+    info:    'bg-blue-500 text-white shadow-blue-500/25',
+  };
+
+  return (
+    <ToastContext.Provider value={{ showToast }}>
+      {children}
+      <div className="fixed bottom-5 right-5 z-[9999] flex flex-col gap-2 items-end pointer-events-none" style={{ fontFamily: "'DM Sans','Inter',system-ui,sans-serif" }}>
+        {toasts.map(t => (
+          <div key={t.id} className={cn(
+            "flex items-center gap-2.5 px-4 py-3 rounded-2xl shadow-xl text-sm font-semibold pointer-events-auto max-w-xs",
+            "animate-[slideInRight_0.25s_ease-out]",
+            colorMap[t.type]
+          )}>
+            {iconMap[t.type]}
+            <span className="leading-snug">{t.message}</span>
+          </div>
+        ))}
+      </div>
+      <style>{`
+        @keyframes slideInRight {
+          from { opacity: 0; transform: translateX(24px) scale(0.95); }
+          to   { opacity: 1; transform: translateX(0)   scale(1); }
+        }
+      `}</style>
+    </ToastContext.Provider>
+  );
+}
+
+// ── ORIMEC LOGO SVG ───────────────────────────────────────────────────────────
+// Faithful recreation of the real Orimec logo: dark-blue ORIMEC lettering
+// with a caduceus (staff + serpents) replacing the "I"
+function OrimecLogo({ size = 36 }: { size?: number }) {
+  // Two variants: small icon (square badge) vs large wordmark
+  if (size <= 40) {
+    // Icon-only badge: caduceus on dark-blue rounded square
+    return (
+      <svg width={size} height={size} viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect width="40" height="40" rx="10" fill="#1A3A5C"/>
+        {/* Caduceus staff */}
+        <line x1="20" y1="8" x2="20" y2="32" stroke="#4A9FD4" strokeWidth="2" strokeLinecap="round"/>
+        {/* Wings at top */}
+        <path d="M20 10 C16 8 12 9 12 12 C12 14 16 14 20 13" stroke="#4A9FD4" strokeWidth="1.4" fill="none" strokeLinecap="round"/>
+        <path d="M20 10 C24 8 28 9 28 12 C28 14 24 14 20 13" stroke="#4A9FD4" strokeWidth="1.4" fill="none" strokeLinecap="round"/>
+        {/* Left serpent */}
+        <path d="M20 14 C17 16 17 18 20 19 C17 20 17 22 20 23 C17 24 17 26 20 27" stroke="#6DB8E8" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
+        {/* Right serpent */}
+        <path d="M20 14 C23 16 23 18 20 19 C23 20 23 22 20 23 C23 24 23 26 20 27" stroke="#6DB8E8" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
+        {/* Top orb */}
+        <circle cx="20" cy="8.5" r="2" fill="#4A9FD4"/>
+      </svg>
+    );
+  }
+
+  // Large wordmark: "OR  MEC" with caduceus as the I
+  return (
+    <svg width={size * 3.2} height={size} viewBox="0 0 180 56" fill="none" xmlns="http://www.w3.org/2000/svg">
+      {/* "OR" */}
+      <text x="0" y="42" fontFamily="'DM Sans','Arial Black',sans-serif" fontWeight="900" fontSize="44" fill="#1A3A5C" letterSpacing="-1">OR</text>
+      {/* Caduceus replacing I — centered between OR and MEC */}
+      {/* Staff */}
+      <line x1="90" y1="4" x2="90" y2="50" stroke="#4A9FD4" strokeWidth="3.5" strokeLinecap="round"/>
+      {/* Wings */}
+      <path d="M90 9 C83 6 76 8 76 13 C76 17 83 17 90 15" stroke="#4A9FD4" strokeWidth="2" fill="none" strokeLinecap="round"/>
+      <path d="M90 9 C97 6 104 8 104 13 C104 17 97 17 90 15" stroke="#4A9FD4" strokeWidth="2" fill="none" strokeLinecap="round"/>
+      {/* Left serpent */}
+      <path d="M90 17 C83 21 83 25 90 27 C83 29 83 33 90 35 C83 37 83 41 90 44" stroke="#3A82B5" strokeWidth="2.2" fill="none" strokeLinecap="round"/>
+      {/* Right serpent */}
+      <path d="M90 17 C97 21 97 25 90 27 C97 29 97 33 90 35 C97 37 97 41 90 44" stroke="#3A82B5" strokeWidth="2.2" fill="none" strokeLinecap="round"/>
+      {/* Top orb */}
+      <circle cx="90" cy="5" r="3.5" fill="#4A9FD4"/>
+      {/* "MEC" */}
+      <text x="100" y="42" fontFamily="'DM Sans','Arial Black',sans-serif" fontWeight="900" fontSize="44" fill="#1A3A5C" letterSpacing="-1">MEC</text>
+      {/* Subtitle */}
+      <text x="6" y="54" fontFamily="'DM Sans','Inter',sans-serif" fontWeight="400" fontSize="8.5" fill="#4A9FD4" letterSpacing="1.5">ORIENTAL MEDICAL DEL ECUADOR C.A.</text>
+    </svg>
+  );
+}
+
+// ── SKELETON LOADER ───────────────────────────────────────────────────────────
+function SkeletonBlock({ className, darkMode }: { className?: string; darkMode: boolean }) {
+  return (
+    <div className={cn(
+      "rounded-xl animate-pulse",
+      darkMode ? "bg-white/6" : "bg-gray-200/70",
+      className
+    )} />
+  );
+}
+
+function SkeletonClientCard({ darkMode }: { darkMode: boolean }) {
+  return (
+    <div className={cn("w-full p-4 rounded-2xl border", darkMode ? "bg-[#16161A] border-white/5" : "bg-white border-gray-200/60")}>
+      <SkeletonBlock darkMode={darkMode} className="h-4 w-3/4 mb-2" />
+      <div className="flex gap-3">
+        <SkeletonBlock darkMode={darkMode} className="h-3 w-20" />
+        <SkeletonBlock darkMode={darkMode} className="h-3 w-16" />
+      </div>
+    </div>
+  );
+}
+
+function SkeletonDashboardCard({ darkMode }: { darkMode: boolean }) {
+  return (
+    <div className={cn("p-5 rounded-xl border", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/80 shadow-sm")}>
+      <SkeletonBlock darkMode={darkMode} className="h-3 w-24 mb-3" />
+      <SkeletonBlock darkMode={darkMode} className="h-8 w-20 mb-2" />
+      <SkeletonBlock darkMode={darkMode} className="h-3 w-16" />
+    </div>
+  );
+}
+
+// ── GLOBAL SEARCH (Cmd+K) ─────────────────────────────────────────────────────
+interface GlobalSearchProps {
+  darkMode: boolean;
+  allClients: any[];
+  allConsumos: any[];
+  altNames: Record<number, string>;
+  onSelectClient: (client: any) => void;
+  onNavigate: (view: string) => void;
+  onClose: () => void;
+}
+
+function GlobalSearch({ darkMode, allClients, allConsumos, altNames, onSelectClient, onNavigate, onClose }: GlobalSearchProps) {
+  const [q, setQ] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { inputRef.current?.focus(); }, []);
+
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [onClose]);
+
+  const results = useMemo(() => {
+    if (q.trim().length < 2) return [];
+    const lower = q.toLowerCase();
+
+    const clientMatches = allClients
+      .filter(c => {
+        if (c.name?.toLowerCase().includes(lower)) return true;
+        if (String(c.ruc_id || '').includes(lower)) return true;
+        if (c.client_code?.toLowerCase().includes(lower)) return true;
+        if (c.province?.toLowerCase().includes(lower)) return true;
+        // Denominación alternativa (altNames)
+        if (altNames[c.id]?.toLowerCase().includes(lower)) return true;
+        // Códigos alternativos (alt_codes)
+        if ((c.alt_codes || []).some((ac: string) => ac?.toLowerCase().includes(lower))) return true;
+        // Seriales de impresoras
+        if ((c.printers || []).some((p: any) => p.serial?.toLowerCase().includes(lower))) return true;
+        return false;
+      })
+      .slice(0, 7)
+      .map(c => {
+        const totalM2 = allConsumos
+          .filter(r => r.client_id === c.id)
+          .reduce((s: number, r: any) => s + (r.quantity * (r.size === '14x17' ? 19.19 : r.size === '10x14' ? 11.57 : r.size === '10x12' ? 9.77 : 5.16)), 0);
+
+        // Reason — what matched
+        let matchHint = '';
+        if (altNames[c.id]?.toLowerCase().includes(lower)) {
+          matchHint = `También conocido como: ${altNames[c.id]}`;
+        } else if ((c.alt_codes || []).some((ac: string) => ac?.toLowerCase().includes(lower))) {
+          const ac = (c.alt_codes || []).find((ac: string) => ac?.toLowerCase().includes(lower));
+          matchHint = `Código alt: ${ac}`;
+        } else if ((c.printers || []).some((p: any) => p.serial?.toLowerCase().includes(lower))) {
+          const printer = (c.printers || []).find((p: any) => p.serial?.toLowerCase().includes(lower));
+          matchHint = `Serial: ${printer?.serial}${printer?.type ? ` · ${printer.type}` : ''}`;
+        }
+
+        return { type: 'client' as const, client: c, totalM2, matchHint };
+      });
+
+    const invoiceMatches = allConsumos
+      .filter(r => r.invoice_number?.toLowerCase().includes(lower))
+      .slice(0, 4)
+      .map(r => {
+        const client = allClients.find(c => c.id === r.client_id);
+        return { type: 'invoice' as const, record: r, client };
+      });
+
+    return [...clientMatches, ...invoiceMatches];
+  }, [q, allClients, allConsumos, altNames]);
+
+  const navItems = [
+    { label: 'Dashboard', view: 'dashboard', icon: '📊' },
+    { label: 'Clientes', view: 'clients', icon: '👥' },
+    { label: 'Inventario', view: 'inventory', icon: '📦' },
+    { label: 'Inteligencia', view: 'intelligence', icon: '🧠' },
+  ].filter(n => n.label.toLowerCase().includes(q.toLowerCase()) && q.length >= 2);
+
+  return (
+    <div className="fixed inset-0 z-[9998] flex items-start justify-center pt-[15vh]" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+      <div
+        className={cn(
+          "relative w-full max-w-lg rounded-2xl shadow-2xl border overflow-hidden",
+          darkMode ? "bg-[#1A1A1F] border-white/12" : "bg-white border-gray-200"
+        )}
+        onClick={e => e.stopPropagation()}
+        style={{ fontFamily: "'DM Sans','Inter',system-ui,sans-serif" }}
+      >
+        {/* Search input */}
+        <div className={cn("flex items-center gap-3 px-4 py-3.5 border-b", darkMode ? "border-white/8" : "border-gray-100")}>
+          <Search className={cn("w-4 h-4 shrink-0", darkMode ? "text-gray-500" : "text-gray-400")} />
+          <input
+            ref={inputRef}
+            value={q}
+            onChange={e => setQ(e.target.value)}
+            placeholder="Buscar clientes, facturas, seriales, denominaciones..."
+            className={cn("flex-1 bg-transparent outline-none text-sm font-medium", darkMode ? "text-white placeholder:text-gray-600" : "text-gray-800 placeholder:text-gray-400")}
+          />
+          {q && (
+            <button onClick={() => setQ('')} className={cn("p-1 rounded-lg transition-colors", darkMode ? "text-gray-600 hover:text-gray-400 hover:bg-white/8" : "text-gray-400 hover:text-gray-600 hover:bg-gray-100")}>
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+          <div className={cn("w-px h-4 shrink-0", darkMode ? "bg-white/10" : "bg-gray-200")} />
+          <button
+            onClick={onClose}
+            className={cn(
+              "flex items-center justify-center w-7 h-7 rounded-lg transition-colors shrink-0",
+              darkMode ? "text-gray-500 hover:text-gray-200 hover:bg-white/10" : "text-gray-400 hover:text-gray-700 hover:bg-gray-100"
+            )}
+            title="Cerrar"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Results */}
+        <div className="max-h-80 overflow-y-auto custom-scrollbar">
+          {q.trim().length < 2 ? (
+            <div className="px-4 py-6 text-center">
+              <p className={cn("text-xs", darkMode ? "text-gray-600" : "text-gray-400")}>Escribe al menos 2 caracteres para buscar</p>
+            </div>
+          ) : results.length === 0 && navItems.length === 0 ? (
+            <div className="px-4 py-6 text-center">
+              <p className={cn("text-xs font-semibold", darkMode ? "text-gray-500" : "text-gray-400")}>Sin resultados para "{q}"</p>
+            </div>
+          ) : (
+            <div className="py-2">
+              {navItems.length > 0 && (
+                <div>
+                  <p className={cn("px-4 py-1.5 text-[9px] font-black uppercase tracking-wider", darkMode ? "text-gray-700" : "text-gray-400")}>Módulos</p>
+                  {navItems.map(n => (
+                    <button key={n.view} onClick={() => { onNavigate(n.view); onClose(); }}
+                      className={cn("w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors text-sm font-semibold",
+                        darkMode ? "hover:bg-white/5 text-gray-300" : "hover:bg-gray-50 text-gray-700")}>
+                      <span className="text-base">{n.icon}</span> {n.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {results.filter(r => r.type === 'client').length > 0 && (
+                <div>
+                  <p className={cn("px-4 py-1.5 text-[9px] font-black uppercase tracking-wider", darkMode ? "text-gray-700" : "text-gray-400")}>Clientes</p>
+                  {results.filter(r => r.type === 'client').map((r: any, i) => (
+                    <button key={i} onClick={() => { onSelectClient(r.client); onNavigate('clients'); onClose(); }}
+                      className={cn("w-full flex items-center justify-between px-4 py-2.5 text-left transition-colors",
+                        darkMode ? "hover:bg-white/5" : "hover:bg-gray-50")}>
+                      <div className="min-w-0">
+                        <p className={cn("text-sm font-semibold leading-snug truncate", darkMode ? "text-gray-200" : "text-gray-800")}>{r.client.name}</p>
+                        {r.matchHint ? (
+                          <p className={cn("text-[10px] font-medium truncate", darkMode ? "text-amber-400/70" : "text-amber-600/80")}>
+                            {r.matchHint}
+                          </p>
+                        ) : (
+                          <p className={cn("text-[10px] truncate", darkMode ? "text-gray-600" : "text-gray-400")}>{r.client.province} · {r.client.client_code || r.client.ruc_id}</p>
+                        )}
+                      </div>
+                      {r.totalM2 > 0 && <span className={cn("text-xs font-bold shrink-0 ml-3", darkMode ? "text-cyan-500" : "text-cyan-600")}>{r.totalM2.toFixed(0)} m²</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {results.filter(r => r.type === 'invoice').length > 0 && (
+                <div>
+                  <p className={cn("px-4 py-1.5 text-[9px] font-black uppercase tracking-wider", darkMode ? "text-gray-700" : "text-gray-400")}>Facturas</p>
+                  {results.filter(r => r.type === 'invoice').map((r: any, i) => (
+                    <button key={i} onClick={() => { if (r.client) { onSelectClient(r.client); onNavigate('clients'); } onClose(); }}
+                      className={cn("w-full flex items-center justify-between px-4 py-2.5 text-left transition-colors",
+                        darkMode ? "hover:bg-white/5" : "hover:bg-gray-50")}>
+                      <div>
+                        <p className={cn("text-sm font-mono font-semibold", darkMode ? "text-gray-200" : "text-gray-800")}>{r.record.invoice_number}</p>
+                        <p className={cn("text-[10px]", darkMode ? "text-gray-600" : "text-gray-400")}>{r.client?.name || '—'} · {r.record.size}</p>
+                      </div>
+                      <span className={cn("text-xs font-bold shrink-0", darkMode ? "text-gray-500" : "text-gray-400")}>{r.record.quantity} cj</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Footer hint */}
+        <div className={cn("px-4 py-2.5 border-t flex items-center gap-4 text-[10px]", darkMode ? "border-white/8 text-gray-700" : "border-gray-100 text-gray-400")}>
+          <span><kbd className={cn("font-mono px-1 py-0.5 rounded border text-[9px]", darkMode ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50")}>↵</kbd> seleccionar</span>
+          <span><kbd className={cn("font-mono px-1 py-0.5 rounded border text-[9px]", darkMode ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50")}>ESC</kbd> cerrar</span>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ── AUTH TYPES & CONTEXT ─────────────────────────────────────────────────────
 type UserRole = 'admin' | 'financiero' | 'vendedor' | 'asistente' | 'gerencia';
@@ -229,6 +565,31 @@ const ROLE_COLORS: Record<UserRole, string> = {
 };
 const ROLE_ICONS: Record<UserRole, React.ElementType> = { admin: Shield, financiero: UserCheck, vendedor: Eye, asistente: Eye, gerencia: BarChart3 };
 
+// ── PERMISSIONS CONFIG ───────────────────────────────────────────────────────
+const MODULE_PERMISSIONS = [
+  { key: 'dashboard',    label: 'Dashboard',         icon: '📊', desc: 'KPIs, gráficas, vendedores' },
+  { key: 'clients',      label: 'Clientes',           icon: '👤', desc: 'Ficha, historial, impresoras' },
+  { key: 'clients_edit', label: 'Editar Clientes',    icon: '✏️', desc: 'Crear, editar, eliminar clientes' },
+  { key: 'inventory',    label: 'Inventario',         icon: '📦', desc: 'Stock Film, movimientos' },
+  { key: 'inventory_edit', label: 'Editar Inventario', icon: '➕', desc: 'Nueva entrada, modificar stock' },
+  { key: 'imager',       label: 'Imager',             icon: '🖨️', desc: 'Stock equipos Fujifilm' },
+  { key: 'intelligence', label: 'Inteligencia',       icon: '🧠', desc: 'Proyección, salud, análisis' },
+  { key: 'export',       label: 'Exportar',           icon: '📤', desc: 'PDF, Excel, exportaciones' },
+  { key: 'audit',        label: 'Auditoría',          icon: '🔍', desc: 'Ver historial de cambios' },
+] as const;
+
+type PermKey = typeof MODULE_PERMISSIONS[number]['key'];
+
+const DEFAULT_PERMS: Record<UserRole, Record<PermKey, boolean>> = {
+  admin:      { dashboard:true, clients:true, clients_edit:true, inventory:true, inventory_edit:true, imager:true, intelligence:true, export:true, audit:true },
+  gerencia:   { dashboard:true, clients:true, clients_edit:false, inventory:true, inventory_edit:false, imager:true, intelligence:true, export:true, audit:true },
+  financiero: { dashboard:true, clients:true, clients_edit:true, inventory:true, inventory_edit:true, imager:true, intelligence:true, export:true, audit:false },
+  asistente:  { dashboard:true, clients:true, clients_edit:true, inventory:true, inventory_edit:true, imager:false, intelligence:false, export:true, audit:false },
+  vendedor:   { dashboard:true, clients:true, clients_edit:false, inventory:false, inventory_edit:false, imager:false, intelligence:false, export:false, audit:false },
+};
+
+interface UserPerms { [key: string]: boolean }
+
 function UsersPanel({ darkMode }: { darkMode: boolean }) {
   const [panelUsers, setPanelUsers] = useState<AppUser[]>([]);
   const [showForm, setShowForm] = useState(false);
@@ -237,10 +598,21 @@ function UsersPanel({ darkMode }: { darkMode: boolean }) {
   const [saving, setSaving] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [selectedUserForPerms, setSelectedUserForPerms] = useState<AppUser | null>(null);
+  const [userPerms, setUserPerms] = useState<Record<string, UserPerms>>({});
+  const [savingPerms, setSavingPerms] = useState(false);
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, 'users'), snap => {
-      setPanelUsers(snap.docs.map(d => d.data() as AppUser).sort((a, b) => a.nombre.localeCompare(b.nombre)));
+      const users = snap.docs.map(d => d.data() as AppUser).sort((a, b) => a.nombre.localeCompare(b.nombre));
+      setPanelUsers(users);
+      // Load perms for each user
+      const permsMap: Record<string, UserPerms> = {};
+      snap.docs.forEach(d => {
+        const u = d.data() as AppUser & { perms?: UserPerms };
+        permsMap[u.uid] = u.perms || { ...DEFAULT_PERMS[u.role] };
+      });
+      setUserPerms(permsMap);
     });
     return unsub;
   }, []);
@@ -252,7 +624,8 @@ function UsersPanel({ darkMode }: { darkMode: boolean }) {
     setSaving(true); setErrorMsg('');
     try {
       const userData: AppUser = { uid: form.uid.trim(), email: form.email.trim().toLowerCase(), nombre: form.nombre.trim(), role: form.role, activo: true };
-      await setDoc(doc(db, 'users', userData.uid), userData);
+      const defaultPerms = { ...DEFAULT_PERMS[form.role] };
+      await setDoc(doc(db, 'users', userData.uid), { ...userData, perms: defaultPerms });
       setSuccessMsg(editingUser ? 'Usuario actualizado.' : 'Usuario creado. Créalo también en Firebase Auth si es nuevo.');
       setTimeout(() => setSuccessMsg(''), 4000);
       resetForm();
@@ -262,101 +635,236 @@ function UsersPanel({ darkMode }: { darkMode: boolean }) {
 
   const handleToggleActive = async (u: AppUser) => { await updateDoc(doc(db, 'users', u.uid), { activo: !u.activo }); };
 
+  const handleSavePerms = async () => {
+    if (!selectedUserForPerms) return;
+    setSavingPerms(true);
+    try {
+      await updateDoc(doc(db, 'users', selectedUserForPerms.uid), { perms: userPerms[selectedUserForPerms.uid] });
+      setSuccessMsg(`Permisos de ${selectedUserForPerms.nombre} actualizados.`);
+      setTimeout(() => setSuccessMsg(''), 3000);
+      setSelectedUserForPerms(null);
+    } catch { setErrorMsg('Error al guardar permisos.'); }
+    finally { setSavingPerms(false); }
+  };
+
+  const togglePerm = (uid: string, key: string) => {
+    setUserPerms(prev => ({
+      ...prev,
+      [uid]: { ...(prev[uid] || {}), [key]: !(prev[uid]?.[key] ?? true) }
+    }));
+  };
+
+  const applyRoleDefaults = (uid: string, role: UserRole) => {
+    setUserPerms(prev => ({ ...prev, [uid]: { ...DEFAULT_PERMS[role] } }));
+  };
+
   return (
-    <div className="flex flex-col gap-4 h-full overflow-y-auto custom-scrollbar pr-1">
-      <div className="flex items-center justify-between shrink-0">
-        <div>
-          <h2 className={cn("text-sm font-black", darkMode ? "text-white" : "text-gray-900")}>Gestión de Usuarios</h2>
-          <p className={cn("text-[10px] mt-0.5", darkMode ? "text-gray-500" : "text-gray-400")}>{panelUsers.length} usuario{panelUsers.length !== 1 ? 's' : ''} registrado{panelUsers.length !== 1 ? 's' : ''}</p>
-        </div>
-        <button onClick={() => { resetForm(); setShowForm(true); }} className="bg-[#ED1C24] text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 hover:bg-[#D11920] shadow-md shadow-red-500/20 transition-all">
-          <Plus className="w-3.5 h-3.5" /> Nuevo Usuario
-        </button>
-      </div>
-
-      {successMsg && (
-        <div className="px-4 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 text-xs font-medium flex items-center gap-2">
-          <CheckIcon className="w-3.5 h-3.5 shrink-0" /> {successMsg}
-        </div>
-      )}
-
-      {showForm && (
-        <div className={cn("rounded-2xl border p-5 flex flex-col gap-4", darkMode ? "bg-white/3 border-white/8" : "bg-white border-gray-200/80 shadow-sm")}>
-          <div className="flex items-center justify-between">
-            <p className={cn("text-xs font-bold", darkMode ? "text-white" : "text-gray-800")}>{editingUser ? 'Editar usuario' : 'Nuevo usuario'}</p>
-            <button onClick={resetForm} className={cn("p-1 rounded-lg", darkMode ? "hover:bg-white/8 text-gray-500" : "hover:bg-gray-100 text-gray-400")}><X className="w-3.5 h-3.5" /></button>
+    <div className="flex gap-5 h-full overflow-hidden">
+      {/* Left — user list */}
+      <div className="flex flex-col gap-4 w-80 shrink-0 overflow-y-auto custom-scrollbar pr-1">
+        <div className="flex items-center justify-between shrink-0">
+          <div>
+            <h2 className={cn("text-sm font-black", darkMode ? "text-white" : "text-gray-900")}>Gestión de Usuarios</h2>
+            <p className={cn("text-[10px] mt-0.5", darkMode ? "text-gray-500" : "text-gray-400")}>{panelUsers.length} usuario{panelUsers.length !== 1 ? 's' : ''} registrado{panelUsers.length !== 1 ? 's' : ''}</p>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="col-span-2">
-              <label className={cn("text-[10px] font-semibold uppercase tracking-wider mb-1 block", darkMode ? "text-gray-500" : "text-gray-500")}>UID de Firebase Auth *</label>
-              <input type="text" value={form.uid} onChange={e => setForm(f => ({ ...f, uid: e.target.value }))} disabled={!!editingUser} placeholder="Copia el UID desde Firebase Console → Authentication"
+          <button onClick={() => { resetForm(); setShowForm(true); setSelectedUserForPerms(null); }} className="bg-[#ED1C24] text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 hover:bg-[#D11920] shadow-md shadow-red-500/20 transition-all">
+            <Plus className="w-3.5 h-3.5" /> Nuevo
+          </button>
+        </div>
+
+        {successMsg && (
+          <div className="px-4 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 text-xs font-medium flex items-center gap-2">
+            <CheckIcon className="w-3.5 h-3.5 shrink-0" /> {successMsg}
+          </div>
+        )}
+
+        {showForm && (
+          <div className={cn("rounded-2xl border p-4 flex flex-col gap-3", darkMode ? "bg-white/3 border-white/8" : "bg-white border-gray-200/80 shadow-sm")}>
+            <div className="flex items-center justify-between">
+              <p className={cn("text-xs font-bold", darkMode ? "text-white" : "text-gray-800")}>{editingUser ? 'Editar' : 'Nuevo usuario'}</p>
+              <button onClick={resetForm} className={cn("p-1 rounded-lg", darkMode ? "hover:bg-white/8 text-gray-500" : "hover:bg-gray-100 text-gray-400")}><X className="w-3.5 h-3.5" /></button>
+            </div>
+            <div>
+              <label className={cn("text-[9px] font-bold uppercase tracking-wider mb-1 block", darkMode ? "text-gray-600" : "text-gray-400")}>UID Firebase Auth *</label>
+              <input type="text" value={form.uid} onChange={e => setForm(f => ({ ...f, uid: e.target.value }))} disabled={!!editingUser} placeholder="Copia desde Firebase Console"
                 className={cn("w-full px-3 py-2 rounded-xl text-xs font-medium outline-none transition-all", darkMode ? "bg-white/5 text-white placeholder:text-gray-600 focus:ring-1 focus:ring-[#ED1C24]/40 border border-white/8 disabled:opacity-40" : "bg-gray-100 text-gray-800 placeholder:text-gray-400 focus:bg-white focus:ring-2 focus:ring-[#ED1C24]/20 border border-transparent disabled:opacity-50")} />
             </div>
-            <div>
-              <label className={cn("text-[10px] font-semibold uppercase tracking-wider mb-1 block", darkMode ? "text-gray-500" : "text-gray-500")}>Nombre</label>
-              <input type="text" value={form.nombre} onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))} placeholder="Nombre completo"
-                className={cn("w-full px-3 py-2 rounded-xl text-xs font-medium outline-none transition-all", darkMode ? "bg-white/5 text-white placeholder:text-gray-600 focus:ring-1 focus:ring-[#ED1C24]/40 border border-white/8" : "bg-gray-100 text-gray-800 placeholder:text-gray-400 focus:bg-white focus:ring-2 focus:ring-[#ED1C24]/20 border border-transparent")} />
-            </div>
-            <div>
-              <label className={cn("text-[10px] font-semibold uppercase tracking-wider mb-1 block", darkMode ? "text-gray-500" : "text-gray-500")}>Correo</label>
-              <input type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder="correo@orimec.com"
-                className={cn("w-full px-3 py-2 rounded-xl text-xs font-medium outline-none transition-all", darkMode ? "bg-white/5 text-white placeholder:text-gray-600 focus:ring-1 focus:ring-[#ED1C24]/40 border border-white/8" : "bg-gray-100 text-gray-800 placeholder:text-gray-400 focus:bg-white focus:ring-2 focus:ring-[#ED1C24]/20 border border-transparent")} />
-            </div>
-            <div className="col-span-2">
-              <label className={cn("text-[10px] font-semibold uppercase tracking-wider mb-1.5 block", darkMode ? "text-gray-500" : "text-gray-500")}>Rol</label>
-              <div className="flex gap-2">
-                {(['admin', 'financiero', 'vendedor', 'asistente', 'gerencia'] as UserRole[]).map(r => {
-                  const Icon = ROLE_ICONS[r];
-                  return (
-                    <button key={r} onClick={() => setForm(f => ({ ...f, role: r }))}
-                      className={cn("flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-[11px] font-bold border transition-all",
-                        form.role === r ? ROLE_COLORS[r] : (darkMode ? "bg-white/3 border-white/8 text-gray-500 hover:bg-white/6" : "bg-gray-50 border-gray-200 text-gray-400 hover:bg-gray-100"))}>
-                      <Icon className="w-3 h-3" />{ROLE_LABELS[r]}
-                    </button>
-                  );
-                })}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className={cn("text-[9px] font-bold uppercase tracking-wider mb-1 block", darkMode ? "text-gray-600" : "text-gray-400")}>Nombre</label>
+                <input type="text" value={form.nombre} onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))} placeholder="Nombre completo"
+                  className={cn("w-full px-3 py-2 rounded-xl text-xs font-medium outline-none transition-all", darkMode ? "bg-white/5 text-white placeholder:text-gray-600 focus:ring-1 focus:ring-[#ED1C24]/40 border border-white/8" : "bg-gray-100 text-gray-800 placeholder:text-gray-400 focus:bg-white focus:ring-2 focus:ring-[#ED1C24]/20 border border-transparent")} />
+              </div>
+              <div>
+                <label className={cn("text-[9px] font-bold uppercase tracking-wider mb-1 block", darkMode ? "text-gray-600" : "text-gray-400")}>Correo</label>
+                <input type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder="correo@orimec.com"
+                  className={cn("w-full px-3 py-2 rounded-xl text-xs font-medium outline-none transition-all", darkMode ? "bg-white/5 text-white placeholder:text-gray-600 focus:ring-1 focus:ring-[#ED1C24]/40 border border-white/8" : "bg-gray-100 text-gray-800 placeholder:text-gray-400 focus:bg-white focus:ring-2 focus:ring-[#ED1C24]/20 border border-transparent")} />
               </div>
             </div>
+            <div>
+              <label className={cn("text-[9px] font-bold uppercase tracking-wider mb-1.5 block", darkMode ? "text-gray-600" : "text-gray-400")}>Rol base</label>
+              <div className="flex gap-1.5 flex-wrap">
+                {(['admin', 'financiero', 'vendedor', 'asistente', 'gerencia'] as UserRole[]).map(r => (
+                  <button key={r} onClick={() => setForm(f => ({ ...f, role: r }))}
+                    className={cn("px-2.5 py-1.5 rounded-lg text-[10px] font-bold border transition-all",
+                      form.role === r ? ROLE_COLORS[r] : (darkMode ? "bg-white/3 border-white/8 text-gray-500 hover:bg-white/6" : "bg-gray-50 border-gray-200 text-gray-400 hover:bg-gray-100"))}>
+                    {ROLE_LABELS[r]}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {errorMsg && <p className="text-[11px] text-red-500 font-medium">{errorMsg}</p>}
+            <div className="flex gap-2">
+              <button onClick={resetForm} className={cn("flex-1 py-2 rounded-xl text-xs font-semibold", darkMode ? "bg-white/6 hover:bg-white/10 text-gray-400" : "bg-gray-100 hover:bg-gray-200 text-gray-500")}>Cancelar</button>
+              <button onClick={handleSave} disabled={saving} className="flex-1 py-2 rounded-xl text-xs font-bold bg-[#ED1C24] text-white hover:bg-[#D11920] transition-all disabled:opacity-50 shadow-sm">
+                {saving ? 'Guardando...' : editingUser ? 'Actualizar' : 'Crear'}
+              </button>
+            </div>
           </div>
-          {errorMsg && <p className="text-[11px] text-red-500 font-medium">{errorMsg}</p>}
-          <div className="flex gap-2 pt-1">
-            <button onClick={resetForm} className={cn("flex-1 py-2 rounded-xl text-xs font-semibold", darkMode ? "bg-white/6 hover:bg-white/10 text-gray-400" : "bg-gray-100 hover:bg-gray-200 text-gray-500")}>Cancelar</button>
-            <button onClick={handleSave} disabled={saving} className="flex-1 py-2 rounded-xl text-xs font-bold bg-[#ED1C24] text-white hover:bg-[#D11920] transition-all disabled:opacity-50 shadow-sm shadow-red-500/20">
-              {saving ? 'Guardando...' : editingUser ? 'Actualizar' : 'Crear usuario'}
-            </button>
-          </div>
-          {!editingUser && <p className={cn("text-[9px] leading-relaxed", darkMode ? "text-gray-600" : "text-gray-400")}>⚠️ Debes crear el usuario primero en <span className="font-semibold">Firebase Console → Authentication → Add user</span>, copiar el UID y pegarlo aquí.</p>}
-        </div>
-      )}
+        )}
 
-      <div className="flex flex-col gap-2">
-        {panelUsers.map(u => {
-          const Icon = ROLE_ICONS[u.role];
-          return (
-            <div key={u.uid} className={cn("flex items-center gap-4 px-4 py-3 rounded-2xl border transition-all", darkMode ? "bg-white/3 border-white/8 hover:bg-white/5" : "bg-white border-gray-200/80 shadow-sm", !u.activo && "opacity-50")}>
-              <div className={cn("w-8 h-8 rounded-xl flex items-center justify-center shrink-0 text-xs font-black border", ROLE_COLORS[u.role])}>{u.nombre.charAt(0).toUpperCase()}</div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <p className={cn("text-xs font-bold truncate", darkMode ? "text-white" : "text-gray-900")}>{u.nombre}</p>
-                  <span className={cn("inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold border shrink-0", ROLE_COLORS[u.role])}><Icon className="w-2.5 h-2.5" />{ROLE_LABELS[u.role]}</span>
-                  {!u.activo && <span className={cn("px-2 py-0.5 rounded-full text-[9px] font-bold border shrink-0", darkMode ? "text-gray-600 bg-white/3 border-white/8" : "text-gray-400 bg-gray-50 border-gray-200")}>Inactivo</span>}
+        <div className="flex flex-col gap-2">
+          {panelUsers.map(u => {
+            const Icon = ROLE_ICONS[u.role];
+            const isSelected = selectedUserForPerms?.uid === u.uid;
+            return (
+              <div key={u.uid}
+                className={cn("flex items-center gap-3 px-4 py-3 rounded-2xl border transition-all cursor-pointer",
+                  isSelected
+                    ? (darkMode ? "bg-[#ED1C24]/10 border-[#ED1C24]/30" : "bg-red-50 border-red-200")
+                    : (darkMode ? "bg-white/3 border-white/8 hover:bg-white/5" : "bg-white border-gray-200/80 shadow-sm hover:bg-gray-50"),
+                  !u.activo && "opacity-50"
+                )}
+                onClick={() => setSelectedUserForPerms(isSelected ? null : u)}
+              >
+                <div className={cn("w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-sm font-black border", ROLE_COLORS[u.role])}>
+                  {u.nombre.charAt(0).toUpperCase()}
                 </div>
-                <p className={cn("text-[10px] truncate mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{u.email}</p>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <p className={cn("text-xs font-bold truncate", darkMode ? "text-white" : "text-gray-900")}>{u.nombre}</p>
+                    <span className={cn("inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[8px] font-bold border shrink-0", ROLE_COLORS[u.role])}><Icon className="w-2 h-2" />{ROLE_LABELS[u.role]}</span>
+                    {!u.activo && <span className={cn("px-1.5 py-0.5 rounded-full text-[8px] font-bold shrink-0", darkMode ? "bg-white/8 text-gray-500" : "bg-gray-100 text-gray-400")}>Inactivo</span>}
+                  </div>
+                  <p className={cn("text-[9px] truncate mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{u.email}</p>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button onClick={e => { e.stopPropagation(); setEditingUser(u); setForm({ uid: u.uid, email: u.email, nombre: u.nombre, role: u.role }); setShowForm(true); }} title="Editar" className={cn("p-1.5 rounded-lg transition-colors", darkMode ? "hover:bg-white/8 text-gray-600 hover:text-gray-300" : "hover:bg-gray-100 text-gray-400 hover:text-gray-600")}><Edit2 className="w-3 h-3" /></button>
+                  <button onClick={e => { e.stopPropagation(); handleToggleActive(u); }} title={u.activo ? 'Desactivar' : 'Activar'} className={cn("p-1.5 rounded-lg transition-colors", u.activo ? (darkMode ? "hover:bg-red-500/10 text-gray-600 hover:text-red-400" : "hover:bg-red-50 text-gray-400 hover:text-red-500") : (darkMode ? "hover:bg-emerald-500/10 text-gray-600 hover:text-emerald-400" : "hover:bg-emerald-50 text-gray-400 hover:text-emerald-500"))}>
+                    {u.activo ? <X className="w-3 h-3" /> : <CheckIcon className="w-3 h-3" />}
+                  </button>
+                </div>
               </div>
-              <div className="flex items-center gap-1.5 shrink-0">
-                <button onClick={() => { setEditingUser(u); setForm({ uid: u.uid, email: u.email, nombre: u.nombre, role: u.role }); setShowForm(true); }} title="Editar" className={cn("p-1.5 rounded-lg transition-colors", darkMode ? "hover:bg-white/8 text-gray-600 hover:text-gray-300" : "hover:bg-gray-100 text-gray-400 hover:text-gray-600")}><Edit2 className="w-3 h-3" /></button>
-                <button onClick={() => handleToggleActive(u)} title={u.activo ? 'Desactivar' : 'Activar'} className={cn("p-1.5 rounded-lg transition-colors", u.activo ? (darkMode ? "hover:bg-red-500/10 text-gray-600 hover:text-red-400" : "hover:bg-red-50 text-gray-400 hover:text-red-500") : (darkMode ? "hover:bg-emerald-500/10 text-gray-600 hover:text-emerald-400" : "hover:bg-emerald-50 text-gray-400 hover:text-emerald-500"))}>
-                  {u.activo ? <X className="w-3 h-3" /> : <CheckIcon className="w-3 h-3" />}
-                </button>
+            );
+          })}
+          {panelUsers.length === 0 && !showForm && (
+            <div className={cn("text-center py-12 rounded-2xl border", darkMode ? "border-white/8 text-gray-600" : "border-gray-200 text-gray-400")}>
+              <Shield className="w-8 h-8 mx-auto mb-3 opacity-30" />
+              <p className="text-xs font-semibold">No hay usuarios registrados</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Right — permissions panel */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar">
+        {selectedUserForPerms ? (() => {
+          const u = selectedUserForPerms;
+          const perms = userPerms[u.uid] || DEFAULT_PERMS[u.role];
+          const activeCount = MODULE_PERMISSIONS.filter(m => perms[m.key]).length;
+          return (
+            <div className={cn("rounded-2xl border overflow-hidden", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/80 shadow-sm")}>
+              {/* Header */}
+              <div className={cn("px-6 py-4 border-b", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center text-base font-black border", ROLE_COLORS[u.role])}>
+                      {u.nombre.charAt(0).toUpperCase()}
+                    </div>
+                    <div>
+                      <p className={cn("text-sm font-black", darkMode ? "text-white" : "text-gray-900")}>{u.nombre}</p>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className={cn("inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold border", ROLE_COLORS[u.role])}>
+                          {ROLE_LABELS[u.role]}
+                        </span>
+                        <span className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>{activeCount} de {MODULE_PERMISSIONS.length} permisos activos</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {/* Apply role defaults */}
+                    <div className={cn("flex gap-1 p-1 rounded-xl", darkMode ? "bg-white/5" : "bg-gray-100")}>
+                      {(['admin','gerencia','financiero','asistente','vendedor'] as UserRole[]).map(r => (
+                        <button key={r} onClick={() => applyRoleDefaults(u.uid, r)}
+                          title={`Aplicar permisos por defecto de ${ROLE_LABELS[r]}`}
+                          className={cn("px-2 py-1 rounded-lg text-[9px] font-black transition-all",
+                            darkMode ? "text-gray-500 hover:bg-white/8 hover:text-gray-300" : "text-gray-400 hover:bg-gray-200 hover:text-gray-700"
+                          )}>
+                          {ROLE_LABELS[r]}
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      onClick={handleSavePerms} disabled={savingPerms}
+                      className="px-4 py-2 rounded-xl text-xs font-black bg-[#1A3A5C] text-white hover:bg-[#22487A] transition-colors disabled:opacity-50"
+                    >
+                      {savingPerms ? 'Guardando...' : 'Guardar permisos'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Permission toggles */}
+              <div className="p-5">
+                <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-4", darkMode ? "text-gray-600" : "text-gray-400")}>
+                  Acceso por módulo — haz clic para activar/desactivar
+                </p>
+                <div className="grid grid-cols-1 gap-2">
+                  {MODULE_PERMISSIONS.map(mod => {
+                    const active = perms[mod.key] !== false;
+                    return (
+                      <div key={mod.key}
+                        onClick={() => togglePerm(u.uid, mod.key)}
+                        className={cn("flex items-center gap-4 px-5 py-3.5 rounded-xl border cursor-pointer transition-all select-none",
+                          active
+                            ? (darkMode ? "bg-emerald-500/8 border-emerald-500/20 hover:bg-emerald-500/12" : "bg-emerald-50 border-emerald-200 hover:bg-emerald-50/80")
+                            : (darkMode ? "bg-white/3 border-white/6 hover:bg-white/5 opacity-60" : "bg-gray-50 border-gray-100 hover:bg-gray-100 opacity-70")
+                        )}
+                      >
+                        <span className="text-lg shrink-0">{mod.icon}</span>
+                        <div className="flex-1 min-w-0">
+                          <p className={cn("text-xs font-black", active ? (darkMode ? "text-white" : "text-gray-900") : (darkMode ? "text-gray-500" : "text-gray-400"))}>{mod.label}</p>
+                          <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{mod.desc}</p>
+                        </div>
+                        {/* Toggle switch */}
+                        <div className={cn("w-10 h-5.5 rounded-full transition-colors shrink-0 flex items-center px-0.5",
+                          active ? "bg-emerald-500" : (darkMode ? "bg-white/15" : "bg-gray-300")
+                        )}
+                          style={{ height: '22px' }}
+                        >
+                          <div className={cn("w-4 h-4 rounded-full bg-white shadow transition-transform",
+                            active ? "translate-x-5" : "translate-x-0"
+                          )} style={{ transition: 'transform 0.2s' }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Footer note */}
+              <div className={cn("px-5 py-3 border-t text-[9px]", darkMode ? "border-white/6 text-gray-700" : "border-gray-100 text-gray-400")}>
+                ⚠️ Los cambios de permisos se aplican en el próximo inicio de sesión del usuario. El rol base determina los permisos predeterminados.
               </div>
             </div>
           );
-        })}
-        {panelUsers.length === 0 && !showForm && (
-          <div className={cn("text-center py-12 rounded-2xl border", darkMode ? "border-white/8 text-gray-600" : "border-gray-200 text-gray-400")}>
-            <Shield className="w-8 h-8 mx-auto mb-3 opacity-30" />
-            <p className="text-xs font-semibold">No hay usuarios registrados</p>
-            <p className="text-[10px] mt-1 opacity-70">Crea el primer usuario con el botón de arriba</p>
+        })() : (
+          <div className={cn("flex flex-col items-center justify-center h-full gap-3 rounded-2xl border", darkMode ? "border-white/8 text-gray-700" : "border-gray-200 text-gray-300")}>
+            <Shield className="w-10 h-10" />
+            <p className="text-sm font-black">Selecciona un usuario</p>
+            <p className={cn("text-[10px] text-center max-w-48", darkMode ? "text-gray-700" : "text-gray-400")}>
+              Haz clic en cualquier usuario de la lista para gestionar sus permisos de acceso
+            </p>
           </div>
         )}
       </div>
@@ -375,6 +883,17 @@ interface PrinterInfo {
   installDate: string;
   serial: string;
   location?: string;
+  warrantyDate?: string; // fecha fin de garantía/contrato mantenimiento
+}
+
+interface AuditLog {
+  id: string;
+  timestamp: string;
+  user: string;
+  action: string;
+  detail: string;
+  entityId?: string;
+  meta?: Record<string, any>; // extra structured data for detail panel
 }
 
 interface Client {
@@ -387,6 +906,7 @@ interface Client {
   alt_codes?: string[];
   salesperson: string;
   printers?: PrinterInfo[];
+  notes?: string; // notas libres CRM
 }
 
 interface StockEntry {
@@ -398,8 +918,9 @@ interface StockEntry {
   expiry_date: string;
   unit_cost: number;
   supplier_invoice: string;
+  purchase_order?: string; // Ej: FJ-2001
   notes: string;
-  film_type?: 'DIHT' | 'DIHL';
+  film_type?: 'DIHT' | 'DIHL' | 'DIML';
   is_opening?: boolean;
 }
 
@@ -420,11 +941,15 @@ interface ConsumptionRecord {
   unit_cost?: number;
   film_type?: 'DIHT' | 'DIHL' | string;
   is_return?: boolean;
+  adapted_to?: string;   // talla física entregada (ej: '8x10')
+  adapted_ratio?: number; // cajas físicas por caja facturada (ej: 2)
 }
 
 function App() {
   const { appUser, role, logout } = useAuth();
+  const { showToast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [allConsumos, setAllConsumos] = useState<ConsumptionRecord[]>([]);
   const [allClients, setAllClients] = useState<Client[]>([]);
@@ -435,9 +960,67 @@ function App() {
     const saved = localStorage.getItem('orimec_theme');
     return saved === 'dark';
   });
-  const [zoomLevel, setZoomLevel] = useState(1);
-  const [dashboardStartDate, setDashboardStartDate] = useState('');
-  const [dashboardEndDate, setDashboardEndDate] = useState('');
+  // Zoom automático: la app está diseñada para 1440px de ancho
+  // En pantallas más pequeñas se escala proporcionalmente
+  const calcZoom = () => {
+    const designWidth = 1440;
+    const minZoom = 0.55;
+    const maxZoom = 1.5;
+    const raw = window.innerWidth / designWidth;
+    // Guardamos el zoom guardado por el usuario si existe
+    const saved = parseFloat(localStorage.getItem('orimec_zoom') || '0');
+    if (saved > 0) return Math.min(maxZoom, Math.max(minZoom, saved));
+    return Math.min(maxZoom, Math.max(minZoom, parseFloat(raw.toFixed(2))));
+  };
+  const [zoomLevel, setZoomLevel] = useState(calcZoom);
+
+  useEffect(() => {
+    const handleResize = () => {
+      // Solo auto-ajusta si el usuario no ha modificado el zoom manualmente
+      const saved = parseFloat(localStorage.getItem('orimec_zoom') || '0');
+      if (!saved) setZoomLevel(calcZoom());
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+  const [dashboardStartDate, setDashboardStartDate] = useState(() =>
+    sessionStorage.getItem('dash_start') || ''
+  );
+  const [dashboardEndDate, setDashboardEndDate] = useState(() =>
+    sessionStorage.getItem('dash_end') || ''
+  );
+  // Persist date filters across tab changes
+  const setDashStart = (v: string) => { setDashboardStartDate(v); sessionStorage.setItem('dash_start', v); };
+  const setDashEnd   = (v: string) => { setDashboardEndDate(v);   sessionStorage.setItem('dash_end', v); };
+
+  // Audit log state
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => {
+    try { return JSON.parse(localStorage.getItem('orimec_audit') || '[]'); } catch { return []; }
+  });
+  const [showAuditLog, setShowAuditLog] = useState(false);
+  const [auditCategory, setAuditCategory] = useState<'all'|'clientes'|'inventario'|'registros'>('all');
+  const [selectedAuditLog, setSelectedAuditLog] = useState<AuditLog | null>(null);
+
+  const addAuditLog = (action: string, detail: string, entityId?: string, meta?: Record<string, any>) => {
+    const entry: AuditLog = {
+      id: Date.now().toString(),
+      timestamp: new Date().toISOString(),
+      user: appUser?.nombre || appUser?.email || 'desconocido',
+      action, detail, entityId, meta
+    };
+    setAuditLogs(prev => {
+      const updated = [entry, ...prev].slice(0, 500); // keep last 500
+      localStorage.setItem('orimec_audit', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
+  // Goals modal
+  const [showGoalsModal, setShowGoalsModal] = useState(false);
+  const [goalsEditForm, setGoalsEditForm] = useState<Record<string, string>>({});
+
+  // Vendor comparison
+  const [vendorCompareSelected, setVendorCompareSelected] = useState<string[]>([]);
   const [sizeChartFilter, setSizeChartFilter] = useState<'all' | 'DIHT' | 'DIHL'>('all');
   const [clientSizeFilter, setClientSizeFilter] = useState('Todas');
   const [clientFilmFilter, setClientFilmFilter] = useState('Todos');
@@ -492,16 +1075,40 @@ function App() {
     const handleWheel = (e: WheelEvent) => {
       if (e.ctrlKey) {
         e.preventDefault();
-        if (e.deltaY > 0) {
-          setZoomLevel(prev => Math.max(0.5, prev - 0.05));
-        } else {
-          setZoomLevel(prev => Math.min(2, prev + 0.05));
-        }
+        setZoomLevel(prev => {
+          const next = e.deltaY > 0
+            ? Math.max(0.5, parseFloat((prev - 0.05).toFixed(2)))
+            : Math.min(2,   parseFloat((prev + 0.05).toFixed(2)));
+          localStorage.setItem('orimec_zoom', String(next));
+          return next;
+        });
       }
     };
 
     window.addEventListener('wheel', handleWheel, { passive: false });
     return () => window.removeEventListener('wheel', handleWheel);
+  }, []);
+
+  // Ctrl+K → open global search; ESC → close modals
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      // Ctrl+K or Cmd+K — use capture to beat browser shortcuts
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        e.stopPropagation();
+        setGlobalSearchOpen(prev => !prev);
+        return;
+      }
+      if (e.key === 'Escape') {
+        setBannerCollapsed(true);
+        setProjectionSizeModal(null);
+        setShowAuditLog(false);
+        setShowGoalsModal(false);
+      }
+    };
+    // Use capture:true so we intercept before browser handles Ctrl+K
+    window.addEventListener('keydown', handleKey, { capture: true });
+    return () => window.removeEventListener('keydown', handleKey, { capture: true });
   }, []);
 
   // Sync with Firestore
@@ -700,6 +1307,20 @@ function App() {
   });
   const [isStockEntryModalOpen, setIsStockEntryModalOpen] = useState(false);
   const [newStockEntry, setNewStockEntry] = useState<Partial<StockEntry>>({});
+  // Transit deduction modal — shown after saving a stock entry
+  const [transitDeductModal, setTransitDeductModal] = useState<{
+    ft: string; size: string; entryQty: number; entryDate: string;
+    totalTransit: number; transitByMonth: Record<string, number>;
+    filmKey: string; year: number;
+  } | null>(null);
+  const [transitDeductQty, setTransitDeductQty] = useState<string>('');
+  // Transit revert modal — shown when deleting a stock entry
+  const [transitRevertModal, setTransitRevertModal] = useState<{
+    ft: string; size: string; entryQty: number; entryDate: string;
+    filmKey: string; year: number;
+    entryId: string; // to delete
+  } | null>(null);
+  const [transitRevertQty, setTransitRevertQty] = useState<string>('');
   const [inventoryTab, setInventoryTab] = useState<'overview' | 'movements' | 'stock-film' | 'stock-tiempo'>('overview');
 
   // ── IMAGER PRODUCTS — from Fujifilm Planning Imager Excel ─────────────────
@@ -816,6 +1437,60 @@ function App() {
     return defaults;
   });
 
+  // ── IMAGER: mapeo de impresoras registradas en clientes → productos Imager ──
+  const imagerFromClients = useMemo(() => {
+    const MATCH_RULES: { key: string; keywords: string[] }[] = [
+      { key: 'drypix_lite',    keywords: ['DRYPIX LITE', 'DPX LITE', 'DRYPIX LTE', 'DRYPIX-LITE', 'DPX-LITE', 'DRYLITE', 'DRY LITE', 'DRY PIX LITE'] },
+      { key: 'drypix_smart',   keywords: ['DRYPIX SMART', 'DPX SMART', 'DRYPIX-SMART', 'DPX-SMART', 'DRY SMART', 'DRYSMART'] },
+      { key: 'drypix_plus',    keywords: ['DRYPIX PLUS', 'DPX PLUS', 'DRYPIX-PLUS', 'DRYPIX PLUS 100', 'DRY PLUS'] },
+      { key: 'drypix_edge',    keywords: ['DRYPIX EDGE', 'DPX EDGE', 'DRYPIX-EDGE', 'DRYPIX EDGE 3T', 'DRY EDGE'] },
+      { key: 'dpx_feeder',     keywords: ['FEEDER', 'ALIMENTADOR'] },
+      { key: 'dpx_magazine_l', keywords: ['MAGAZINE L', 'MAG L', 'MAGAZINE-L', 'MAG-L', 'MAGAZINE LARGE'] },
+      { key: 'dpx_magazine_s', keywords: ['MAGAZINE S', 'MAG S', 'MAGAZINE-S', 'MAG-S', 'MAGAZINE SMALL'] },
+    ];
+
+    const MONTH_KEYS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+    // Por cada producto: lista de instalaciones + OUT por año/mes
+    const result = {} as Record<string, {
+      installs: { clientName: string; serial: string; location: string; installDate: string }[];
+      outByYearMonth: Record<number, Record<string, number>>; // year → month → count
+    }>;
+    IMAGER_PRODUCTS.forEach(p => {
+      result[p.key] = { installs: [], outByYearMonth: {} };
+    });
+
+    allClients.forEach(client => {
+      (client.printers || []).forEach((printer: any) => {
+        const typeUpper = (printer.type || '').toUpperCase();
+        for (const rule of MATCH_RULES) {
+          if (rule.keywords.some(kw => typeUpper.includes(kw))) {
+            const entry = result[rule.key];
+            entry.installs.push({
+              clientName: client.name,
+              serial: printer.serial || '—',
+              location: printer.location || '',
+              installDate: printer.installDate || '',
+            });
+            // Compute OUT by year/month from installDate (YYYY-MM-DD)
+            if (printer.installDate) {
+              const d = new Date(printer.installDate);
+              if (!isNaN(d.getTime())) {
+                const y = d.getFullYear();
+                const m = MONTH_KEYS[d.getMonth()];
+                if (!entry.outByYearMonth[y]) entry.outByYearMonth[y] = {};
+                entry.outByYearMonth[y][m] = (entry.outByYearMonth[y][m] || 0) + 1;
+              }
+            }
+            break;
+          }
+        }
+      });
+    });
+
+    return result;
+  }, [allClients]);
+
   const updateImagerCell = (key: string, month: string, field: 'inUnits' | 'outUnits', value: number) => {
     setImagerData(prev => {
       const updated = JSON.parse(JSON.stringify(prev));
@@ -886,6 +1561,7 @@ function App() {
     const y = new Date().getFullYear();
     return (y >= 2026 ? 2026 : y >= 2025 ? 2025 : 2024) as 2024 | 2025 | 2026;
   });
+  const [imagerYear, setImagerYear] = useState<number>(() => new Date().getFullYear());
   const [stockFilmData, setStockFilmData] = useState<Record<string, typeof STOCK_FILM_DEFAULT_2025>>(() => {
     try {
       // ── Version-based migration: if data was saved before v2, reset it ──
@@ -983,6 +1659,20 @@ function App() {
   } | null>(null);
   const [stockTiempoModalClient, setStockTiempoModalClient] = useState<string | null>(null);
   const [projectionPeriod, setProjectionPeriod] = useState<1 | 3 | 6 | 12>(1);
+  const [includeTransit, setIncludeTransit] = useState(true);
+  const [projectionSizeModal, setProjectionSizeModal] = useState<null | {
+    size: string; ft: string; m2box: number;
+    currentStock: number; realTransit: number; totalWithTransit: number;
+    avgMonthly: number; safetyStock: number;
+    coverageCurrent: number | null; coverageWithTransit: number | null;
+    coverageFujiCurrent: number; coverageFujiHistoric: number;
+    toOrder: number; toOrderM2: number; status: string;
+    demandPeriod: number; demandM2: number;
+    topClients: [string, number][];
+    fujiOrders: string[];
+  }>(null);
+  const [bannerCollapsed, setBannerCollapsed] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
 
   const saveStockFilmData = (data: typeof stockFilmData) => {
     setStockFilmData(data);
@@ -1068,6 +1758,10 @@ function App() {
   };
   const [editingGoal, setEditingGoal] = useState<{ name: string; value: string } | null>(null);
   const [selectedDuplicateSerial, setSelectedDuplicateSerial] = useState<{ serial: string; clients: string[] } | null>(null);
+  const [provinceClientsModal, setProvinceClientsModal] = useState<{ province: string; clients: typeof allClients } | null>(null);
+  const [showBulkWarrantyModal, setShowBulkWarrantyModal] = useState(false);
+  const [bulkWarrantyMonths, setBulkWarrantyMonths] = useState('12');
+  const [bulkWarrantyProgress, setBulkWarrantyProgress] = useState<{ done: number; total: number; status: 'idle'|'running'|'done' }>({ done: 0, total: 0, status: 'idle' });
   const [stockFilmCellDetail, setStockFilmCellDetail] = useState<{
     prod: { label: string; type: string; size: string; m2box: number };
     month: string;
@@ -1394,14 +2088,14 @@ function App() {
       id: nextId,
       client_id: clientId,
       order_date: orderDate || new Date().toISOString().split('T')[0],
-      invoice_number: fixInvoiceNumber(rawInvoice) || undefined,
+      invoice_number: fixInvoiceNumber(rawInvoice) || '',
       quantity: qty,
       size,
       batch_number: get(['lote', 'batch', 'batch_number', 'n° lote', 'nro lote']) || '',
       expiry_date: expiryDate,
-      unit_cost: finalCost,
-      film_type: filmType,
-      is_return: isReturn || undefined,
+      unit_cost: finalCost ?? null,
+      film_type: filmType || 'DIHT',
+      is_return: isReturn || false,
     };
   };
 
@@ -1598,26 +2292,29 @@ function App() {
       setCsvImportStatus('preview');
       } catch(err: any) {
         console.error('CSV processText error:', err);
-        setCsvImportError(String(err?.message || err || 'Error desconocido'));
+        const msg = err?.message || String(err) || 'Error desconocido';
+        setCsvImportError(`Error de procesamiento: ${msg}`);
         setCsvImportStatus('error');
       }
     };
 
-    // Try UTF-8 first, fallback to latin-1 if result looks garbled
-    const readerUtf8 = new FileReader();
-    readerUtf8.onload = (ev) => {
-      const text = ev.target?.result as string;
-      if (text.includes('\uFFFD')) {
-        const readerLatin = new FileReader();
-        readerLatin.onload = (ev2) => processText(ev2.target?.result as string);
-        readerLatin.onerror = () => setCsvImportStatus('error');
-        readerLatin.readAsText(file, 'latin-1');
+    // Leer siempre en latin-1 primero (CSVs Windows/Ecuador), fallback a UTF-8
+    const readerLatin = new FileReader();
+    readerLatin.onload = (ev) => {
+      const textLatin = ev.target?.result as string;
+      // Si el texto latin-1 tiene caracteres raros, intentar UTF-8
+      const hasGarbled = /[\x80-\x9F]/.test(textLatin) && !textLatin.includes('ó') && !textLatin.includes('á');
+      if (hasGarbled) {
+        const readerUtf8 = new FileReader();
+        readerUtf8.onload = (ev2) => processText(ev2.target?.result as string);
+        readerUtf8.onerror = () => processText(textLatin); // fallback al latin-1 aunque sea
+        readerUtf8.readAsText(file, 'UTF-8');
       } else {
-        processText(text);
+        processText(textLatin);
       }
     };
-    readerUtf8.onerror = () => setCsvImportStatus('error');
-    readerUtf8.readAsText(file, 'UTF-8');
+    readerLatin.onerror = () => { setCsvImportError('No se pudo leer el archivo.'); setCsvImportStatus('error'); };
+    readerLatin.readAsText(file, 'latin-1');
     e.target.value = '';
   };
 
@@ -1692,7 +2389,10 @@ function App() {
           const batch = writeBatch(db);
           chunk.forEach(({ row, clientId }) => {
             const record = mapRowToRecord(row, clientId!, nextRecordId++);
-            batch.set(doc(db, 'consumos', record.id.toString()), { ...record, film_type: 'DIHL' });
+            const clean = Object.fromEntries(
+              Object.entries({ ...record, film_type: 'DIHL' }).filter(([, v]) => v !== undefined)
+            );
+            batch.set(doc(db, 'consumos', record.id.toString()), clean);
           });
           await batch.commit();
           processed += chunk.length;
@@ -1701,6 +2401,7 @@ function App() {
 
         setCsvImportSummary({ records: toReplace.length + toInsertFresh.length + toCreate.length, newClients: dihlNewClients.size });
         setCsvImportStatus('done');
+        showToast(`Importación DI-HL completa — ${toReplace.length + toInsertFresh.length + toCreate.length} registros`, 'success');
         return;
       }
 
@@ -1776,7 +2477,11 @@ function App() {
         const batch = writeBatch(db);
         chunk.forEach(({ row, clientId }) => {
           const record = mapRowToRecord(row, clientId, nextRecordId++);
-          batch.set(doc(db, 'consumos', record.id.toString()), record);
+          // Firestore rechaza undefined — limpiar todos los campos
+          const clean = Object.fromEntries(
+            Object.entries(record).filter(([, v]) => v !== undefined)
+          );
+          batch.set(doc(db, 'consumos', record.id.toString()), clean);
         });
         await batch.commit();
         processed += chunk.length;
@@ -1785,9 +2490,12 @@ function App() {
 
       setCsvImportSummary({ records: toInsert.length + toUpdateFilmType.length, newClients: uniqueNewClients.size });
       setCsvImportStatus('done');
+      showToast(`Importación completa — ${toInsert.length + toUpdateFilmType.length} registros`, 'success');
+      addAuditLog('import_csv', `Importó CSV — ${toInsert.length} registros nuevos, ${toUpdateFilmType.length} actualizados`);
     } catch (err) {
       console.error('CSV import error:', err);
       setCsvImportStatus('error');
+      showToast('Error al importar el archivo CSV', 'error');
     }
   };
 
@@ -1876,9 +2584,348 @@ function App() {
 
     // Descargar el archivo
     XLSX.writeFile(wb, `Orimec_Data_${format(new Date(), 'yyyy-MM-dd_HH-mm')}.xlsx`);
+    showToast(`Excel exportado — ${allClients.length} clientes · ${allConsumos.length} registros`, 'success');
   };
 
-  // Filtrado de la lista lateral
+  // ── EXPORT CLIENT PDF ─────────────────────────────────────────────────────
+  const handleExportClientPdf = () => {
+    if (!selectedClient) return;
+    setExportingPdf(true);
+
+    const consumos = allConsumos
+      .filter(r => r.client_id === selectedClient.id)
+      .sort((a, b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime());
+
+    const totalM2 = parseFloat(consumos.reduce((s, r) => s + getTotalM2(effectiveQty(r), r.size, r.film_type), 0).toFixed(2));
+    const totalCajas = consumos.reduce((s, r) => s + effectiveQty(r), 0);
+    const totalRevenue = consumos.reduce((s, r) => s + (r.unit_cost ? r.unit_cost * r.quantity : 0), 0);
+    const altName = altNames[selectedClient.id] || '';
+
+    const MONTH_NAMES_ES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+    const now = new Date();
+
+    // Consumo últimos 12 meses
+    const last12 = Array.from({length:12}, (_,i) => {
+      const d = new Date(now.getFullYear(), now.getMonth() - 11 + i, 1);
+      const label = `${MONTH_NAMES_ES[d.getMonth()]} ${d.getFullYear()}`;
+      const qty = consumos.filter(r => {
+        const rd = new Date(r.order_date);
+        return rd.getFullYear() === d.getFullYear() && rd.getMonth() === d.getMonth() && !r.is_return;
+      }).reduce((s,r) => s + r.quantity, 0);
+      return {label, qty};
+    });
+
+    const maxQty = Math.max(...last12.map(m => m.qty), 1);
+
+    const html = `<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<title>Ficha Cliente — ${selectedClient.name}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11px; color: #1a1a2e; background: white; }
+  @page { margin: 16mm 14mm; size: A4; }
+  @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+
+  /* Header */
+  .header { display: flex; align-items: center; justify-content: space-between; padding-bottom: 12px; border-bottom: 2.5px solid #1A3A5C; margin-bottom: 16px; }
+  .header-logo { display: flex; flex-direction: column; }
+  .header-logo .brand { font-size: 18px; font-weight: 900; color: #1A3A5C; letter-spacing: -0.5px; }
+  .header-logo .sub { font-size: 8px; color: #4A9FD4; letter-spacing: 2px; text-transform: uppercase; margin-top: 2px; }
+  .header-meta { text-align: right; }
+  .header-meta .doc-title { font-size: 13px; font-weight: 800; color: #ED1C24; }
+  .header-meta .doc-date { font-size: 9px; color: #888; margin-top: 2px; }
+
+  /* Client card */
+  .client-card { background: #f8fafc; border: 1.5px solid #e2e8f0; border-radius: 10px; padding: 14px 18px; margin-bottom: 14px; }
+  .client-name { font-size: 16px; font-weight: 900; color: #1A3A5C; margin-bottom: 3px; }
+  .client-alt { font-size: 10px; color: #4A9FD4; margin-bottom: 8px; }
+  .client-meta { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
+  .client-meta-item label { font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #94a3b8; display: block; margin-bottom: 1px; }
+  .client-meta-item span { font-size: 11px; font-weight: 600; color: #334155; }
+
+  /* KPI strip */
+  .kpi-strip { display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; margin-bottom: 14px; }
+  .kpi { background: white; border: 1.5px solid #e2e8f0; border-radius: 8px; padding: 10px 12px; text-align: center; }
+  .kpi .value { font-size: 20px; font-weight: 900; color: #1A3A5C; }
+  .kpi .value.red { color: #ED1C24; }
+  .kpi .value.teal { color: #0891b2; }
+  .kpi .value.green { color: #059669; }
+  .kpi label { font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #94a3b8; display: block; margin-top: 3px; }
+
+  /* Chart */
+  .section-title { font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.5px; color: #94a3b8; margin-bottom: 8px; margin-top: 14px; }
+  .bar-chart { display: flex; align-items: flex-end; gap: 4px; height: 70px; padding-bottom: 18px; position: relative; border-bottom: 1px solid #e2e8f0; }
+  .bar-wrap { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; }
+  .bar { width: 100%; background: #1A3A5C; border-radius: 3px 3px 0 0; min-height: 2px; }
+  .bar.empty { background: #e2e8f0; }
+  .bar-label { font-size: 7px; color: #94a3b8; margin-top: 4px; text-align: center; transform: rotate(-35deg); white-space: nowrap; }
+  .bar-val { font-size: 7px; color: #1A3A5C; font-weight: 700; margin-bottom: 2px; }
+
+  /* Table */
+  table { width: 100%; border-collapse: collapse; font-size: 10px; margin-top: 6px; }
+  thead tr { background: #1A3A5C; color: white; }
+  thead th { padding: 6px 8px; text-align: left; font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; }
+  tbody tr:nth-child(even) { background: #f8fafc; }
+  tbody td { padding: 5px 8px; border-bottom: 1px solid #f1f5f9; color: #334155; }
+  tbody tr.return td { color: #ef4444; }
+
+  /* Printers */
+  .printers-grid { display: grid; grid-template-columns: repeat(2,1fr); gap: 8px; margin-top: 6px; }
+  .printer-card { border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 10px; }
+  .printer-model { font-size: 11px; font-weight: 700; color: #1A3A5C; }
+  .printer-serial { font-size: 9px; color: #64748b; }
+
+  /* Footer */
+  .footer { margin-top: 20px; padding-top: 8px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; font-size: 8px; color: #94a3b8; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-logo">
+      <div class="brand">ORIMEC</div>
+      <div class="sub">Oriental Medical del Ecuador C.A.</div>
+    </div>
+    <div class="header-meta">
+      <div class="doc-title">Ficha de Cliente</div>
+      <div class="doc-date">Generado el ${format(now, 'dd/MM/yyyy')} a las ${format(now, 'HH:mm')}</div>
+    </div>
+  </div>
+
+  <div class="client-card">
+    <div class="client-name">${selectedClient.name}</div>
+    ${altName ? `<div class="client-alt">También conocido como: ${altName}</div>` : ''}
+    <div class="client-meta">
+      <div class="client-meta-item"><label>RUC / ID</label><span>${selectedClient.ruc_id || '—'}</span></div>
+      <div class="client-meta-item"><label>Código</label><span>${selectedClient.client_code || '—'}</span></div>
+      <div class="client-meta-item"><label>Provincia</label><span>${selectedClient.province || '—'}</span></div>
+      <div class="client-meta-item"><label>Vendedor</label><span>${selectedClient.salesperson || '—'}</span></div>
+      <div class="client-meta-item"><label>Contacto</label><span>${selectedClient.contact || '—'}</span></div>
+      <div class="client-meta-item"><label>Impresoras</label><span>${(selectedClient.printers||[]).length} registradas</span></div>
+    </div>
+  </div>
+
+  <div class="kpi-strip">
+    <div class="kpi"><div class="value teal">${totalM2.toLocaleString('es-EC',{minimumFractionDigits:1,maximumFractionDigits:1})}</div><label>m² totales</label></div>
+    <div class="kpi"><div class="value red">${totalCajas}</div><label>Cajas totales</label></div>
+    <div class="kpi"><div class="value green">$${totalRevenue.toLocaleString('es-EC',{minimumFractionDigits:2,maximumFractionDigits:2})}</div><label>Ingresos USD</label></div>
+    <div class="kpi"><div class="value">${consumos.length}</div><label>Registros</label></div>
+  </div>
+
+  <div class="section-title">Consumo mensual — últimos 12 meses (cajas)</div>
+  <div class="bar-chart">
+    ${last12.map(m => `
+      <div class="bar-wrap">
+        ${m.qty > 0 ? `<div class="bar-val">${m.qty}</div>` : ''}
+        <div class="bar ${m.qty===0?'empty':''}" style="height:${Math.round((m.qty/maxQty)*52)+2}px"></div>
+        <div class="bar-label">${m.label}</div>
+      </div>
+    `).join('')}
+  </div>
+
+  <div class="section-title">Historial de pedidos${consumos.length > 30 ? ' (últimos 30)' : ''}</div>
+  <table>
+    <thead><tr>
+      <th>Fecha</th><th>Factura</th><th>Tipo</th><th>Medida</th><th>Cajas</th><th>m²</th><th>USD</th>
+    </tr></thead>
+    <tbody>
+      ${consumos.slice(0,30).map(r => {
+        const m2 = getTotalM2(effectiveQty(r), r.size, r.film_type);
+        const rev = r.unit_cost ? r.unit_cost * r.quantity : 0;
+        const isRet = r.is_return;
+        return `<tr class="${isRet?'return':''}">
+          <td>${r.order_date}</td>
+          <td>${r.invoice_number||'—'}</td>
+          <td>${r.film_type||'DI-HT'}</td>
+          <td>${r.size}</td>
+          <td>${isRet?'-':''}${r.quantity}</td>
+          <td>${isRet?'-':''}${m2.toFixed(1)}</td>
+          <td>${rev>0?'$'+rev.toFixed(2):'—'}</td>
+        </tr>`;
+      }).join('')}
+    </tbody>
+  </table>
+
+  ${(selectedClient.printers||[]).length > 0 ? `
+  <div class="section-title" style="margin-top:16px">Impresoras registradas</div>
+  <div class="printers-grid">
+    ${(selectedClient.printers||[]).map((p:any) => `
+      <div class="printer-card">
+        <div class="printer-model">${p.type || 'Tipo no especificado'}</div>
+        <div class="printer-serial" style="margin-top:4px;display:grid;grid-template-columns:1fr 1fr;gap:2px 12px;">
+          ${p.serial ? `<span><b>Serial:</b> ${p.serial}</span>` : ''}
+          ${p.trays ? `<span><b>Bandejas:</b> ${p.trays}</span>` : ''}
+          ${p.installDate ? `<span><b>Instalación:</b> ${p.installDate}</span>` : ''}
+          ${p.location ? `<span><b>Sucursal:</b> ${p.location}</span>` : ''}
+        </div>
+      </div>
+    `).join('')}
+  </div>` : ''}
+
+  <div class="footer">
+    <span>Orimec · Sistema de Gestión Fujifilm · Documento generado automáticamente</span>
+    <span>${selectedClient.name} · ${format(now, 'dd/MM/yyyy HH:mm')}</span>
+  </div>
+</body>
+</html>`;
+
+    const win = window.open('', '_blank', 'width=900,height=700');
+    if (!win) { showToast('Permite ventanas emergentes para exportar PDF', 'warning'); setExportingPdf(false); return; }
+    win.document.write(html);
+    win.document.close();
+    win.onload = () => {
+      setTimeout(() => {
+        win.print();
+        win.onafterprint = () => win.close();
+        setExportingPdf(false);
+        showToast(`PDF generado — ${selectedClient.name}`, 'success');
+      }, 400);
+    };
+  };
+
+  // ── EXPORT PROJECTION PDF ─────────────────────────────────────────────────
+  const handleExportProjectionPdf = () => {
+    const now = new Date();
+    const PERIOD_LABELS: Record<number,string> = {1:'Mensual',3:'Trimestral',6:'Semestral',12:'Anual'};
+    const FT_SIZES: Record<string,string[]> = {
+      'DIHT': ['8x10','10x12','10x14','14x17'],
+      'DIHL': ['8x10','10x14','14x17'],
+      'DIML': ['8x10','10x14'],
+    };
+    const FILM_M2: Record<string,Record<string,number>> = {
+      'DIHT': {'8x10':5.16,'10x12':7.5,'10x14':9.03,'14x17':15.38},
+      'DIHL': {'8x10':7.74,'10x14':13.55,'14x17':15.38},
+      'DIML': {'8x10':7.74,'10x14':13.55},
+    };
+
+    // Build rows
+    const rows: {ft:string; size:string; stock:number; transit:number; safetyStock:number; avgMonthly:number; toOrder:number; m2box:number; status:string}[] = [];
+    ['DIHT','DIHL','DIML'].forEach(ft => {
+      (FT_SIZES[ft]||[]).forEach(size => {
+        const m2box = FILM_M2[ft]?.[size] ?? 0;
+        const prod = STOCK_FILM_PRODUCTS.find(p => p.type === ft && p.size === size);
+        if (!prod) return;
+        const cy = now.getFullYear();
+        const cm = now.getMonth();
+        const yd = stockFilmData[String(cy)]?.[prod.key];
+        let running = yd?.openingBoxes || 0;
+        STOCK_FILM_MONTHS.forEach((month, mi) => {
+          if (mi > cm) return;
+          const inB = yd?.months?.[month]?.inBoxes || 0;
+          const outB = allConsumos.reduce((s,r) => {
+            const rd = new Date(r.order_date);
+            const rft = (!r.film_type||r.film_type==='DIHT')?'DIHT':r.film_type;
+            if (rd.getFullYear()!==cy||rd.getMonth()!==mi||r.size!==size||rft!==ft) return s;
+            return s+(r.is_return?-r.quantity:r.quantity);
+          },0);
+          running = running + inB - outB;
+        });
+        const stock = Math.max(0,running);
+        const realTransit = Object.values(stockFilmTransit[String(cy)]?.[`${ft}_${size}`]||{}).reduce((s:number,v:any)=>s+(v||0),0);
+        const totalW = stock + (includeTransit ? realTransit : 0);
+        const avgMonthly = (() => {
+          let t=0;
+          for(let i=0;i<12;i++){
+            const d=new Date(cy, now.getMonth()-i, 1);
+            allConsumos.forEach(r=>{
+              const rd=new Date(r.order_date);
+              const rft=(!r.film_type||r.film_type==='DIHT')?'DIHT':r.film_type;
+              if(rd.getFullYear()===d.getFullYear()&&rd.getMonth()===d.getMonth()&&r.size===size&&rft===ft&&!r.is_return) t+=r.quantity;
+            });
+          }
+          return t/12;
+        })();
+        const safetyStock = Math.round(avgMonthly*2);
+        const demand = Math.round(avgMonthly*projectionPeriod);
+        const toOrder = Math.max(0, demand - Math.max(0,totalW-safetyStock));
+        const status = toOrder>0?'PEDIR': (avgMonthly>0&&totalW/avgMonthly<3)?'BAJO':'OK';
+        rows.push({ft,size,stock,transit:realTransit,safetyStock,avgMonthly:parseFloat(avgMonthly.toFixed(1)),toOrder,m2box,status});
+      });
+    });
+
+    const statusColor = (s:string) => s==='PEDIR'?'#ef4444':s==='BAJO'?'#f59e0b':'#10b981';
+
+    const html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"/>
+<title>Reporte de Proyección — Orimec ${format(now,'dd/MM/yyyy')}</title>
+<style>
+* { box-sizing:border-box; margin:0; padding:0; }
+body { font-family:'Segoe UI',Arial,sans-serif; font-size:11px; color:#1a1a2e; background:white; }
+@page { margin:14mm 12mm; size:A4 landscape; }
+@media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
+.header { display:flex; align-items:center; justify-content:space-between; padding-bottom:10px; border-bottom:2.5px solid #1A3A5C; margin-bottom:14px; }
+.brand { font-size:18px; font-weight:900; color:#1A3A5C; }
+.sub { font-size:8px; color:#4A9FD4; letter-spacing:2px; text-transform:uppercase; }
+.meta { text-align:right; }
+.doc-title { font-size:13px; font-weight:800; color:#ED1C24; }
+.doc-sub { font-size:9px; color:#888; margin-top:2px; }
+.summary { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:14px; }
+.kpi { background:#f8fafc; border:1.5px solid #e2e8f0; border-radius:8px; padding:10px 12px; }
+.kpi .val { font-size:22px; font-weight:900; }
+.kpi .lbl { font-size:8px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#94a3b8; margin-top:2px; }
+table { width:100%; border-collapse:collapse; font-size:10px; }
+thead tr { background:#1A3A5C; color:white; }
+thead th { padding:6px 8px; text-align:left; font-size:8px; font-weight:700; text-transform:uppercase; letter-spacing:0.8px; }
+tbody tr:nth-child(even) { background:#f8fafc; }
+tbody td { padding:5px 8px; border-bottom:1px solid #f1f5f9; }
+.ft-badge { display:inline-block; padding:2px 6px; border-radius:4px; font-size:8px; font-weight:800; }
+.ft-DIHT { background:#ED1C24; color:white; }
+.ft-DIHL { background:#3b82f6; color:white; }
+.ft-DIML { background:#8b5cf6; color:white; }
+.status-badge { display:inline-block; padding:2px 6px; border-radius:4px; font-size:8px; font-weight:800; }
+.footer { margin-top:16px; padding-top:8px; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; font-size:8px; color:#94a3b8; }
+</style></head><body>
+<div class="header">
+  <div><div class="brand">ORIMEC</div><div class="sub">Oriental Medical del Ecuador C.A.</div></div>
+  <div class="meta"><div class="doc-title">Reporte de Proyección de Compras</div>
+  <div class="doc-sub">${PERIOD_LABELS[projectionPeriod]} · ${includeTransit?'Con tránsito':'Sin tránsito'} · Generado el ${format(now,'dd/MM/yyyy HH:mm')}</div></div>
+</div>
+<div class="summary">
+  <div class="kpi"><div class="val" style="color:#ED1C24">${rows.filter(r=>r.status==='PEDIR').length}</div><div class="lbl">Productos a pedir</div></div>
+  <div class="kpi"><div class="val" style="color:#f59e0b">${rows.filter(r=>r.status==='BAJO').length}</div><div class="lbl">Stock bajo</div></div>
+  <div class="kpi"><div class="val" style="color:#10b981">${rows.filter(r=>r.status==='OK').length}</div><div class="lbl">Stock OK</div></div>
+  <div class="kpi"><div class="val" style="color:#1A3A5C">${rows.reduce((s,r)=>s+r.toOrder*r.m2box,0).toFixed(0)} m²</div><div class="lbl">Total m² a pedir</div></div>
+</div>
+<table>
+<thead><tr>
+  <th>Tipo</th><th>Medida</th><th>m²/caja</th>
+  <th>Stock bodega</th><th>En tránsito</th><th>Stock seg.</th><th>Avg/mes</th>
+  <th>Demanda · ${PERIOD_LABELS[projectionPeriod]}</th>
+  <th>A pedir · ${PERIOD_LABELS[projectionPeriod]} (cj)</th>
+  <th>A pedir · ${PERIOD_LABELS[projectionPeriod]} (m²)</th>
+  <th>Estado</th>
+</tr></thead>
+<tbody>
+${rows.map(r=>{
+  const demandCj = Math.round(r.avgMonthly * projectionPeriod);
+  const demandM2 = (demandCj * r.m2box).toFixed(1);
+  return `<tr>
+  <td><span class="ft-badge ft-${r.ft}">${r.ft.replace('DI','DI-')}</span></td>
+  <td><b>${r.size}</b></td>
+  <td>${r.m2box}</td>
+  <td>${r.stock} cj · ${(r.stock*r.m2box).toFixed(1)} m²</td>
+  <td>${r.transit>0?`${r.transit} cj`:'—'}</td>
+  <td>${r.safetyStock} cj</td>
+  <td>${r.avgMonthly} cj/mes</td>
+  <td>${demandCj} cj · ${demandM2} m²</td>
+  <td style="font-weight:900;color:${statusColor(r.status)}">${r.toOrder>0?r.toOrder:'—'}</td>
+  <td style="font-weight:900;color:${statusColor(r.status)}">${r.toOrder>0?(r.toOrder*r.m2box).toFixed(1):'—'}</td>
+  <td><span class="status-badge" style="background:${statusColor(r.status)}20;color:${statusColor(r.status)}">${r.status}</span></td>
+</tr>`;}).join('')}
+</tbody></table>
+<div class="footer">
+  <span>Orimec · Sistema de Gestión Fujifilm · Documento generado automáticamente</span>
+  <span>Período: ${PERIOD_LABELS[projectionPeriod]} · ${includeTransit?'Stock bodega + tránsito':'Solo stock en bodega'}</span>
+</div>
+</body></html>`;
+
+    const win = window.open('','_blank','width=1100,height=750');
+    if (!win) { showToast('Permite ventanas emergentes para exportar PDF','warning'); return; }
+    win.document.write(html);
+    win.document.close();
+    win.onload = () => setTimeout(() => { win.print(); win.onafterprint = ()=>win.close(); showToast('PDF de Proyección generado','success'); }, 400);
+  };
+
   const filteredClients = useMemo(() => {
     return allClients.filter(c => {
       const searchLower = searchTerm.toLowerCase();
@@ -1991,9 +3038,31 @@ function App() {
       await setDoc(doc(db, "clientes", finalClient.id.toString()), finalClient);
       setIsClientModalOpen(false);
       setSelectedClient(finalClient);
+      const isNew = !clientToSave.id;
+      showToast(isNew ? `Cliente "${finalClient.name}" creado` : `Cliente "${finalClient.name}" actualizado`, 'success');
+
+      // Build diff for existing client
+      const prevClient = allClients.find(c => c.id === finalClient.id);
+      const clientCambios: string[] = [];
+      if (!isNew && prevClient) {
+        if (prevClient.name !== finalClient.name) clientCambios.push(`Se cambió el nombre de "${prevClient.name}" a "${finalClient.name}"`);
+        if (prevClient.province !== finalClient.province) clientCambios.push(`Se cambió la provincia de "${prevClient.province}" a "${finalClient.province}"`);
+        if (prevClient.ruc_id !== finalClient.ruc_id) clientCambios.push(`Se actualizó el RUC de "${prevClient.ruc_id||'—'}" a "${finalClient.ruc_id||'—'}"`);
+        if (prevClient.contact !== finalClient.contact) clientCambios.push(`Se actualizó el contacto de "${prevClient.contact||'—'}" a "${finalClient.contact||'—'}"`);
+        if (prevClient.salesperson !== finalClient.salesperson) clientCambios.push(`Se cambió el vendedor de "${prevClient.salesperson||'—'}" a "${finalClient.salesperson||'—'}"`);
+        if (prevClient.client_code !== finalClient.client_code) clientCambios.push(`Se actualizó el código de "${prevClient.client_code||'—'}" a "${finalClient.client_code||'—'}"`);
+      }
+
+      addAuditLog(isNew ? 'create_client' : 'update_client',
+        isNew ? `Creó cliente "${finalClient.name}" (${finalClient.province})` : `Actualizó cliente "${finalClient.name}"`,
+        String(finalClient.id),
+        isNew
+          ? { operacion: 'Nuevo cliente', nombre: finalClient.name, provincia: finalClient.province, ruc: finalClient.ruc_id, vendedor: finalClient.salesperson }
+          : { operacion: 'Edición de datos', cambios: clientCambios.length > 0 ? clientCambios : ['Sin cambios detectados'] }
+      );
     } catch (error) {
       console.error("Error saving client:", error);
-      alert("Error al guardar el cliente.");
+      showToast('Error al guardar el cliente', 'error');
     }
   };
 
@@ -2031,12 +3100,14 @@ function App() {
       );
 
       // 4. Update local state
+      const deletedName = clientToDelete.name;
       setSelectedClient(null);
       setClientToDelete(null);
-      
+      showToast(`Cliente "${deletedName}" eliminado`, 'info');
+      addAuditLog('delete_client', `Eliminó cliente "${deletedName}" y ${recordsToDelete.length} registros`);
     } catch (error) {
       console.error("Error deleting client:", error);
-      alert(`Error al eliminar el cliente: ${error instanceof Error ? error.message : 'Error desconocido'}`);
+      showToast(`Error al eliminar: ${error instanceof Error ? error.message : 'Error desconocido'}`, 'error');
     }
   };
 
@@ -2126,9 +3197,11 @@ function App() {
       setIsMergeModalOpen(false);
       setMergeTarget(null);
       setMergeSearchQuery('');
+      showToast(`"${mergeTarget.name}" fusionado con "${selectedClient.name}"`, 'success');
+      addAuditLog('merge_clients', `Fusionó "${mergeTarget.name}" → "${selectedClient.name}"`);
     } catch (error) {
       console.error('Error fusionando clientes:', error);
-      alert('Error al fusionar clientes. Intente de nuevo.');
+      showToast('Error al fusionar clientes. Intente de nuevo.', 'error');
     } finally {
       setIsMerging(false);
     }
@@ -2149,6 +3222,7 @@ function App() {
         name: tempAltName
       });
       setIsAltNameModalOpen(false);
+      addAuditLog('update_client', `Actualizó denominación alternativa de "${selectedClient.name}" → "${tempAltName}"`, String(selectedClient.id));
     } catch (error) {
       console.error("Error saving alt name:", error);
       alert("Error al guardar la denominación alternativa.");
@@ -2183,9 +3257,22 @@ function App() {
       await setDoc(doc(db, "consumos", finalRecord.id.toString()), finalRecord);
       setIsModalOpen(false);
       setEditingRecord(null);
+      showToast(editingRecord.id ? 'Registro actualizado' : 'Registro guardado', 'success');
+      addAuditLog(editingRecord.id ? 'update_record' : 'create_record',
+        `${editingRecord.id ? 'Actualizó' : 'Creó'} registro ${finalRecord.invoice_number || finalRecord.id} — ${finalRecord.size} × ${finalRecord.quantity} cj`,
+        String(finalRecord.client_id),
+        { 
+          operacion: editingRecord.id ? 'Edición de factura' : 'Nueva factura',
+          cambios: editingRecord.id ? [
+            `Factura registrada: ${finalRecord.invoice_number || '—'} · ${finalRecord.size} · ${finalRecord.quantity} cj · ${finalRecord.film_type || 'DIHT'} · ${finalRecord.order_date}${finalRecord.is_return ? ' (devolución)' : ''}`
+          ] : [
+            `Se creó la factura ${finalRecord.invoice_number || '—'} para ${allClients.find(c=>c.id===finalRecord.client_id)?.name || 'cliente'}: ${finalRecord.quantity} cj ${finalRecord.film_type || 'DIHT'} ${finalRecord.size} del ${finalRecord.order_date}`
+          ]
+        }
+      );
     } catch (error) {
       console.error("Error saving record:", error);
-      alert("Error al guardar el registro.");
+      showToast('Error al guardar el registro', 'error');
     }
   };
 
@@ -2193,9 +3280,11 @@ function App() {
     if (window.confirm("¿Está seguro de eliminar este registro?")) {
       try {
         await deleteDoc(doc(db, "consumos", id.toString()));
+        showToast('Registro eliminado', 'info');
+        addAuditLog('delete_record', `Eliminó registro ID ${id}`);
       } catch (error) {
         console.error("Error deleting record:", error);
-        alert("Error al eliminar el registro.");
+        showToast('Error al eliminar el registro', 'error');
       }
     }
   };
@@ -2359,6 +3448,68 @@ function App() {
       salespersonData
     };
   }, [allConsumos, allClients, dashboardStartDate, dashboardEndDate, TRIMAX_2024]);
+
+  // ── DAY BRIEF — datos del banner de bienvenida ────────────────────────────
+  const dayBrief = useMemo(() => {
+    const today = new Date();
+    const todayStr = format(today, 'yyyy-MM-dd');
+
+    // Facturas y m² de hoy
+    const todayConsumos = allConsumos.filter(r => r.order_date?.startsWith(todayStr) && !r.is_return);
+    const todayM2 = parseFloat(todayConsumos.reduce((s, r) => s + getTotalM2(r.quantity, r.size, r.film_type), 0).toFixed(1));
+    const todayFacturas = new Set(todayConsumos.map(r => r.invoice_number).filter(Boolean)).size;
+    const todayClientes = new Set(todayConsumos.map(r => r.client_id)).size;
+
+    // Clientes en riesgo (sin compra últimos 60 días)
+    const cutoff60 = new Date(today); cutoff60.setDate(cutoff60.getDate() - 60);
+    const clientesEnRiesgo = allClients.filter(c => {
+      const consumos = allConsumos.filter(r => r.client_id === c.id && !r.is_return);
+      if (!consumos.length) return false;
+      const last = new Date(consumos.slice().sort((a,b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime())[0].order_date);
+      return last < cutoff60;
+    }).length;
+
+    // Stock bajo: productos DIHT con cobertura < 2 meses
+    const FUJI_SIZES: Array<{ft:'DIHT'|'DIHL', size:string}> = [
+      {ft:'DIHT',size:'8x10'},{ft:'DIHT',size:'10x12'},{ft:'DIHT',size:'10x14'},{ft:'DIHT',size:'14x17'},
+      {ft:'DIHL',size:'8x10'},{ft:'DIHL',size:'10x14'},{ft:'DIHL',size:'14x17'},
+    ];
+    let stockBajo = 0;
+    FUJI_SIZES.forEach(({ft, size}) => {
+      const consumosFt = allConsumos.filter(r => {
+        const rft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type === 'DIHL' ? 'DIHL' : null;
+        return rft === ft && r.size === size && !r.is_return;
+      });
+      if (!consumosFt.length) return;
+      const avgMonthly = consumosFt.reduce((s,r) => s + r.quantity, 0) / 12;
+      if (avgMonthly <= 0) return;
+      // Find current bodega stock from stockFilmData
+      const prod = STOCK_FILM_PRODUCTS.find(p => p.type === ft && p.size === size);
+      if (!prod) return;
+      const cy = new Date().getFullYear();
+      const cm = new Date().getMonth();
+      const yd = stockFilmData[String(cy)]?.[prod.key];
+      if (!yd) return;
+      let running = yd.openingBoxes || 0;
+      STOCK_FILM_MONTHS.forEach((month, mi) => {
+        if (mi > cm) return;
+        running = running + (yd.months?.[month]?.inBoxes || 0) - allConsumos.reduce((s, r) => {
+          const rd = new Date(r.order_date);
+          const rft2 = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type === 'DIHL' ? 'DIHL' : null;
+          if (rd.getFullYear() !== cy || rd.getMonth() !== mi || r.size !== size || rft2 !== ft) return s;
+          return s + (r.is_return ? -r.quantity : r.quantity);
+        }, 0);
+      });
+      const currentStock = Math.max(0, running);
+      if (currentStock / avgMonthly < 2) stockBajo++;
+    });
+
+    // Hora del día para el saludo
+    const hour = today.getHours();
+    const greeting = hour < 12 ? 'Buenos días' : hour < 18 ? 'Buenas tardes' : 'Buenas noches';
+
+    return { todayM2, todayFacturas, todayClientes, clientesEnRiesgo, stockBajo, greeting, todayStr };
+  }, [allConsumos, allClients, stockFilmData]);
 
   // ── FILTERED CONSUMOS for Inventory & Intelligence (by globalFilmFilter) ──
   const filteredConsumosForView = useMemo(() => {
@@ -3323,22 +4474,47 @@ function App() {
 
   const handleSaveStockEntry = async () => {
     if (!newStockEntry.size || !newStockEntry.quantity || !newStockEntry.date) return;
+    const ft = newStockEntry.film_type || 'DIHT';
+    const size = newStockEntry.size;
+    const qty = parseInt(String(newStockEntry.quantity)) || 0;
+    const entryDate = newStockEntry.date || new Date().toISOString().split('T')[0];
     try {
       await addDoc(collection(db, 'stock_entries'), {
-        date: newStockEntry.date || new Date().toISOString().split('T')[0],
-        size: newStockEntry.size || '',
-        quantity: parseInt(String(newStockEntry.quantity)) || 0,
+        date: entryDate,
+        size,
+        quantity: qty,
         batch_number: newStockEntry.batch_number || '',
         expiry_date: newStockEntry.expiry_date || '2099-12-31',
         unit_cost: parseFloat(String(newStockEntry.unit_cost)) || 0,
         supplier_invoice: newStockEntry.supplier_invoice || '',
+        purchase_order: newStockEntry.purchase_order || '',
         notes: newStockEntry.notes || '',
-        film_type: newStockEntry.film_type || 'DIHT',
+        film_type: ft,
       });
       setIsStockEntryModalOpen(false);
-      setNewStockEntry({});
+
+      // Check if there's transit stock for this product
+      const entryYear = new Date(entryDate).getFullYear();
+      const filmKey = `${ft}_${size}`;
+      const transitByMonth = stockFilmTransit[String(entryYear)]?.[filmKey] || {};
+      const totalTransit = Object.values(transitByMonth).reduce((s: number, v: any) => s + (v || 0), 0);
+
+      if (totalTransit > 0) {
+        // Show transit deduction modal
+        setTransitDeductQty(String(Math.min(qty, totalTransit)));
+        setTransitDeductModal({ ft, size, entryQty: qty, entryDate, totalTransit, transitByMonth, filmKey, year: entryYear });
+      } else {
+        setNewStockEntry({});
+        showToast(`Entrada registrada: ${qty} cajas ${ft} ${size}`, 'success');
+        addAuditLog('create_record', `Registró entrada de ${qty} cj ${ft} ${size}`, undefined,
+          { cambios: [
+            `Se registró entrada de ${qty} cajas de ${ft === 'DIHT' ? 'DI-HT' : ft === 'DIHL' ? 'DI-HL' : 'DI-ML'} ${size}${newStockEntry.purchase_order ? ` · Orden: ${newStockEntry.purchase_order}` : ''}${newStockEntry.supplier_invoice ? ` · Factura: ${newStockEntry.supplier_invoice}` : ''}${newStockEntry.batch_number ? ` · Lote: ${newStockEntry.batch_number}` : ''}`
+          ]}
+        );
+      }
     } catch (err) {
       console.error('Error saving stock entry:', err);
+      showToast('Error al registrar la entrada', 'error');
     }
   };
 
@@ -3359,18 +4535,28 @@ function App() {
       >
       {loading && (
         <div className={cn(
-          "fixed inset-0 z-[100] flex flex-col items-center justify-center transition-colors duration-300 gap-5",
+          "fixed inset-0 z-[100] flex flex-col items-center justify-center transition-colors duration-300 gap-6",
           darkMode ? "bg-[#0F0F11]" : "bg-white"
         )}>
+          {/* Logo badge con pulse */}
           <div className="relative">
-            <div className="w-14 h-14 rounded-2xl bg-[#ED1C24] flex items-center justify-center shadow-xl shadow-red-500/30">
-              <Package className="text-white w-7 h-7" />
+            <div className="relative z-10">
+              <OrimecLogo size={64} />
             </div>
-            <div className="absolute -inset-2 rounded-3xl border-2 border-[#ED1C24]/30 animate-ping" />
+            <div className="absolute -inset-3 rounded-2xl border-2 border-[#1A3A5C]/20 animate-ping" />
           </div>
-          <div className="text-center">
-            <p className="font-black text-[#ED1C24] text-sm tracking-widest uppercase">FUJIFILM DI-HT · DI-HL</p>
-            <p className={cn("text-xs mt-1 font-medium", darkMode ? "text-gray-500" : "text-gray-400")}>Cargando datos de Orimec...</p>
+          {/* Wordmark completo */}
+          <div className="flex flex-col items-center gap-1.5">
+            <OrimecLogo size={56} />
+            <p className={cn("text-[10px] font-semibold uppercase tracking-[0.2em]", darkMode ? "text-gray-600" : "text-gray-400")}>
+              Sistema de Gestión · Fujifilm
+            </p>
+          </div>
+          {/* Loading indicator */}
+          <div className="flex items-center gap-1.5 mt-2">
+            {[0,1,2].map(i => (
+              <div key={i} className="w-1.5 h-1.5 rounded-full bg-[#1A3A5C]/40 animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
+            ))}
           </div>
         </div>
       )}
@@ -3381,12 +4567,10 @@ function App() {
       )}>
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-3">
-            <div className="relative">
-              <div className="w-9 h-9 bg-[#ED1C24] rounded-xl flex items-center justify-center shadow-lg shadow-red-500/25">
-                <Package className="text-white w-5 h-5" />
-              </div>
-            </div>
-            <div>
+            {/* Icon badge */}
+            <OrimecLogo size={36} />
+            {/* Wordmark — only show on wider screens */}
+            <div className="hidden lg:block">
               <h1 className="text-base font-black tracking-tight leading-none">
                 FUJIFILM <span className="text-[#ED1C24]">DI-HT · DI-HL</span>
               </h1>
@@ -3464,6 +4648,41 @@ function App() {
           >
             <LogOut className="w-4 h-4" />
           </button>
+
+          {/* Zoom indicator — solo visible si zoom ≠ automático */}
+          {Math.abs(zoomLevel - calcZoom()) > 0.04 && (
+            <button
+              onClick={() => {
+                localStorage.removeItem('orimec_zoom');
+                setZoomLevel(calcZoom());
+              }}
+              className={cn(
+                "flex items-center gap-1 px-2 py-1.5 rounded-lg text-[10px] font-black border transition-all",
+                darkMode ? "bg-white/5 border-white/10 text-gray-500 hover:bg-white/8 hover:text-gray-300" : "bg-gray-100 border-gray-200 text-gray-400 hover:bg-gray-200 hover:text-gray-600"
+              )}
+              title="Restablecer zoom automático"
+            >
+              {Math.round(zoomLevel * 100)}% ↺
+            </button>
+          )}
+
+          {/* Audit Log button — admin only */}
+          {role === 'admin' && (
+            <button
+              onClick={() => setShowAuditLog(true)}
+              className={cn(
+                "relative p-2 rounded-xl transition-all duration-300",
+                darkMode ? "bg-white/5 text-gray-500 hover:bg-white/8 hover:text-gray-300 border border-white/6" : "bg-gray-100 text-gray-500 hover:bg-gray-200 border border-transparent"
+              )}
+              title="Historial de auditoría"
+            >
+              <History className="w-4 h-4" />
+              {auditLogs.length > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-blue-400" />
+              )}
+            </button>
+          )}
+
           <button
             onClick={() => setDarkMode(!darkMode)}
             className={cn(
@@ -3478,21 +4697,22 @@ function App() {
           </button>
 
           <div className="relative">
-            <Search className={cn(
-              "absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5",
-              darkMode ? "text-gray-600" : "text-gray-400"
-            )} />
-            <input
-              type="text"
-              placeholder="Buscar clientes, RUC, factura..."
+            <button
+              onClick={() => setGlobalSearchOpen(true)}
               className={cn(
-                "pl-9 pr-4 py-2 rounded-xl w-72 outline-none text-xs font-medium transition-all",
+                "flex items-center gap-2 pl-3 pr-3 py-2 rounded-xl w-64 text-xs font-medium transition-all text-left",
                 darkMode
-                  ? "bg-white/5 text-white placeholder:text-gray-600 focus:bg-white/8 focus:ring-1 focus:ring-[#ED1C24]/30"
-                  : "bg-gray-100 text-gray-800 placeholder:text-gray-400 focus:bg-white focus:ring-2 focus:ring-[#ED1C24]/15 border border-transparent focus:border-[#ED1C24]/20"
+                  ? "bg-white/5 text-gray-500 hover:bg-white/8 hover:text-gray-400 border border-white/6"
+                  : "bg-gray-100 text-gray-400 hover:bg-gray-200/70 border border-transparent"
               )}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
+            >
+              <Search className="w-3.5 h-3.5 shrink-0" />
+              <span className="flex-1">Buscar clientes, facturas...</span>
+              <kbd className={cn(
+                "text-[9px] font-mono px-1.5 py-0.5 rounded border shrink-0",
+                darkMode ? "border-white/10 bg-white/5 text-gray-600" : "border-gray-300 bg-white text-gray-400"
+              )}>Ctrl+K</kbd>
+            </button>
           </div>
 
           {(role === 'admin' || role === 'financiero' || role === 'asistente' || role === 'gerencia') && (
@@ -3564,7 +4784,28 @@ function App() {
                 </h2>
               </div>
               <div className="flex-1 overflow-y-auto space-y-2 pr-1 pb-8 custom-scrollbar">
-              {filteredClients.map(client => (
+              {loading ? (
+                // Skeleton mientras carga
+                Array.from({ length: 7 }).map((_, i) => (
+                  <React.Fragment key={i}><SkeletonClientCard darkMode={darkMode} /></React.Fragment>
+                ))
+              ) : filteredClients.length === 0 ? (
+                // Empty state — sin resultados de búsqueda
+                <div className={cn("flex flex-col items-center justify-center py-12 text-center rounded-2xl border border-dashed", darkMode ? "border-white/6 bg-white/2" : "border-gray-200 bg-gray-50/50")}>
+                  <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center mb-3", darkMode ? "bg-white/5" : "bg-gray-100")}>
+                    <Search className={cn("w-5 h-5", darkMode ? "text-gray-600" : "text-gray-300")} />
+                  </div>
+                  <p className={cn("text-xs font-bold", darkMode ? "text-gray-600" : "text-gray-400")}>
+                    {searchTerm ? `Sin resultados para "${searchTerm}"` : 'No hay clientes registrados'}
+                  </p>
+                  {searchTerm && (
+                    <button onClick={() => setSearchTerm('')} className={cn("mt-2 text-[10px] font-semibold underline", darkMode ? "text-gray-600 hover:text-gray-400" : "text-gray-400 hover:text-gray-600")}>
+                      Limpiar búsqueda
+                    </button>
+                  )}
+                </div>
+              ) : (
+                filteredClients.map(client => (
                   <button
                     key={client.id}
                     onClick={() => setSelectedClient(client)}
@@ -3602,7 +4843,8 @@ function App() {
                       );
                     })()}
                   </button>
-                ))}
+                ))
+              )}
               </div>
             </div>
 
@@ -3659,6 +4901,23 @@ function App() {
                               <Trash2 className="w-4 h-4" />
                             </button>
                           )}
+                          {/* Botón exportar PDF */}
+                          <button
+                            onClick={handleExportClientPdf}
+                            disabled={exportingPdf}
+                            className={cn(
+                              "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-bold transition-all border",
+                              exportingPdf
+                                ? "opacity-50 cursor-not-allowed"
+                                : (darkMode
+                                  ? "bg-white/5 border-white/10 text-gray-400 hover:bg-white/10 hover:text-gray-200 hover:border-white/20"
+                                  : "bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100 hover:text-gray-700")
+                            )}
+                            title="Exportar ficha del cliente como PDF"
+                          >
+                            <FileText className="w-3.5 h-3.5" />
+                            {exportingPdf ? 'Generando...' : 'PDF'}
+                          </button>
                         </div>
                       </div>
 
@@ -3729,9 +4988,10 @@ function App() {
                           <select
                             value={clientSizeFilter}
                             onChange={(e) => setClientSizeFilter(e.target.value)}
+                            style={darkMode ? { colorScheme: 'dark' } : {}}
                             className={cn(
                               "text-xs font-semibold px-3 py-1.5 rounded-lg outline-none cursor-pointer transition-colors border-none focus:ring-2 focus:ring-[#ED1C24]/20",
-                              darkMode ? "bg-white/8 text-white" : "bg-gray-100 text-gray-700"
+                              darkMode ? "bg-[#16161A] text-white" : "bg-gray-100 text-gray-700"
                             )}
                           >
                             <option value="Todas" className={darkMode ? "bg-[#16161A]" : "bg-white"}>Todas las medidas</option>
@@ -3834,7 +5094,7 @@ function App() {
                           <div className="flex justify-between items-center mb-6">
                             <h3 className="text-sm font-black uppercase tracking-widest">Impresoras Instaladas</h3>
                             <div className="flex items-center gap-2">
-                              {!isEditingPrinters && editingPrinters.length > 0 && (
+                              {!isEditingPrinters && editingPrinters.length > 0 && role !== 'vendedor' && (
                                 <button 
                                   onClick={() => setIsEditingPrinters(true)}
                                   className={cn(
@@ -3845,21 +5105,23 @@ function App() {
                                   <Edit2 className="w-3.5 h-3.5" /> Editar
                                 </button>
                               )}
-                              <button 
-                                onClick={() => {
-                                  setEditingPrinters([...editingPrinters, { id: Date.now().toString(), type: '', trays: '', installDate: '', serial: '', location: '' }]);
-                                }}
-                                className="text-[10px] font-bold bg-[#ED1C24] text-white px-3 py-1.5 rounded-full flex items-center gap-1.5 hover:bg-[#D11920] transition-all shadow-sm"
-                              >
-                                <Plus className="w-3.5 h-3.5" /> Agregar Impresora
-                              </button>
+                              {role !== 'vendedor' && (
+                                <button 
+                                  onClick={() => {
+                                    setEditingPrinters([...editingPrinters, { id: Date.now().toString(), type: '', trays: '', installDate: '', serial: '', location: '' }]);
+                                  }}
+                                  className="text-[10px] font-bold bg-[#ED1C24] text-white px-3 py-1.5 rounded-full flex items-center gap-1.5 hover:bg-[#D11920] transition-all shadow-sm"
+                                >
+                                  <Plus className="w-3.5 h-3.5" /> Agregar Impresora
+                                </button>
+                              )}
                             </div>
                           </div>
                           
                           <div className="space-y-4">
                             {editingPrinters.map((printer, index) => {
                               const isExistingPrinter = selectedClient?.printers?.some(p => p.id === printer.id);
-                              const isDisabled = !isEditingPrinters && isExistingPrinter;
+                              const isDisabled = role === 'vendedor' || (!isEditingPrinters && isExistingPrinter);
                               
                               return (
                                 <div key={printer.id} className="grid grid-cols-12 gap-4 items-end">
@@ -3912,6 +5174,32 @@ function App() {
                                       onChange={e => {
                                         const newPrinters = [...editingPrinters];
                                         newPrinters[index].installDate = e.target.value;
+                                        setEditingPrinters(newPrinters);
+                                      }}
+                                      className={cn(
+                                        "w-full px-3 py-2 rounded-xl border-none outline-none font-bold text-xs transition-colors",
+                                        isDisabled 
+                                          ? "bg-transparent px-0 text-lg" 
+                                          : (darkMode ? "bg-[#16161A] text-white focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm" : "bg-white text-gray-900 focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm")
+                                      )}
+                                    />
+                                  </div>
+                                  <div className="col-span-3">
+                                    <label className={cn("text-[10px] font-bold uppercase mb-1 block",
+                                      printer.warrantyDate && new Date(printer.warrantyDate) < new Date() ? "text-red-400" :
+                                      printer.warrantyDate && new Date(printer.warrantyDate) < new Date(Date.now() + 60*24*60*60*1000) ? "text-amber-400" :
+                                      "text-gray-400"
+                                    )}>
+                                      Venc. Garantía / Mantenimiento
+                                      {printer.warrantyDate && new Date(printer.warrantyDate) < new Date() && <span className="ml-1">⚠ Vencida</span>}
+                                    </label>
+                                    <input 
+                                      type="date" 
+                                      value={printer.warrantyDate || ''}
+                                      disabled={isDisabled}
+                                      onChange={e => {
+                                        const newPrinters = [...editingPrinters];
+                                        newPrinters[index].warrantyDate = e.target.value;
                                         setEditingPrinters(newPrinters);
                                       }}
                                       className={cn(
@@ -3986,7 +5274,7 @@ function App() {
                             )}
                           </div>
                           
-                          {(isEditingPrinters || JSON.stringify(editingPrinters) !== JSON.stringify(selectedClient?.printers || [])) && (
+                          {role !== 'vendedor' && (isEditingPrinters || JSON.stringify(editingPrinters) !== JSON.stringify(selectedClient?.printers || [])) && (
                             <div className="mt-6 flex justify-end gap-3">
                               <button 
                                 onClick={() => {
@@ -4008,6 +5296,54 @@ function App() {
                                     await setDoc(clientRef, { ...selectedClient, printers: editingPrinters }, { merge: true });
                                     setSelectedClient({ ...selectedClient, printers: editingPrinters });
                                     setIsEditingPrinters(false);
+
+                                    // Build before/after diff in natural language
+                                    const prevPrinters = selectedClient.printers || [];
+                                    const changes: string[] = [];
+                                    editingPrinters.forEach(newP => {
+                                      // Match by id first, then by serial, then by type+installDate
+                                      const old = prevPrinters.find(o => o.id === newP.id)
+                                        || (newP.serial ? prevPrinters.find(o => o.serial === newP.serial) : undefined)
+                                        || (prevPrinters.length === 1 && editingPrinters.length === 1 ? prevPrinters[0] : undefined);
+                                      if (!old) {
+                                        changes.push(`Se agregó la impresora ${newP.type}${newP.serial ? ` (serial: ${newP.serial})` : ''}`);
+                                      } else {
+                                        if (old.type !== newP.type) changes.push(`Se cambió el tipo de "${old.type}" a "${newP.type}" (serial: ${newP.serial||'—'})`);
+                                        if ((old.serial||'') !== (newP.serial||'')) changes.push(`Se actualizó el serial de ${old.type} de "${old.serial||'—'}" a "${newP.serial||'—'}"`);
+                                        if ((old.installDate||'') !== (newP.installDate||'')) changes.push(`Se modificó la fecha de instalación de ${old.type} (${newP.serial||'—'}) de ${old.installDate||'sin fecha'} a ${newP.installDate||'sin fecha'}`);
+                                        if ((old.location||'') !== (newP.location||'')) changes.push(`Se actualizó la sucursal de ${old.type} (${newP.serial||'—'}) de "${old.location||'—'}" a "${newP.location||'—'}"`);
+                                        if ((old.warrantyDate||'') !== (newP.warrantyDate||'')) changes.push(`Se actualizó la fecha de garantía de ${old.type} (${newP.serial||'—'}) de ${old.warrantyDate||'sin fecha'} a ${newP.warrantyDate||'sin fecha'}`);
+                                        if ((old.trays||'') !== (newP.trays||'')) changes.push(`Se modificaron las bandejas de ${old.type} (${newP.serial||'—'}) de "${old.trays||'—'}" a "${newP.trays||'—'}"`);
+                                      }
+                                    });
+                                    prevPrinters.forEach(old => {
+                                      const stillExists = editingPrinters.find(n => n.id === old.id || (old.serial && n.serial === old.serial));
+                                      if (!stillExists)
+                                        changes.push(`Se eliminó la impresora ${old.type}${old.serial ? ` (serial: ${old.serial})` : ''}`);
+                                    });
+
+                                    // If no specific changes detected, summarize current state
+                                    const finalCambios = changes.length > 0 ? changes : editingPrinters.map(p =>
+                                      `Impresora confirmada sin cambios: ${p.type}${p.serial ? ` (serial: ${p.serial})` : ''}${p.warrantyDate ? ` · garantía: ${p.warrantyDate}` : ''}${p.installDate ? ` · instalación: ${p.installDate}` : ''}`
+                                    );
+
+                                    addAuditLog('update_client',
+                                      `Actualizó impresoras de "${selectedClient.name}" — ${editingPrinters.length} unidades`,
+                                      String(selectedClient.id),
+                                      {
+                                        cliente: selectedClient.name,
+                                        operacion: 'Actualización de impresoras',
+                                        totalImpresoras: editingPrinters.length,
+                                        cambios: finalCambios,
+                                        impresoras: editingPrinters.map(p => ({
+                                          tipo: p.type, serial: p.serial,
+                                          instalacion: p.installDate || '—',
+                                          sucursal: p.location || '—',
+                                          garantia: p.warrantyDate || '—',
+                                          bandejas: p.trays || '—'
+                                        }))
+                                      }
+                                    );
                                   } catch (error) {
                                     console.error("Error saving printers:", error);
                                     alert("Error al guardar las impresoras");
@@ -4021,6 +5357,44 @@ function App() {
                           )}
                         </div>
                       )}
+                    </div>
+                  </div>
+
+                  {/* ── NOTAS CRM ── */}
+                  <div className={cn("rounded-xl border transition-colors duration-300", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                    <div className={cn("px-5 py-3 border-b flex items-center justify-between", darkMode ? "border-white/6" : "border-gray-100")}>
+                      <h3 className={cn("text-[10px] font-bold uppercase tracking-wider flex items-center gap-2", darkMode ? "text-gray-500" : "text-gray-400")}>
+                        <FileText className="w-3.5 h-3.5" /> Notas del cliente
+                      </h3>
+                      {selectedClient.notes && (
+                        <span className={cn("text-[8px] font-semibold px-2 py-0.5 rounded-full", darkMode ? "bg-blue-500/15 text-blue-400" : "bg-blue-50 text-blue-600")}>
+                          Con notas
+                        </span>
+                      )}
+                    </div>
+                    <div className="p-4">
+                      <textarea
+                        value={selectedClient.notes || ''}
+                        onChange={async e => {
+                          const updated = { ...selectedClient, notes: e.target.value };
+                          setSelectedClient(updated);
+                          // Debounced save to Firestore
+                          try {
+                            await setDoc(doc(db, 'clientes', selectedClient.id.toString()), updated);
+                          } catch {}
+                        }}
+                        placeholder="Observaciones, acuerdos, historial de contactos, condiciones especiales..."
+                        rows={3}
+                        className={cn(
+                          "w-full px-3 py-2.5 rounded-xl text-xs font-medium outline-none transition-all resize-none",
+                          darkMode
+                            ? "bg-white/5 text-white placeholder:text-gray-600 focus:ring-1 focus:ring-blue-500/30 border border-white/8"
+                            : "bg-gray-50 text-gray-800 placeholder:text-gray-400 focus:bg-white focus:ring-2 focus:ring-blue-500/20 border border-gray-200"
+                        )}
+                      />
+                      <p className={cn("text-[9px] mt-1.5", darkMode ? "text-gray-700" : "text-gray-400")}>
+                        Se guarda automáticamente al escribir
+                      </p>
                     </div>
                   </div>
 
@@ -4264,22 +5638,32 @@ function App() {
                 </div>
               ) : (
                 <div className={cn(
-                  "h-full flex flex-col items-center justify-center text-center p-16 border-2 border-dashed rounded-2xl transition-colors duration-300",
+                  "h-full flex flex-col items-center justify-center text-center p-16 rounded-2xl border border-dashed transition-colors duration-300",
                   darkMode ? "bg-[#16161A] border-white/5" : "bg-white border-gray-200"
                 )}>
-                  <div className={cn(
-                    "w-16 h-16 rounded-2xl flex items-center justify-center mb-5",
-                    darkMode ? "bg-white/4" : "bg-gray-100"
-                  )}>
-                    <Package className={cn("w-8 h-8", darkMode ? "text-gray-700" : "text-gray-300")} />
+                  <div className="relative mb-6">
+                    {/* Caduceus badge con fondo azul Orimec */}
+                    <div className="w-20 h-20 rounded-2xl flex items-center justify-center shadow-xl bg-[#1A3A5C]/10 border border-[#1A3A5C]/15">
+                      <OrimecLogo size={40} />
+                    </div>
+                    <div className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-[#1A3A5C] flex items-center justify-center shadow-md">
+                      <ArrowRight className="w-2.5 h-2.5 text-white" />
+                    </div>
                   </div>
-                  <h3 className={cn(
-                    "text-xl font-black tracking-tight mb-2",
-                    darkMode ? "text-gray-700" : "text-gray-300"
-                  )}>ORIMEC DATA HUB</h3>
-                  <p className={cn("max-w-xs text-xs font-medium tracking-wide leading-relaxed", darkMode ? "text-gray-700" : "text-gray-400")}>
-                    Seleccione un centro médico para auditar el historial de películas radiográficas.
+                  {/* Wordmark Orimec */}
+                  <div className="mb-3 opacity-60">
+                    <OrimecLogo size={28} />
+                  </div>
+                  <h3 className={cn("text-lg font-black tracking-tight mb-2", darkMode ? "text-gray-600" : "text-gray-300")}>
+                    Selecciona un cliente
+                  </h3>
+                  <p className={cn("max-w-xs text-xs font-medium leading-relaxed mb-5", darkMode ? "text-gray-700" : "text-gray-400")}>
+                    Elige un centro médico de la lista para ver su historial de consumo, métricas de fidelidad e impresoras registradas.
                   </p>
+                  <div className={cn("flex items-center gap-2 text-[10px] font-semibold px-3 py-2 rounded-xl border", darkMode ? "border-white/8 text-gray-600 bg-white/3" : "border-gray-200 text-gray-400 bg-gray-50")}>
+                    <Search className="w-3 h-3" />
+                    Usa <kbd className={cn("font-mono px-1 rounded text-[9px]", darkMode ? "bg-white/10" : "bg-gray-200")}>Ctrl+K</kbd> para buscar rápido
+                  </div>
                 </div>
               )}
             </div>
@@ -4288,12 +5672,34 @@ function App() {
 
         {view === 'dashboard' && (
           <div className="col-span-12 flex flex-col gap-6 min-h-0 overflow-y-auto pr-2 pb-8 custom-scrollbar">
+
+
             <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-xl font-black tracking-tight">Dashboard de Análisis</h2>
-                <p className={cn("text-[10px] font-medium uppercase tracking-wider mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>
-                  Métricas globales · FUJIFILM DI-HT · DI-HL
-                </p>
+              <div className="flex items-center gap-3">
+                <div>
+                  <h2 className="text-xl font-black tracking-tight">Dashboard de Análisis</h2>
+                  <p className={cn("text-[10px] font-medium uppercase tracking-wider mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>
+                    Métricas globales · FUJIFILM DI-HT · DI-HL
+                  </p>
+                </div>
+                {!loading && (
+                  <button
+                    onClick={() => setBannerCollapsed(false)}
+                    className={cn(
+                      "flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black border transition-all",
+                      darkMode
+                        ? "bg-white/5 border-white/10 text-gray-400 hover:bg-[#1A3A5C]/40 hover:border-[#4A9FD4]/30 hover:text-[#4A9FD4]"
+                        : "bg-gray-100 border-gray-200 text-gray-500 hover:bg-[#1A3A5C]/8 hover:border-[#1A3A5C]/20 hover:text-[#1A3A5C]"
+                    )}
+                    title="Ver resumen del día"
+                  >
+                    <Bell className="w-3 h-3" />
+                    Resumen del día
+                    {(dayBrief.stockBajo > 0 || dayBrief.clientesEnRiesgo > 0) && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0" />
+                    )}
+                  </button>
+                )}
               </div>
               <div className="flex items-center gap-3">
                 <div className="flex items-center gap-2">
@@ -4301,7 +5707,7 @@ function App() {
                   <input
                     type="date"
                     value={dashboardStartDate}
-                    onChange={e => setDashboardStartDate(e.target.value)}
+                    onChange={e => setDashStart(e.target.value)}
                     className={cn(
                       "px-3 py-1.5 rounded-lg border-none focus:ring-2 focus:ring-[#ED1C24]/20 outline-none font-medium text-xs",
                       darkMode ? "bg-white/8 text-white" : "bg-white text-gray-800 shadow-sm border border-gray-200"
@@ -4313,7 +5719,7 @@ function App() {
                   <input
                     type="date"
                     value={dashboardEndDate}
-                    onChange={e => setDashboardEndDate(e.target.value)}
+                    onChange={e => setDashEnd(e.target.value)}
                     className={cn(
                       "px-3 py-1.5 rounded-lg border-none focus:ring-2 focus:ring-[#ED1C24]/20 outline-none font-medium text-xs",
                       darkMode ? "bg-white/8 text-white" : "bg-white text-gray-800 shadow-sm border border-gray-200"
@@ -4322,7 +5728,7 @@ function App() {
                 </div>
                 {(dashboardStartDate || dashboardEndDate) && (
                   <button
-                    onClick={() => { setDashboardStartDate(''); setDashboardEndDate(''); }}
+                    onClick={() => { setDashStart(''); setDashEnd(''); sessionStorage.removeItem('dash_start'); sessionStorage.removeItem('dash_end'); }}
                     className={cn(
                       "p-1.5 rounded-lg transition-colors",
                       darkMode ? "bg-white/5 hover:bg-white/10 text-gray-400" : "bg-white hover:bg-gray-50 text-gray-500 shadow-sm border border-gray-200"
@@ -4335,6 +5741,11 @@ function App() {
               </div>
             </div>
             <div className="grid grid-cols-5 gap-4">
+              {loading ? (
+                Array.from({ length: 5 }).map((_, i) => (
+                  <React.Fragment key={i}><SkeletonDashboardCard darkMode={darkMode} /></React.Fragment>
+                ))
+              ) : (<>
               {/* m² total - PRIMARY metric */}
               <div className={cn(
                 "p-5 rounded-xl border col-span-1 transition-colors duration-300 relative overflow-hidden",
@@ -4396,8 +5807,23 @@ function App() {
                 <p className={cn("text-xl font-black leading-none uppercase", darkMode ? "text-white" : "text-gray-900")}>{format(new Date(), 'dd MMM yyyy')}</p>
                 <p className={cn("text-[10px] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>datos en tiempo real</p>
               </div>
+              </>)}
             </div>
 
+            {loading ? (
+              <div className="grid grid-cols-12 gap-5">
+                <div className={cn("col-span-8 p-6 rounded-xl border", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                  <SkeletonBlock darkMode={darkMode} className="h-3 w-48 mb-6" />
+                  <SkeletonBlock darkMode={darkMode} className="h-64 w-full" />
+                </div>
+                <div className={cn("col-span-4 p-6 rounded-xl border", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                  <SkeletonBlock darkMode={darkMode} className="h-3 w-32 mb-6" />
+                  <div className="space-y-3">
+                    {Array.from({ length: 5 }).map((_,i) => <React.Fragment key={i}><SkeletonBlock darkMode={darkMode} className="h-8 w-full" /></React.Fragment>)}
+                  </div>
+                </div>
+              </div>
+            ) : (
             <div className="grid grid-cols-12 gap-5">
               <div className={cn(
                 "col-span-8 p-6 rounded-xl border transition-colors duration-300",
@@ -4514,9 +5940,40 @@ function App() {
                 "col-span-12 p-6 rounded-xl border transition-colors duration-300",
                 darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
               )}>
-                <h3 className={cn("text-[10px] font-bold uppercase tracking-wider mb-5 flex items-center gap-2", darkMode ? "text-gray-500" : "text-gray-400")}>
-                  <Users className="w-3.5 h-3.5 text-[#ED1C24]" /> Estadísticas por Vendedor
-                </h3>
+                <div className="flex items-center justify-between mb-5">
+                  <h3 className={cn("text-[10px] font-bold uppercase tracking-wider flex items-center gap-2", darkMode ? "text-gray-500" : "text-gray-400")}>
+                    <Users className="w-3.5 h-3.5 text-[#ED1C24]" /> Estadísticas por Vendedor
+                  </h3>
+                  <div className="flex items-center gap-2">
+                    {role === 'admin' && (
+                      <button
+                        onClick={() => {
+                          const form: Record<string,string> = {};
+                          salespersonPerformance.forEach((sp: any) => { form[sp.name] = String(salespersonGoals[sp.name] || ''); });
+                          setGoalsEditForm(form);
+                          setShowGoalsModal(true);
+                        }}
+                        className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black border transition-all",
+                          darkMode ? "bg-white/5 border-white/10 text-gray-400 hover:bg-white/10 hover:text-gray-200" : "bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+                        )}
+                        title="Configurar metas por vendedor"
+                      >
+                        <Target className="w-3.5 h-3.5" /> Configurar metas
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setVendorCompareSelected(prev => prev.length > 0 ? [] : salespersonPerformance.slice(0,2).map((s:any)=>s.name))}
+                      className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black border transition-all",
+                        vendorCompareSelected.length > 0
+                          ? (darkMode ? "bg-cyan-500/15 border-cyan-500/30 text-cyan-400" : "bg-cyan-50 border-cyan-300 text-cyan-600")
+                          : (darkMode ? "bg-white/5 border-white/10 text-gray-400 hover:bg-white/10" : "bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100")
+                      )}
+                      title="Comparar vendedores"
+                    >
+                      <BarChart2 className="w-3.5 h-3.5" /> Comparar
+                    </button>
+                  </div>
+                </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left min-w-[600px]">
                     <thead className={cn(
@@ -4646,6 +6103,60 @@ function App() {
                     </tbody>
                   </table>
                 </div>
+
+                {/* ── Vendor Compare chart ── */}
+                {vendorCompareSelected.length >= 2 && (() => {
+                  const MONTHS = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+                  const now = new Date();
+                  const data = MONTHS.map((label, mi) => {
+                    const row: Record<string,any> = { label };
+                    vendorCompareSelected.forEach(sp => {
+                      row[sp] = allConsumos.filter(r => {
+                        const d = new Date(r.order_date);
+                        return d.getFullYear() === now.getFullYear() && d.getMonth() === mi
+                          && (r as any).salesperson_name === sp && !r.is_return;
+                      }).reduce((s,r) => s + r.quantity, 0);
+                    });
+                    return row;
+                  });
+                  const COLORS = ['#4A9FD4','#ED1C24','#10b981','#f59e0b','#8b5cf6'];
+                  return (
+                    <div className={cn("mt-5 p-5 rounded-xl border", darkMode ? "bg-white/3 border-white/8" : "bg-gray-50 border-gray-100")}>
+                      <div className="flex items-center justify-between mb-4">
+                        <p className={cn("text-[10px] font-black uppercase tracking-wider", darkMode ? "text-gray-500" : "text-gray-400")}>
+                          Comparativo de vendedores — {now.getFullYear()}
+                        </p>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {salespersonPerformance.map((sp: any, i: number) => (
+                            <button key={sp.name} onClick={() => setVendorCompareSelected(prev =>
+                              prev.includes(sp.name) ? prev.filter(x=>x!==sp.name) : [...prev, sp.name]
+                            )}
+                              className={cn("px-2.5 py-1 rounded-lg text-[9px] font-black border transition-all",
+                                vendorCompareSelected.includes(sp.name)
+                                  ? "border-transparent text-white"
+                                  : (darkMode ? "bg-white/5 border-white/10 text-gray-500" : "bg-white border-gray-200 text-gray-400")
+                              )}
+                              style={vendorCompareSelected.includes(sp.name) ? { background: COLORS[i % COLORS.length] } : {}}
+                            >{sp.name}</button>
+                          ))}
+                        </div>
+                      </div>
+                      <ResponsiveContainer width="100%" height={180}>
+                        <LineChart data={data} margin={{ top: 5, right: 10, bottom: 0, left: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={darkMode ? "#222" : "#F0F0F0"} />
+                          <XAxis dataKey="label" tick={{ fontSize: 9, fill: darkMode ? '#555' : '#aaa' }} axisLine={false} tickLine={false} />
+                          <YAxis tick={{ fontSize: 9, fill: darkMode ? '#555' : '#aaa' }} axisLine={false} tickLine={false} width={30} />
+                          <Tooltip contentStyle={{ background: darkMode ? '#1a1a1e' : '#fff', border: 'none', borderRadius: 8, fontSize: 10 }} />
+                          <Legend wrapperStyle={{ fontSize: 9 }} />
+                          {vendorCompareSelected.map((sp, i) => (
+                            <Line key={sp} type="monotone" dataKey={sp} stroke={COLORS[i % COLORS.length]}
+                              strokeWidth={2} dot={false} />
+                          ))}
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Métricas de Impresoras */}
@@ -4865,6 +6376,7 @@ function App() {
                 </div>
               </div>
             </div>
+            )} {/* end loading ? skeleton : charts */}
 
             {/* ── RETORNOS ── */}
             {returnsSummary.returns.length > 0 && (
@@ -4965,14 +6477,12 @@ function App() {
                       )}>{label}</button>
                   ))}
                 </div>
-                {inventoryTab !== 'stock-film' && (
                 <button
-                  onClick={() => { setNewStockEntry({ date: new Date().toISOString().split('T')[0], film_type: (globalFilmFilter === 'DIHL' ? 'DIHL' : 'DIHT') as 'DIHT'|'DIHL' }); setIsStockEntryModalOpen(true); }}
+                  onClick={() => { setNewStockEntry({ date: new Date().toISOString().split('T')[0], film_type: (globalFilmFilter === 'DIHL' ? 'DIHL' : globalFilmFilter === 'DIML' ? 'DIML' : 'DIHT') as 'DIHT'|'DIHL'|'DIML' }); setIsStockEntryModalOpen(true); }}
                   className="bg-[#ED1C24] text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 hover:bg-[#D11920] shadow-md shadow-red-500/20 transition-all"
                 >
                   <Plus className="w-3.5 h-3.5" /> Nueva Entrada
                 </button>
-                )}
               </div>
             </div>
 
@@ -5259,39 +6769,70 @@ function App() {
                         <th className="px-5 py-2.5 text-center">Cantidad</th>
                         <th className="px-5 py-2.5">Referencia</th>
                         <th className="px-5 py-2.5">Detalle</th>
+                        {role === 'admin' && <th className="px-3 py-2.5 text-center w-10"></th>}
                       </tr>
                     </thead>
                     <tbody className={cn("divide-y", darkMode ? "divide-white/4" : "divide-gray-50")}>
                       {[
-                        ...filteredStockEntries.map(e => ({ type: 'in' as const, date: e.date, size: e.size, batch: e.batch_number, qty: e.quantity, ref: e.supplier_invoice, detail: e.notes || 'Compra a Fujifilm' })),
+                        ...filteredStockEntries.map(e => ({ type: 'in' as const, id: e.id, date: e.date, size: e.size, batch: e.batch_number, qty: e.quantity, ref: e.purchase_order ? `${e.purchase_order}${e.supplier_invoice ? ' · ' + e.supplier_invoice : ''}` : e.supplier_invoice, detail: e.notes || 'Compra a Fujifilm', ft: e.film_type || 'DIHT' })),
                         ...filteredConsumosForView.sort((a,b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime()).slice(0, 200).map(r => ({
                           type: 'out' as const,
+                          id: String(r.id),
                           date: r.order_date,
                           size: r.size,
                           batch: r.batch_number,
                           qty: r.quantity,
                           ref: r.invoice_number || '—',
-                          detail: allClients.find(c => c.id === r.client_id)?.name || 'Desconocido'
+                          detail: allClients.find(c => c.id === r.client_id)?.name || 'Desconocido',
+                          ft: r.film_type || 'DIHT'
                         }))
-                      ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map((m, i) => (
-                        <tr key={i} className={cn("transition-colors", darkMode ? "hover:bg-white/3" : "hover:bg-gray-50/60")}>
+                      ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map((mv, i) => (
+                        <tr key={i} className={cn("transition-colors group", darkMode ? "hover:bg-white/3" : "hover:bg-gray-50/60")}>
                           <td className="px-5 py-3">
                             <span className={cn("text-[9px] font-black px-2 py-0.5 rounded-lg",
-                              m.type === 'in' ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/15 text-red-400"
+                              mv.type === 'in' ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/15 text-red-400"
                             )}>
-                              {m.type === 'in' ? '▲ ENTRADA' : '▼ SALIDA'}
+                              {mv.type === 'in' ? '▲ ENTRADA' : '▼ SALIDA'}
                             </span>
                           </td>
-                          <td className={cn("px-5 py-3 font-medium", darkMode ? "text-gray-300" : "text-gray-700")}>{m.date}</td>
+                          <td className={cn("px-5 py-3 font-medium", darkMode ? "text-gray-300" : "text-gray-700")}>{mv.date}</td>
                           <td className="px-5 py-3">
-                            <span className={cn("px-2 py-0.5 rounded text-[9px] font-black uppercase", darkMode ? "bg-white/10 text-gray-300" : "bg-gray-800 text-white")}>{m.size || '—'}</span>
+                            <span className={cn("px-2 py-0.5 rounded text-[9px] font-black uppercase", darkMode ? "bg-white/10 text-gray-300" : "bg-gray-800 text-white")}>{mv.size || '—'}</span>
                           </td>
-                          <td className={cn("px-5 py-3 font-mono text-[10px]", darkMode ? "text-gray-500" : "text-gray-400")}>#{m.batch || '—'}</td>
-                          <td className={cn("px-5 py-3 text-center font-black", m.type === 'in' ? 'text-emerald-400' : 'text-red-400')}>
-                            {m.type === 'in' ? '+' : '−'}{m.qty}
+                          <td className={cn("px-5 py-3 font-mono text-[10px]", darkMode ? "text-gray-500" : "text-gray-400")}>#{mv.batch || '—'}</td>
+                          <td className={cn("px-5 py-3 text-center font-black", mv.type === 'in' ? 'text-emerald-400' : 'text-red-400')}>
+                            {mv.type === 'in' ? '+' : '−'}{mv.qty}
                           </td>
-                          <td className={cn("px-5 py-3 font-mono text-[10px]", darkMode ? "text-gray-600" : "text-gray-400")}>{m.ref}</td>
-                          <td className={cn("px-5 py-3 text-[10px] max-w-[200px] truncate", darkMode ? "text-gray-500" : "text-gray-500")}>{m.detail}</td>
+                          <td className={cn("px-5 py-3 font-mono text-[10px]", darkMode ? "text-gray-600" : "text-gray-400")}>{mv.ref}</td>
+                          <td className={cn("px-5 py-3 text-[10px] max-w-[200px] truncate", darkMode ? "text-gray-500" : "text-gray-500")}>{mv.detail}</td>
+                          {role === 'admin' && (
+                            <td className="px-3 py-3 text-center">
+                              <button
+                                onClick={async () => {
+                                  if (mv.type === 'in') {
+                                    // Show unified delete+revert modal
+                                    const entryYear = new Date(mv.date).getFullYear();
+                                    const filmKey = `${mv.ft}_${mv.size}`;
+                                    setTransitRevertQty(String(mv.qty));
+                                    setTransitRevertModal({ ft: mv.ft, size: mv.size, entryQty: mv.qty, entryDate: mv.date, filmKey, year: entryYear, entryId: mv.id });
+                                  } else {
+                                    if (!window.confirm(`¿Eliminar salida de ${mv.qty} cj ${mv.size} (${mv.date})?`)) return;
+                                    try {
+                                      await deleteDoc(doc(db, 'consumos', mv.id));
+                                      addAuditLog('delete_record', `Eliminó salida de ${mv.qty} cj ${mv.size} — ${mv.detail} (${mv.date})`);
+                                      showToast('Salida eliminada', 'info');
+                                    } catch(e) { showToast('Error al eliminar', 'error'); }
+                                  }
+                                }}
+                                className={cn("p-1.5 rounded-lg transition-colors opacity-0 group-hover:opacity-100",
+                                  darkMode ? "hover:bg-red-500/15 text-gray-700 hover:text-red-400" : "hover:bg-red-50 text-gray-300 hover:text-red-400"
+                                )}
+                                title="Eliminar registro"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </td>
+                          )}
                         </tr>
                       ))}
                     </tbody>
@@ -5535,6 +7076,7 @@ function App() {
                                     localStorage.setItem('stock_film_data', JSON.stringify(updated));
                                     setDoc(doc(db, 'settings', 'stock_film_data'), { data: JSON.stringify(updated), updatedAt: new Date().toISOString() })
                                       .catch(e => console.warn('Firestore opening save failed:', e));
+                                    showToast(`Stock apertura ${prod.label} → ${newVal} cj`, 'success');
                                     return updated;
                                   });
                                 }}
@@ -6140,6 +7682,15 @@ function App() {
               >
                 ↺ Restaurar datos
               </button>
+              {role === 'admin' && (
+                <button
+                  onClick={() => { setBulkWarrantyProgress({ done: 0, total: 0, status: 'idle' }); setShowBulkWarrantyModal(true); }}
+                  className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all", darkMode ? "bg-amber-500/15 hover:bg-amber-500/25 text-amber-400" : "bg-amber-50 hover:bg-amber-100 text-amber-600")}
+                  title="Actualizar garantía de todas las impresoras"
+                >
+                  <Shield className="w-3.5 h-3.5" /> Actualizar garantías
+                </button>
+              )}
             </div>
 
             {/* KPI summary cards */}
@@ -6149,12 +7700,15 @@ function App() {
               const totalUnits = IMAGER_PRODUCTS.reduce((s, p) => s + (imagerData[p.key]?.openingStock ?? p.openingStock), 0);
               const totalTransit = IMAGER_PRODUCTS.reduce((s, p) => s + p.inTransit, 0);
               const lowCoverage = IMAGER_PRODUCTS.filter(p => p.avgSalesMonthly > 0 && (imagerData[p.key]?.openingStock ?? p.openingStock) / p.avgSalesMonthly < 3);
+              const totalInstaladas = IMAGER_PRODUCTS.filter(p => p.category === 'Impresora Principal')
+                .reduce((s, p) => s + (imagerFromClients[p.key]?.installs?.length || 0), 0);
               return (
                 <div className="grid grid-cols-4 gap-3">
                   {[
                     { label: 'Unidades en bodega', value: totalUnits, sub: `${printers.length} impresoras · ${accessories.length} accesorios`, color: darkMode ? 'text-cyan-400' : 'text-cyan-600' },
-                    { label: 'Total disponible', value: totalUnits, sub: 'Unidades en bodega', color: darkMode ? 'text-emerald-400' : 'text-emerald-600' },
+                    { label: 'Instaladas en clientes', value: totalInstaladas, sub: 'Impresoras registradas activas', color: darkMode ? 'text-emerald-400' : 'text-emerald-600' },
                     { label: 'Cobertura crítica', value: lowCoverage.length, sub: 'Productos < 3 meses cobertura', color: 'text-[#ED1C24]' },
+                    { label: 'En tránsito', value: totalTransit, sub: 'Unidades pedidas a Fujifilm', color: darkMode ? 'text-amber-400' : 'text-amber-600' },
                   ].map((kpi, i) => (
                     <div key={i} className={cn("rounded-xl border p-4", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
                       <p className={cn("text-2xl font-black leading-none", kpi.color)}>{kpi.value}</p>
@@ -6165,6 +7719,36 @@ function App() {
                 </div>
               );
             })()}
+
+            {/* Year selector + product cards */}
+            {/* Year selector */}
+            <div className="flex items-center justify-between">
+              <h3 className={cn("text-[10px] font-black uppercase tracking-widest flex items-center gap-2", darkMode ? "text-gray-500" : "text-gray-400")}>
+                <Layers className="w-3.5 h-3.5" /> Detalle mensual por producto
+              </h3>
+              <div className={cn("flex items-center gap-1 p-1 rounded-xl", darkMode ? "bg-white/5" : "bg-gray-100")}>
+                {(() => {
+                  const currentYear = new Date().getFullYear();
+                  // Years that have install data
+                  const yearsWithData = new Set<number>();
+                  Object.values(imagerFromClients).forEach(prod => {
+                    Object.keys(prod.outByYearMonth).forEach(y => yearsWithData.add(Number(y)));
+                  });
+                  // Always include current year and next year
+                  yearsWithData.add(currentYear);
+                  yearsWithData.add(currentYear + 1);
+                  // Sort ascending
+                  return Array.from(yearsWithData).sort((a, b) => a - b).map(y => (
+                    <button key={y} onClick={() => setImagerYear(y)}
+                      className={cn("px-3 py-1 rounded-lg text-[10px] font-black transition-all",
+                        imagerYear === y
+                          ? "bg-[#ED1C24] text-white shadow-sm"
+                          : (darkMode ? "text-gray-500 hover:text-gray-300 hover:bg-white/5" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200")
+                      )}>{y}</button>
+                  ));
+                })()}
+              </div>
+            </div>
 
             {/* Product cards by category */}
             {(['Impresora Principal', 'Accesorio LITE'] as const).map(cat => {
@@ -6178,15 +7762,21 @@ function App() {
                   <div className="grid grid-cols-1 gap-4">
                     {prods.map(prod => {
                       const pd = imagerData[prod.key] || { openingStock: prod.openingStock, months: {} };
-                      // Compute running balance
+                      // Auto OUT from client install dates for selected year
+                      const clientData = imagerFromClients[prod.key] || { installs: [], outByYearMonth: {} };
+                      const autoOutByMonth = clientData.outByYearMonth[imagerYear] || {};
+                      // Compute running balance using auto OUT
                       let running = pd.openingStock;
                       const balances = IMAGER_MONTHS.map(month => {
                         const mv = pd.months?.[month] || { inUnits: 0, outUnits: 0 };
-                        running = running + mv.inUnits - mv.outUnits;
-                        return { month, inUnits: mv.inUnits, outUnits: mv.outUnits, balance: Math.max(0, running) };
+                        const autoOut = autoOutByMonth[month] || 0;
+                        const effectiveOut = autoOut > 0 ? autoOut : mv.outUnits;
+                        running = running + mv.inUnits - effectiveOut;
+                        return { month, inUnits: mv.inUnits, outUnits: effectiveOut, autoOut, balance: Math.max(0, running) };
                       });
                       const totalIn = balances.reduce((s, b) => s + b.inUnits, 0);
                       const totalOut = balances.reduce((s, b) => s + b.outUnits, 0);
+                      const totalAutoOut = balances.reduce((s, b) => s + b.autoOut, 0);
                       const currentStock = pd.openingStock + totalIn - totalOut;
                       const coverageMonths = prod.avgSalesMonthly > 0 ? currentStock / prod.avgSalesMonthly : null;
                       const status = coverageMonths === null ? 'ok' : coverageMonths < 2 ? 'critical' : coverageMonths < 4 ? 'warning' : 'ok';
@@ -6282,22 +7872,38 @@ function App() {
                                   ))}
                                   <td className={cn("px-4 py-2 text-center font-black", darkMode ? "text-emerald-400" : "text-emerald-600")}>{totalIn}</td>
                                 </tr>
-                                {/* OUT row */}
+                                {/* OUT row — auto desde fechas de instalación de clientes */}
                                 <tr className={cn(darkMode ? "bg-red-500/5 hover:bg-red-500/10" : "bg-red-50/60 hover:bg-red-50")}>
-                                  <td className={cn("px-4 py-2 font-bold text-[10px] sticky left-0 whitespace-nowrap", darkMode ? "text-red-400 bg-[#16161A]" : "text-red-600 bg-white")}>▼ OUT (Unidades)</td>
+                                  <td className={cn("px-4 py-2 font-bold text-[10px] sticky left-0 whitespace-nowrap", darkMode ? "text-red-400 bg-[#16161A]" : "text-red-600 bg-white")}>
+                                    ▼ OUT (Unidades)
+                                    <span className={cn("ml-1.5 text-[8px] font-semibold px-1.5 py-0.5 rounded",
+                                      totalAutoOut > 0
+                                        ? (darkMode ? "bg-emerald-500/15 text-emerald-400" : "bg-emerald-100 text-emerald-600")
+                                        : (darkMode ? "bg-red-500/15 text-red-500/70" : "bg-red-100 text-red-400")
+                                    )}>{totalAutoOut > 0 ? 'auto · clientes' : 'manual'}</span>
+                                  </td>
                                   {balances.map((b, i) => (
                                     <td key={i} className="px-2 py-1.5 text-center">
-                                      <input
-                                        type="number" min={0}
-                                        value={b.outUnits || ''}
-                                        placeholder="0"
-                                        onChange={e => updateImagerCell(prod.key, b.month, 'outUnits', parseInt(e.target.value) || 0)}
-                                        className={cn("w-14 text-center text-xs font-black rounded-lg px-1 py-1 outline-none focus:ring-2 focus:ring-red-500/30 transition-colors",
-                                          b.outUnits > 0
-                                            ? (darkMode ? "bg-red-500/15 text-red-300 border border-red-500/30" : "bg-red-50 text-red-700 border border-red-200")
-                                            : (darkMode ? "bg-white/5 text-gray-600 border border-white/8" : "bg-white text-gray-400 border border-gray-100")
-                                        )}
-                                      />
+                                      {b.autoOut > 0 ? (
+                                        // Auto value from client install dates
+                                        <div className="flex flex-col items-center gap-0.5">
+                                          <span className={cn("font-black text-sm", darkMode ? "text-red-400" : "text-red-600")}>{b.autoOut}</span>
+                                          <span className={cn("text-[7px] font-bold", darkMode ? "text-emerald-500/60" : "text-emerald-600/60")}>instaladas</span>
+                                        </div>
+                                      ) : (
+                                        // Manual fallback input
+                                        <input
+                                          type="number" min={0}
+                                          value={b.outUnits && b.autoOut === 0 ? b.outUnits : ''}
+                                          placeholder="0"
+                                          onChange={e => updateImagerCell(prod.key, b.month, 'outUnits', parseInt(e.target.value) || 0)}
+                                          className={cn("w-14 text-center text-xs font-black rounded-lg px-1 py-1 outline-none focus:ring-2 focus:ring-red-500/30 transition-colors",
+                                            b.outUnits > 0
+                                              ? (darkMode ? "bg-red-500/15 text-red-300 border border-red-500/30" : "bg-red-50 text-red-700 border border-red-200")
+                                              : (darkMode ? "bg-white/5 text-gray-600 border border-white/8" : "bg-white text-gray-400 border border-gray-100")
+                                          )}
+                                        />
+                                      )}
                                     </td>
                                   ))}
                                   <td className={cn("px-4 py-2 text-center font-black", darkMode ? "text-red-400" : "text-red-500")}>{totalOut}</td>
@@ -6353,6 +7959,99 @@ function App() {
                               )}
                             </div>
                           )}
+
+                          {/* ── Instaladas en clientes ── */}
+                          {(() => {
+                            const allInstaladas = (imagerFromClients[prod.key]?.installs || []);
+                            // Solo mostrar las del año seleccionado
+                            const instaladas = allInstaladas.filter(inst => {
+                              if (!inst.installDate) return false;
+                              return new Date(inst.installDate).getFullYear() === imagerYear;
+                            });
+                            const sinFecha = allInstaladas.filter(inst => !inst.installDate);
+                            return (
+                              <div className={cn("border-t", darkMode ? "border-white/6" : "border-gray-100")}>
+                                <div className={cn("px-5 py-2.5 flex items-center gap-3", darkMode ? "bg-white/2" : "bg-gray-50/60")}>
+                                  <Users className={cn("w-3.5 h-3.5", darkMode ? "text-gray-500" : "text-gray-400")} />
+                                  <span className={cn("text-[9px] font-black uppercase tracking-wider", darkMode ? "text-gray-500" : "text-gray-400")}>
+                                    Instaladas en clientes
+                                  </span>
+                                  {/* Total acumulado */}
+                                  <span className={cn("text-[9px] font-black px-2 py-0.5 rounded-full",
+                                    allInstaladas.length > 0
+                                      ? (darkMode ? "bg-white/10 text-gray-400" : "bg-gray-100 text-gray-500")
+                                      : (darkMode ? "bg-white/8 text-gray-600" : "bg-gray-100 text-gray-400")
+                                  )}>
+                                    {allInstaladas.length} total acumulado
+                                  </span>
+                                  {/* Badge año seleccionado */}
+                                  <span className={cn("text-[9px] font-black px-2 py-0.5 rounded-full",
+                                    instaladas.length > 0
+                                      ? (darkMode ? "bg-cyan-500/20 text-cyan-400" : "bg-cyan-50 text-cyan-600")
+                                      : (darkMode ? "bg-white/5 text-gray-600" : "bg-gray-100 text-gray-400")
+                                  )}>
+                                    {instaladas.length} en {imagerYear}
+                                  </span>
+                                  {sinFecha.length > 0 && (
+                                    <span className={cn("text-[9px] italic", darkMode ? "text-gray-700" : "text-gray-300")}>
+                                      · {sinFecha.length} sin fecha registrada
+                                    </span>
+                                  )}
+                                </div>
+
+                                {instaladas.length > 0 ? (
+                                  <div className="overflow-x-auto">
+                                    <table className="w-full text-xs">
+                                      <thead className={cn("text-[8px] font-bold uppercase tracking-wider", darkMode ? "text-gray-700 bg-white/2" : "text-gray-400 bg-gray-50/40")}>
+                                        <tr>
+                                          <th className="px-5 py-2 text-left">Cliente</th>
+                                          <th className="px-4 py-2 text-left">Serial</th>
+                                          <th className="px-4 py-2 text-left">Sucursal</th>
+                                          <th className="px-4 py-2 text-left">Instalación</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className={cn("divide-y", darkMode ? "divide-white/4" : "divide-gray-50")}>
+                                        {instaladas.map((inst, idx) => (
+                                          <tr key={idx}
+                                            className={cn("transition-colors cursor-pointer",
+                                              darkMode ? "hover:bg-white/4" : "hover:bg-gray-50"
+                                            )}
+                                            onClick={() => {
+                                              const client = allClients.find(c => c.name === inst.clientName);
+                                              if (client) { setSelectedClient(client); setView('clients'); }
+                                            }}
+                                          >
+                                            <td className="px-5 py-2.5">
+                                              <span className={cn("font-semibold truncate max-w-[200px] block", darkMode ? "text-gray-300" : "text-gray-700")}>
+                                                {inst.clientName}
+                                              </span>
+                                            </td>
+                                            <td className={cn("px-4 py-2.5 font-mono text-[10px]", darkMode ? "text-gray-500" : "text-gray-500")}>
+                                              {inst.serial}
+                                            </td>
+                                            <td className={cn("px-4 py-2.5 text-[10px]", darkMode ? "text-gray-600" : "text-gray-400")}>
+                                              {inst.location || '—'}
+                                            </td>
+                                            <td className={cn("px-4 py-2.5 text-[10px]", darkMode ? "text-gray-600" : "text-gray-400")}>
+                                              {inst.installDate || '—'}
+                                            </td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                ) : allInstaladas.length > 0 ? (
+                                  <div className={cn("px-5 py-3 text-[9px] italic", darkMode ? "text-gray-700" : "text-gray-400")}>
+                                    Sin instalaciones registradas en {imagerYear}. Selecciona otro año o agrega fechas en las fichas de clientes.
+                                  </div>
+                                ) : (
+                                  <div className={cn("px-5 py-3 text-[9px] italic", darkMode ? "text-gray-700" : "text-gray-400")}>
+                                    Agrega impresoras en la ficha del cliente para verlas aquí.
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </div>
                       );
                     })}
@@ -6360,6 +8059,43 @@ function App() {
                 </div>
               );
             })}
+
+            {/* Tipos de impresora no reconocidos — diagnóstico */}
+            {(() => {
+              const knownKeywords = ['DRYPIX LITE','DPX LITE','DRYPIX LTE','DRYPIX-LITE','DPX-LITE','DRYLITE','DRY LITE','DRY PIX LITE',
+                'DRYPIX SMART','DPX SMART','DRYPIX-SMART','DPX-SMART','DRY SMART','DRYSMART',
+                'DRYPIX PLUS','DPX PLUS','DRYPIX-PLUS','DRY PLUS',
+                'DRYPIX EDGE','DPX EDGE','DRYPIX-EDGE','DRY EDGE',
+                'FEEDER','ALIMENTADOR','MAGAZINE L','MAG L','MAGAZINE-L','MAGAZINE S','MAG S','MAGAZINE-S'];
+              const unmatched = printerMetrics.typeData.filter(t =>
+                !knownKeywords.some(kw => t.name.toUpperCase().includes(kw))
+              );
+              if (unmatched.length === 0) return null;
+              return (
+                <div className={cn("rounded-xl border p-4", darkMode ? "bg-amber-500/5 border-amber-500/15" : "bg-amber-50 border-amber-200")}>
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" />
+                    <div>
+                      <p className={cn("text-[10px] font-bold", darkMode ? "text-amber-400" : "text-amber-700")}>
+                        {unmatched.length} tipo{unmatched.length !== 1 ? 's' : ''} de impresora sin reconocer en el módulo Imager
+                      </p>
+                      <p className={cn("text-[9px] mt-0.5 mb-2", darkMode ? "text-gray-500" : "text-gray-500")}>
+                        Estos tipos están registrados en clientes pero no coinciden con ningún producto Imager. Verifica el nombre en la ficha del cliente:
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {unmatched.map((t, i) => (
+                          <span key={i} className={cn("text-[9px] font-mono font-bold px-2 py-1 rounded-lg border",
+                            darkMode ? "bg-amber-500/10 border-amber-500/20 text-amber-300" : "bg-amber-100 border-amber-200 text-amber-700"
+                          )}>
+                            "{t.name}" · {t.value} unidad{t.value !== 1 ? 'es' : ''}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Fujifilm data note */}
             <div className={cn("rounded-xl border p-4 flex items-start gap-3", darkMode ? "bg-white/3 border-white/6" : "bg-gray-50 border-gray-100")}>
@@ -6548,17 +8284,17 @@ function App() {
                             <span className={cn("text-xs font-black", YEAR_COLORS[y])}>{y}</span>
                             <div className="flex items-center gap-2">
                               {isCurrentYearCard && (
-                                <div className={cn("flex rounded-lg overflow-hidden border text-[8px] font-bold", darkMode ? "border-white/10" : "border-gray-200")}>
+                                <div className={cn("flex rounded-xl overflow-hidden border", darkMode ? "border-white/15" : "border-gray-200")}>
                                   <button onClick={() => setComparativo2026Mode('real')}
-                                    className={cn("px-2 py-0.5 transition-colors",
+                                    className={cn("px-3.5 py-1.5 text-[11px] font-black transition-colors",
                                       comparativo2026Mode === 'real'
                                         ? (darkMode ? "bg-emerald-500/30 text-emerald-300" : "bg-emerald-500 text-white")
                                         : (darkMode ? "bg-white/5 text-gray-500 hover:text-gray-300" : "bg-white text-gray-400 hover:text-gray-600"))}>
                                     Real
                                   </button>
                                   <button onClick={() => setComparativo2026Mode('proyectado')}
-                                    className={cn("px-2 py-0.5 transition-colors border-l",
-                                      darkMode ? "border-white/10" : "border-gray-200",
+                                    className={cn("px-3.5 py-1.5 text-[11px] font-black transition-colors border-l",
+                                      darkMode ? "border-white/15" : "border-gray-200",
                                       comparativo2026Mode === 'proyectado'
                                         ? (darkMode ? "bg-emerald-500/30 text-emerald-300" : "bg-emerald-500 text-white")
                                         : (darkMode ? "bg-white/5 text-gray-500 hover:text-gray-300" : "bg-white text-gray-400 hover:text-gray-600"))}>
@@ -7180,7 +8916,20 @@ function App() {
                               <tr key={i} className={cn("transition-colors", darkMode ? "hover:bg-white/3" : "hover:bg-gray-50/60")}>
                                 <td className={cn("px-5 py-3 font-black text-sm", i<3 ? 'text-[#ED1C24]' : (darkMode?'text-gray-600':'text-gray-300'))}>{i+1}</td>
                                 <td className="px-5 py-3 font-semibold">{item.province}</td>
-                                <td className="px-5 py-3 text-center">{item.clients}</td>
+                                <td className="px-5 py-3 text-center">
+                                  <button
+                                    onClick={() => {
+                                      const provClients = allClients.filter(c => (c.province || 'Sin provincia') === item.province);
+                                      setProvinceClientsModal({ province: item.province, clients: provClients });
+                                    }}
+                                    className={cn("font-black text-sm px-2.5 py-1 rounded-lg transition-all",
+                                      darkMode ? "text-cyan-400 hover:bg-cyan-500/15 hover:text-cyan-300" : "text-cyan-600 hover:bg-cyan-50 hover:text-cyan-700"
+                                    )}
+                                    title="Ver clientes de esta provincia"
+                                  >
+                                    {item.clients}
+                                  </button>
+                                </td>
                                 <td className="px-5 py-3 text-center">
                                   <span className={cn("font-black", darkMode ? "text-cyan-400" : "text-cyan-600")}>{item.m2.toLocaleString('es-EC', {minimumFractionDigits:1,maximumFractionDigits:1})} m²</span>
                                 </td>
@@ -7410,7 +9159,7 @@ function App() {
                       const prodKey = `${ft}_${size}`;
                       const transitByMonth = stockFilmTransit[String(cy)]?.[prodKey] || {};
                       const realTransit = STOCK_FILM_MONTHS.reduce((s, m) => s + (transitByMonth[m] || 0), 0);
-                      const totalWithTransit = currentStock + realTransit;
+                      const totalWithTransit = currentStock + (includeTransit ? realTransit : 0);
 
                       // Demand for selected period — use real avg or Fujifilm avg (whichever is available)
                       const avgMonthly = realAvgMonthly > 0 ? realAvgMonthly : fuji.avgMayDec25;
@@ -7466,9 +9215,28 @@ function App() {
                             Recomendación de compra a Fujifilm
                           </h3>
                           <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>
-                            Basado en Planning Film Fujifilm/Orimec 2026-2027 · Stock real + tránsito · Stock de seguridad incluido
+                            Basado en Planning Film Fujifilm/Orimec 2026-2027 · {includeTransit ? 'Stock real + tránsito' : 'Solo stock en bodega (sin tránsito)'} · Stock de seguridad incluido
                           </p>
                         </div>
+                        {/* Transit toggle */}
+                        <button
+                          onClick={() => setIncludeTransit(v => !v)}
+                          className={cn(
+                            "flex items-center gap-2 px-3 py-1.5 rounded-xl text-[10px] font-black border transition-all",
+                            includeTransit
+                              ? (darkMode ? "bg-amber-500/15 border-amber-500/30 text-amber-400 hover:bg-amber-500/25" : "bg-amber-50 border-amber-300 text-amber-600 hover:bg-amber-100")
+                              : (darkMode ? "bg-white/5 border-white/10 text-gray-500 hover:bg-white/10 hover:text-gray-300" : "bg-gray-100 border-gray-200 text-gray-400 hover:bg-gray-200 hover:text-gray-600")
+                          )}
+                          title={includeTransit ? "Tránsito incluido — clic para excluir" : "Tránsito excluido — clic para incluir"}
+                        >
+                          <span className={cn(
+                            "w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center shrink-0 transition-all",
+                            includeTransit ? "border-amber-400 bg-amber-400" : (darkMode ? "border-gray-600 bg-transparent" : "border-gray-300 bg-transparent")
+                          )}>
+                            {includeTransit && <span className="w-1.5 h-1.5 rounded-full bg-white block" />}
+                          </span>
+                          En Tránsito
+                        </button>
                         {/* Period selector */}
                         <div className={cn("flex items-center gap-1 p-1 rounded-xl ml-auto", darkMode ? "bg-white/5" : "bg-gray-100")}>
                           {([1, 3, 6, 12] as const).map(p => (
@@ -7482,6 +9250,18 @@ function App() {
                             </button>
                           ))}
                         </div>
+                        {/* Exportar PDF de Proyección */}
+                        <button
+                          onClick={handleExportProjectionPdf}
+                          className={cn(
+                            "flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black border transition-all",
+                            darkMode ? "bg-white/5 border-white/10 text-gray-400 hover:bg-white/10 hover:text-gray-200" : "bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+                          )}
+                          title="Exportar reporte de proyección como PDF"
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                          PDF
+                        </button>
                       </div>
 
                       {FILM_TYPES.map(ft => {
@@ -7527,7 +9307,7 @@ function App() {
                             <div className="p-4 grid grid-cols-2 gap-4">
                               {products.map(p => {
                                 if (!p) return null;
-                                const { size, fuji, m2box, currentStock, totalWithTransit, realTransit, avgMonthly, demandPeriod, demandM2, safetyStock, coverageCurrent, coverageFujiCurrent, coverageFujiHistoric, toOrder, toOrderM2, status, topClients } = p;
+                                const { size, fuji, m2box, currentStock, totalWithTransit, realTransit, avgMonthly, demandPeriod, demandM2, safetyStock, coverageCurrent, coverageWithTransit, coverageFujiCurrent, coverageFujiHistoric, toOrder, toOrderM2, status, topClients } = p;
 
                                 return (
                                   <div key={size} className={cn("rounded-xl border overflow-hidden",
@@ -7537,22 +9317,26 @@ function App() {
                                       ? (darkMode ? "bg-amber-500/8 border-amber-500/20" : "bg-amber-50 border-amber-200")
                                       : (darkMode ? "bg-emerald-500/5 border-emerald-500/15" : "bg-emerald-50/60 border-emerald-200")
                                   )}>
-                                    {/* Card header */}
-                                    <div className={cn("px-5 py-3 flex items-center justify-between border-b",
-                                      status === 'urgent' ? (darkMode ? "border-red-500/20 bg-red-500/5" : "border-red-200 bg-red-100/40") :
-                                      status === 'warning' ? (darkMode ? "border-amber-500/20 bg-amber-500/5" : "border-amber-200 bg-amber-100/40") :
-                                      (darkMode ? "border-emerald-500/15 bg-emerald-500/5" : "border-emerald-200 bg-emerald-100/30")
-                                    )}>
+                                    {/* Card header — clickable to expand */}
+                                    <button
+                                      onClick={() => setProjectionSizeModal({ size, ft, m2box, currentStock, realTransit, totalWithTransit, avgMonthly, safetyStock, coverageCurrent, coverageWithTransit, coverageFujiCurrent, coverageFujiHistoric, toOrder, toOrderM2, status, demandPeriod, demandM2, topClients, fujiOrders: fuji.orders as unknown as string[] })}
+                                      className={cn("w-full px-5 py-3 flex items-center justify-between border-b transition-colors group",
+                                        status === 'urgent' ? (darkMode ? "border-red-500/20 bg-red-500/5 hover:bg-red-500/12" : "border-red-200 bg-red-100/40 hover:bg-red-100/70") :
+                                        status === 'warning' ? (darkMode ? "border-amber-500/20 bg-amber-500/5 hover:bg-amber-500/12" : "border-amber-200 bg-amber-100/40 hover:bg-amber-100/70") :
+                                        (darkMode ? "border-emerald-500/15 bg-emerald-500/5 hover:bg-emerald-500/10" : "border-emerald-200 bg-emerald-100/30 hover:bg-emerald-100/60")
+                                      )}
+                                    >
                                       <div className="flex items-center gap-2">
                                         <span className={cn("text-sm font-black px-2.5 py-1 rounded-lg", darkMode ? "bg-white/10 text-white" : "bg-gray-800 text-white")}>{size}</span>
                                         <span className={cn("text-[10px]", darkMode ? "text-gray-500" : "text-gray-400")}>{m2box} m²/caja</span>
+                                        <span className={cn("text-[8px] font-semibold opacity-0 group-hover:opacity-100 transition-opacity", darkMode ? "text-gray-600" : "text-gray-400")}>clic para expandir</span>
                                       </div>
                                       <span className={cn("text-[9px] font-black px-2 py-1 rounded-lg",
                                         status === 'urgent' ? "bg-red-500/20 text-red-400" :
                                         status === 'warning' ? "bg-amber-500/20 text-amber-400" :
                                         "bg-emerald-500/20 text-emerald-400"
                                       )}>{status === 'urgent' ? '⚠ PEDIR' : status === 'warning' ? '↓ BAJO' : '✓ OK'}</span>
-                                    </div>
+                                    </button>
 
                                     <div className="p-5">
                                       {/* TWO MAIN COLUMNS: demanda | a pedir */}
@@ -7597,15 +9381,19 @@ function App() {
                                           <p className={cn(darkMode ? "text-gray-700" : "text-gray-300")}>{parseFloat((currentStock * m2box).toFixed(1))} m²</p>
                                         </div>
                                         {realTransit > 0 && (
-                                          <div>
-                                            <p className="text-amber-400/80">En tránsito</p>
-                                            <p className="font-black text-xs text-amber-400">{realTransit} cj</p>
-                                            <p className="text-amber-400/60">{parseFloat((realTransit * m2box).toFixed(1))} m²</p>
+                                          <div className={cn("transition-opacity", !includeTransit && "opacity-40")}>
+                                            <p className={cn("flex items-center gap-1", includeTransit ? "text-amber-400/80" : (darkMode ? "text-gray-600" : "text-gray-400"))}>
+                                              En tránsito
+                                              {!includeTransit && <span className="text-[7px] font-black uppercase tracking-wider px-1 py-0.5 rounded bg-gray-500/20 text-gray-500">OFF</span>}
+                                            </p>
+                                            <p className={cn("font-black text-xs", includeTransit ? "text-amber-400" : (darkMode ? "text-gray-600 line-through" : "text-gray-400 line-through"))}>{realTransit} cj</p>
+                                            <p className={cn(includeTransit ? "text-amber-400/60" : (darkMode ? "text-gray-700 line-through" : "text-gray-300 line-through"))}>{parseFloat((realTransit * m2box).toFixed(1))} m²</p>
                                           </div>
                                         )}
                                         <div>
                                           <p className={darkMode ? "text-gray-600" : "text-gray-400"}>Stock seg.</p>
                                           <p className={cn("font-black text-xs", safetyStock > currentStock ? "text-red-400" : (darkMode ? "text-gray-400" : "text-gray-600"))}>{safetyStock} cj</p>
+                                          <p className={cn(darkMode ? "text-gray-700" : "text-gray-300")}>{parseFloat((safetyStock * m2box).toFixed(1))} m²</p>
                                           <p className={cn("text-[8px]", darkMode ? "text-gray-700" : "text-gray-400")}>2 meses avg</p>
                                         </div>
                                         <div>
@@ -7635,21 +9423,33 @@ function App() {
                                       {/* ── Alerta: cuándo hay que hacer el pedido ── */}
                                       {(() => {
                                         if (avgMonthly <= 0) return null;
-                                        // Months until stock (with transit) hits safety stock
+
+                                        // totalWithTransit ya respeta el toggle includeTransit:
+                                        //   ON  → currentStock + realTransit
+                                        //   OFF → currentStock solo
                                         const monthsUntilSafety = (totalWithTransit - safetyStock) / avgMonthly;
-                                        // Need to order AT LEAST 2 months before running out (Fujifilm lead time)
                                         const LEAD_TIME_MONTHS = 2;
                                         const monthsUntilOrderNeeded = monthsUntilSafety - LEAD_TIME_MONTHS;
-                                        if (monthsUntilOrderNeeded > 6) return null; // plenty of time, no alert needed
-                                        const now = new Date();
-                                        const orderByDate = new Date(now.getFullYear(), now.getMonth() + Math.max(0, Math.floor(monthsUntilOrderNeeded)), 1);
-                                        const MONTH_NAMES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
-                                        const orderByLabel = `${MONTH_NAMES[orderByDate.getMonth()]} ${orderByDate.getFullYear()}`;
+
+                                        // Sin alerta si hay tiempo de sobra (>6 meses para pedir)
+                                        if (monthsUntilOrderNeeded > 6) return null;
+
+                                        // Sin alerta si el stock cubre el período Y hay margen holgado
+                                        // (significa que aunque el tránsito cubra, no hay urgencia real)
+                                        if (toOrder === 0 && monthsUntilSafety >= LEAD_TIME_MONTHS + 1.5) return null;
+
                                         const isUrgent = monthsUntilOrderNeeded <= 0;
-                                        const isSoon = monthsUntilOrderNeeded <= 1;
-                                        // How much to order: use same formula as main recommendation
-                                        const qtyToOrder = toOrder > 0 ? toOrder : Math.round(avgMonthly * 4 + safetyStock - totalWithTransit);
-                                        if (qtyToOrder <= 0 && !isUrgent) return null;
+                                        const isSoon   = monthsUntilOrderNeeded <= 1;
+
+                                        // Sin alerta si stock OK y nada urgente
+                                        if (toOrder === 0 && !isUrgent && !isSoon) return null;
+
+                                        const now = new Date();
+                                        const MONTH_NAMES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+                                        const orderByDate = new Date(now.getFullYear(), now.getMonth() + Math.max(0, Math.floor(monthsUntilOrderNeeded)), 1);
+                                        const orderByLabel = `${MONTH_NAMES[orderByDate.getMonth()]} ${orderByDate.getFullYear()}`;
+                                        const qtyToOrder = toOrder > 0 ? toOrder : 0;
+
                                         return (
                                           <div className={cn("mt-3 rounded-xl p-3 border",
                                             isUrgent ? (darkMode ? "bg-red-500/15 border-red-500/30" : "bg-red-50 border-red-200")
@@ -8182,7 +9982,16 @@ function App() {
                               <td className={cn("px-4 py-2.5", darkMode ? "text-gray-400" : "text-gray-600")}>{r.order_date}</td>
                               <td className={cn("px-4 py-2.5 font-mono text-[10px] max-w-[120px] truncate", darkMode ? "text-gray-500" : "text-gray-400")}>{r.invoice_number || '—'}</td>
                               <td className="px-4 py-2.5 text-center">
-                                <span className={cn("font-black", r.is_return ? "text-amber-400" : "text-red-400")}>{r.is_return ? `-${r.quantity}` : r.quantity}</span>
+                                <div className="flex flex-col items-center gap-0.5">
+                                  <span className={cn("font-black", r.is_return ? "text-amber-400" : "text-red-400")}>{r.is_return ? `-${r.quantity}` : r.quantity}</span>
+                                  {r.adapted_to && (
+                                    <span className={cn("text-[8px] font-black px-1.5 py-0.5 rounded-md whitespace-nowrap",
+                                      darkMode ? "bg-amber-500/15 text-amber-400" : "bg-amber-100 text-amber-700"
+                                    )}>
+                                      ✂️ {r.quantity * (r.adapted_ratio || 2)} cj {r.adapted_to}
+                                    </span>
+                                  )}
+                                </div>
                               </td>
                               <td className={cn("px-4 py-2.5 text-center font-semibold", darkMode ? "text-cyan-500" : "text-cyan-600")}>{Math.abs(m2r).toFixed(2)}</td>
                               <td className={cn("px-4 py-2.5 text-right font-mono text-[10px]", darkMode ? "text-gray-500" : "text-gray-400")}>{r.unit_cost ? `$${r.unit_cost.toFixed(2)}` : '—'}</td>
@@ -8612,14 +10421,14 @@ function App() {
                       required
                       value={editingRecord.client_id}
                       onChange={e => setEditingRecord({...editingRecord, client_id: parseInt(e.target.value)})}
+                      style={darkMode ? { colorScheme: 'dark' } : {}}
                       className={cn(
                         "w-full px-4 py-3 rounded-xl border-none focus:ring-2 focus:ring-[#ED1C24]/20 outline-none font-bold appearance-none",
-                        darkMode ? "bg-white/5 text-white" : "bg-gray-50"
-                      )}
-                    >
-                      <option value="0" className={darkMode ? "bg-[#16161A] text-white" : "bg-white text-black"}>Seleccionar Cliente...</option>
+                        darkMode ? "bg-[#16161A] text-white" : "bg-gray-50"
+                      )}>
+                      <option value="0">Seleccionar Cliente...</option>
                       {allClients.map(c => (
-                        <option key={c.id} value={c.id} className={darkMode ? "bg-[#16161A] text-white" : "bg-white text-black"}>{c.name}</option>
+                        <option key={c.id} value={c.id}>{c.name}</option>
                       ))}
                     </select>
                   </div>
@@ -8700,15 +10509,15 @@ function App() {
                     <select 
                       value={editingRecord.size || '14x17'}
                       onChange={e => setEditingRecord({...editingRecord, size: e.target.value})}
+                      style={darkMode ? { colorScheme: 'dark' } : {}}
                       className={cn(
                         "w-full px-4 py-3 rounded-xl border-none focus:ring-2 focus:ring-[#ED1C24]/20 outline-none font-bold appearance-none",
-                        darkMode ? "bg-white/5 text-white" : "bg-gray-50"
-                      )}
-                    >
-                      <option value="14x17" className={darkMode ? "bg-[#16161A] text-white" : "bg-white text-black"}>14x17</option>
-                      <option value="8x10" className={darkMode ? "bg-[#16161A] text-white" : "bg-white text-black"}>8x10</option>
-                      <option value="10x12" className={darkMode ? "bg-[#16161A] text-white" : "bg-white text-black"}>10x12</option>
-                      <option value="10x14" className={darkMode ? "bg-[#16161A] text-white" : "bg-white text-black"}>10x14</option>
+                        darkMode ? "bg-[#16161A] text-white" : "bg-gray-50"
+                      )}>
+                      <option value="14x17">14x17</option>
+                      <option value="8x10">8x10</option>
+                      <option value="10x12">10x12</option>
+                      <option value="10x14">10x14</option>
                     </select>
                   </div>
                   <div>
@@ -8795,7 +10604,79 @@ function App() {
                   </div>
                 </div>
               </div>
-              <button 
+
+              {/* ── ADAPTACIÓN DE MEDIDA ── */}
+              {!((editingRecord as any).is_return) && (
+                <div className={cn("rounded-xl border p-4", darkMode ? "bg-amber-500/5 border-amber-500/15" : "bg-amber-50/60 border-amber-200")}>
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <p className={cn("text-[10px] font-black uppercase tracking-wider", darkMode ? "text-amber-400" : "text-amber-700")}>
+                        ✂️ Adaptación de medida
+                      </p>
+                      <p className={cn("text-[9px] mt-0.5", darkMode ? "text-amber-500/60" : "text-amber-600/70")}>
+                        Opcional — si la caja se recortó a otra medida para entregar al cliente
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setEditingRecord({ ...editingRecord, adapted_to: (editingRecord as any).adapted_to ? undefined : '8x10', adapted_ratio: (editingRecord as any).adapted_to ? undefined : 2 } as any)}
+                      className={cn("px-3 py-1.5 rounded-xl text-[10px] font-black transition-all border",
+                        (editingRecord as any).adapted_to
+                          ? (darkMode ? "bg-amber-500/20 border-amber-500/30 text-amber-400" : "bg-amber-100 border-amber-300 text-amber-700")
+                          : (darkMode ? "bg-white/5 border-white/10 text-gray-500 hover:bg-white/8" : "bg-white border-gray-200 text-gray-500 hover:bg-gray-50")
+                      )}
+                    >
+                      {(editingRecord as any).adapted_to ? 'Activado' : 'Activar'}
+                    </button>
+                  </div>
+
+                  {(editingRecord as any).adapted_to && (
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1">
+                        <label className={cn("text-[9px] font-bold uppercase tracking-wider mb-1 block", darkMode ? "text-amber-500/70" : "text-amber-700/70")}>
+                          Medida física entregada
+                        </label>
+                        <select
+                          value={(editingRecord as any).adapted_to || '8x10'}
+                          onChange={e => setEditingRecord({ ...editingRecord, adapted_to: e.target.value } as any)}
+                          style={darkMode ? { colorScheme: 'dark' } : {}}
+                          className={cn("w-full px-3 py-2 rounded-xl text-xs font-black outline-none border focus:ring-2 focus:ring-amber-500/30",
+                            darkMode ? "bg-[#16161A] border-amber-500/20 text-white" : "bg-white border-amber-200 text-gray-800"
+                          )}
+                        >
+                          {['8x10','10x12','10x14'].filter(s => s !== editingRecord.size).map(s => (
+                            <option key={s} value={s}>{s}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="w-32">
+                        <label className={cn("text-[9px] font-bold uppercase tracking-wider mb-1 block", darkMode ? "text-amber-500/70" : "text-amber-700/70")}>
+                          Cajas físicas por caja facturada
+                        </label>
+                        <input
+                          type="number" min={1} max={10}
+                          value={(editingRecord as any).adapted_ratio || 2}
+                          onChange={e => setEditingRecord({ ...editingRecord, adapted_ratio: parseInt(e.target.value) || 1 } as any)}
+                          className={cn("w-full px-3 py-2 rounded-xl text-xs font-black outline-none border focus:ring-2 focus:ring-amber-500/30 text-center",
+                            darkMode ? "bg-[#16161A] border-amber-500/20 text-white" : "bg-white border-amber-200 text-gray-800"
+                          )}
+                        />
+                      </div>
+                      <div className={cn("flex-1 px-3 py-2 rounded-xl text-center", darkMode ? "bg-white/4" : "bg-amber-100/60")}>
+                        <p className={cn("text-[9px] font-bold", darkMode ? "text-amber-500/70" : "text-amber-700/70")}>Cliente recibe</p>
+                        <p className={cn("text-sm font-black", darkMode ? "text-amber-400" : "text-amber-700")}>
+                          {(editingRecord.quantity || 0) * ((editingRecord as any).adapted_ratio || 2)} cj {(editingRecord as any).adapted_to}
+                        </p>
+                        <p className={cn("text-[8px]", darkMode ? "text-amber-500/50" : "text-amber-600/60")}>
+                          de {editingRecord.quantity || 0} cj {editingRecord.size} facturadas
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <button
                 type="submit"
                 className="w-full bg-[#ED1C24] text-white py-4 rounded-2xl font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-[#D11920] shadow-lg shadow-red-500/20 transition-all"
               >
@@ -9370,7 +11251,8 @@ function App() {
                 <div>
                   <label className={cn("text-[9px] font-bold uppercase tracking-wider block mb-1.5", darkMode ? "text-gray-500" : "text-gray-400")}>Medida *</label>
                   <select value={newStockEntry.size || ''} onChange={e => setNewStockEntry(p => ({ ...p, size: e.target.value }))}
-                    className={cn("w-full px-3 py-2 rounded-xl text-xs outline-none border focus:ring-2 focus:ring-emerald-500/30 cursor-pointer", darkMode ? "bg-white/8 border-white/10 text-white" : "bg-white border-gray-200 text-gray-800")}>
+                    style={darkMode ? { colorScheme: 'dark' } : {}}
+                    className={cn("w-full px-3 py-2 rounded-xl text-xs outline-none border focus:ring-2 focus:ring-emerald-500/30 cursor-pointer", darkMode ? "bg-[#16161A] border-white/10 text-white" : "bg-white border-gray-200 text-gray-800")}>
                     <option value="">Seleccionar...</option>
                     {['8x10','10x12','10x14','14x17'].map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
@@ -9400,11 +11282,20 @@ function App() {
                     className={cn("w-full px-3 py-2 rounded-xl text-xs outline-none border focus:ring-2 focus:ring-emerald-500/30", darkMode ? "bg-white/8 border-white/10 text-white" : "bg-white border-gray-200 text-gray-800")} />
                 </div>
               </div>
-              {/* Supplier invoice */}
-              <div>
-                <label className={cn("text-[9px] font-bold uppercase tracking-wider block mb-1.5", darkMode ? "text-gray-500" : "text-gray-400")}>Factura del proveedor</label>
-                <input type="text" placeholder="Ej: 001-001-000012345" value={newStockEntry.supplier_invoice || ''} onChange={e => setNewStockEntry(p => ({ ...p, supplier_invoice: e.target.value }))}
-                  className={cn("w-full px-3 py-2 rounded-xl text-xs outline-none border focus:ring-2 focus:ring-emerald-500/30", darkMode ? "bg-white/8 border-white/10 text-white" : "bg-white border-gray-200 text-gray-800")} />
+              {/* Orden + Factura */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className={cn("text-[9px] font-bold uppercase tracking-wider block mb-1.5", darkMode ? "text-gray-500" : "text-gray-400")}>
+                    Orden de compra
+                  </label>
+                  <input type="text" placeholder="Ej: FJ-2001" value={newStockEntry.purchase_order || ''} onChange={e => setNewStockEntry(p => ({ ...p, purchase_order: e.target.value }))}
+                    className={cn("w-full px-3 py-2 rounded-xl text-xs outline-none border focus:ring-2 focus:ring-emerald-500/30 font-mono", darkMode ? "bg-white/8 border-white/10 text-white placeholder:text-gray-600" : "bg-white border-gray-200 text-gray-800")} />
+                </div>
+                <div>
+                  <label className={cn("text-[9px] font-bold uppercase tracking-wider block mb-1.5", darkMode ? "text-gray-500" : "text-gray-400")}>Factura del proveedor</label>
+                  <input type="text" placeholder="Ej: 001-001-000012345" value={newStockEntry.supplier_invoice || ''} onChange={e => setNewStockEntry(p => ({ ...p, supplier_invoice: e.target.value }))}
+                    className={cn("w-full px-3 py-2 rounded-xl text-xs outline-none border focus:ring-2 focus:ring-emerald-500/30", darkMode ? "bg-white/8 border-white/10 text-white" : "bg-white border-gray-200 text-gray-800")} />
+                </div>
               </div>
               {/* Notes */}
               <div>
@@ -9978,14 +11869,22 @@ function App() {
 
               {/* ERROR */}
               {csvImportStatus === 'error' && (
-                <div className="p-10 flex flex-col items-center gap-4">
+                <div className="p-8 flex flex-col items-center gap-4">
                   <div className="w-16 h-16 rounded-2xl bg-red-500/20 flex items-center justify-center">
                     <AlertCircle className="w-8 h-8 text-red-500" />
                   </div>
-                  <div className="text-center">
+                  <div className="text-center w-full max-w-sm">
                     <p className="font-black text-lg">Error al procesar el archivo</p>
-                    <p className={cn("text-xs mt-1 max-w-xs", darkMode ? "text-gray-500" : "text-gray-400")}>
+                    <p className={cn("text-xs mt-2 leading-relaxed", darkMode ? "text-gray-400" : "text-gray-500")}>
                       {csvImportError || 'Asegúrate de que el archivo sea un CSV válido con encabezados.'}
+                    </p>
+                    {csvImportError && (
+                      <div className={cn("mt-3 px-3 py-2 rounded-lg text-left text-[10px] font-mono break-all", darkMode ? "bg-white/5 text-red-400" : "bg-red-50 text-red-600 border border-red-100")}>
+                        {csvImportError}
+                      </div>
+                    )}
+                    <p className={cn("text-[10px] mt-3", darkMode ? "text-gray-600" : "text-gray-400")}>
+                      Revisa la consola del navegador (F12 → Console) para ver el detalle completo del error.
                     </p>
                   </div>
                 </div>
@@ -10052,6 +11951,1351 @@ function App() {
         </div>
       )}
 
+      {/* ── PROYECCIÓN SIZE DETAIL MODAL ── */}
+      {projectionSizeModal && (() => {
+        const m = projectionSizeModal;
+        const PERIOD_LABELS: Record<number,string> = {1:'1 mes',3:'3 meses',6:'6 meses',12:'12 meses'};
+        const coverageColor = (v: number | null) => v === null ? '' : v < 2 ? 'text-red-400' : v < 4 ? 'text-amber-400' : 'text-emerald-400';
+        // Mini bar chart: last 12 months consumption from allConsumos
+        const now = new Date();
+        const MONTH_NAMES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+        const last12 = Array.from({length:12}, (_,i) => {
+          const d = new Date(now.getFullYear(), now.getMonth() - 11 + i, 1);
+          const qty = allConsumos.filter(r => {
+            const rd = new Date(r.order_date);
+            const rft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type;
+            return rd.getFullYear() === d.getFullYear() && rd.getMonth() === d.getMonth()
+              && r.size === m.size && rft === m.ft && !r.is_return;
+          }).reduce((s,r) => s + r.quantity, 0);
+          return { label: MONTH_NAMES[d.getMonth()], qty };
+        });
+        const maxQty = Math.max(...last12.map(x => x.qty), 1);
+        const periodSuffix = PERIOD_LABELS[projectionPeriod] || '1 mes';
+        // Recalculate demand live based on current projectionPeriod and includeTransit
+        const liveDemandPeriod = Math.round(m.avgMonthly * projectionPeriod);
+        const liveDemandM2 = parseFloat((liveDemandPeriod * m.m2box).toFixed(1));
+        const liveTotal = m.currentStock + (includeTransit ? m.realTransit : 0);
+        const liveUsableStock = Math.max(0, liveTotal - m.safetyStock);
+        const liveToOrder = Math.max(0, liveDemandPeriod - liveUsableStock);
+        const liveToOrderM2 = parseFloat((liveToOrder * m.m2box).toFixed(1));
+        const liveSobrantes = Math.max(0, liveTotal - m.safetyStock - liveDemandPeriod);
+
+        return (
+          <div className="fixed inset-0 z-[9995] flex items-center justify-center" onClick={() => setProjectionSizeModal(null)}>
+            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+            <div
+              className={cn("relative w-full max-w-2xl mx-4 rounded-2xl shadow-2xl border overflow-hidden max-h-[90vh] flex flex-col",
+                darkMode ? "bg-[#16161A] border-white/12" : "bg-white border-gray-200"
+              )}
+              onClick={e => e.stopPropagation()}
+              style={{ fontFamily: "'DM Sans','Inter',system-ui,sans-serif" }}
+            >
+              {/* Header */}
+              <div className={cn("flex items-center justify-between px-6 py-4 border-b shrink-0",
+                darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50"
+              )}>
+                <div className="flex items-center gap-3">
+                  <span className="text-xl font-black px-3 py-1.5 rounded-xl bg-gray-800 text-white">{m.size}</span>
+                  <div>
+                    <p className={cn("text-sm font-black", darkMode ? "text-white" : "text-gray-900")}>
+                      {m.ft === 'DIHT' ? 'DI-HT' : m.ft === 'DIHL' ? 'DI-HL' : 'DI-ML'} · {m.size}
+                    </p>
+                    <p className={cn("text-[10px]", darkMode ? "text-gray-500" : "text-gray-400")}>{m.m2box} m²/caja · Análisis de stock y proyección</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {/* Period selector dentro del modal */}
+                  <div className={cn("flex items-center gap-1 p-1 rounded-xl", darkMode ? "bg-white/5" : "bg-gray-100")}>
+                    {([1, 3, 6, 12] as const).map(p => (
+                      <button key={p} onClick={() => setProjectionPeriod(p)}
+                        className={cn("px-2.5 py-1 rounded-lg text-[10px] font-black transition-all",
+                          projectionPeriod === p
+                            ? "bg-[#ED1C24] text-white shadow-sm"
+                            : (darkMode ? "text-gray-500 hover:text-gray-300 hover:bg-white/5" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200")
+                        )}>
+                        {{ 1: '1M', 3: '3M', 6: '6M', 12: '1A' }[p]}
+                      </button>
+                    ))}
+                  </div>
+                  {/* Transit toggle */}
+                  <button
+                    onClick={() => setIncludeTransit(v => !v)}
+                    className={cn(
+                      "flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[10px] font-black border transition-all",
+                      includeTransit
+                        ? (darkMode ? "bg-amber-500/15 border-amber-500/30 text-amber-400" : "bg-amber-50 border-amber-300 text-amber-600")
+                        : (darkMode ? "bg-white/5 border-white/10 text-gray-500" : "bg-gray-100 border-gray-200 text-gray-400")
+                    )}
+                    title={includeTransit ? "Tránsito incluido — clic para excluir" : "Tránsito excluido — clic para incluir"}
+                  >
+                    <span className={cn("w-2.5 h-2.5 rounded-full border-2 flex items-center justify-center shrink-0",
+                      includeTransit ? "border-amber-400 bg-amber-400" : (darkMode ? "border-gray-600" : "border-gray-400")
+                    )}>
+                      {includeTransit && <span className="w-1 h-1 rounded-full bg-white block" />}
+                    </span>
+                    Tránsito
+                  </button>
+                  <button onClick={() => setProjectionSizeModal(null)}
+                    className={cn("p-1.5 rounded-lg transition-colors", darkMode ? "hover:bg-white/8 text-gray-500" : "hover:bg-gray-100 text-gray-400")}>
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="overflow-y-auto custom-scrollbar flex-1">
+                <div className="p-6 space-y-5">
+
+                  {/* KPIs principales */}
+                  <div className="grid grid-cols-4 gap-3">
+                    {[
+                      { label: 'Stock bodega', value: `${m.currentStock} cj`, sub: `${(m.currentStock * m.m2box).toFixed(1)} m²`, color: darkMode ? 'text-cyan-400' : 'text-cyan-600' },
+                      { label: 'En tránsito', value: `${m.realTransit} cj`, sub: `${(m.realTransit * m.m2box).toFixed(1)} m²`, color: 'text-amber-400' },
+                      { label: 'Stock seguridad', value: `${m.safetyStock} cj`, sub: `${(m.safetyStock * m.m2box).toFixed(1)} m²`, color: m.safetyStock > m.currentStock ? 'text-red-400' : (darkMode ? 'text-gray-400' : 'text-gray-600') },
+                      { label: 'Promedio/mes', value: `${m.avgMonthly.toFixed(1)} cj`, sub: `${(m.avgMonthly * m.m2box).toFixed(1)} m²`, color: darkMode ? 'text-gray-300' : 'text-gray-700' },
+                    ].map((k, i) => (
+                      <div key={i} className={cn("rounded-xl p-4 border", darkMode ? "bg-white/3 border-white/6" : "bg-gray-50 border-gray-100")}>
+                        <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-1.5", darkMode ? "text-gray-600" : "text-gray-400")}>{k.label}</p>
+                        <p className={cn("text-xl font-black leading-none", k.color)}>{k.value}</p>
+                        <p className={cn("text-[10px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{k.sub}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Cobertura visual */}
+                  <div className={cn("rounded-xl p-4 border", darkMode ? "bg-white/3 border-white/6" : "bg-gray-50 border-gray-100")}>
+                    <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-3", darkMode ? "text-gray-600" : "text-gray-400")}>Cobertura de stock</p>
+                    <div className="space-y-2.5">
+                      {[
+                        { label: 'Solo bodega', months: m.avgMonthly > 0 ? m.currentStock / m.avgMonthly : null, max: 12 },
+                        { label: includeTransit ? 'Con tránsito' : 'Sin tránsito', months: m.avgMonthly > 0 ? liveTotal / m.avgMonthly : null, max: 12 },
+                      ].map((row, i) => (
+                        <div key={i} className="flex items-center gap-3">
+                          <span className={cn("text-[9px] font-semibold w-24 shrink-0", darkMode ? "text-gray-500" : "text-gray-400")}>{row.label}</span>
+                          <div className={cn("flex-1 h-2.5 rounded-full overflow-hidden", darkMode ? "bg-white/8" : "bg-gray-200")}>
+                            <div className={cn("h-full rounded-full transition-all", coverageColor(row.months).includes('red') ? 'bg-red-500' : coverageColor(row.months).includes('amber') ? 'bg-amber-400' : 'bg-emerald-500')}
+                              style={{ width: `${Math.min(100, ((row.months ?? 0) / row.max) * 100)}%` }} />
+                          </div>
+                          <span className={cn("text-sm font-black w-14 text-right shrink-0", coverageColor(row.months))}>
+                            {row.months !== null ? `${row.months?.toFixed(1)}m` : '∞'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Recomendación */}
+                  <div className={cn("rounded-xl p-4 border",
+                    liveToOrder > 0
+                      ? (darkMode ? "bg-red-500/10 border-red-500/25" : "bg-red-50 border-red-200")
+                      : (darkMode ? "bg-emerald-500/8 border-emerald-500/20" : "bg-emerald-50 border-emerald-200")
+                  )}>
+                    <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-2", darkMode ? "text-gray-500" : "text-gray-400")}>Recomendación · {periodSuffix}</p>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className={cn("text-2xl font-black", liveToOrder > 0 ? 'text-red-400' : 'text-emerald-400')}>
+                          {liveToOrder > 0 ? `Pedir ${liveToOrder} cj` : 'Stock suficiente'}
+                        </p>
+                        <p className={cn("text-base font-black mt-0.5", liveToOrder > 0 ? (darkMode ? 'text-red-400/70' : 'text-red-500/70') : (darkMode ? 'text-emerald-400/70' : 'text-emerald-600/70'))}>
+                          {liveToOrder > 0 ? `${liveToOrderM2} m²` : `+${liveSobrantes} cj sobrantes`}
+                        </p>
+                        {liveToOrder > 0 && <p className={cn("text-[10px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>a solicitar a Fujifilm</p>}
+                      </div>
+                      <div className="text-right">
+                        <p className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>Demanda {periodSuffix}</p>
+                        <p className={cn("text-xl font-black", darkMode ? "text-cyan-400" : "text-cyan-600")}>{liveDemandPeriod} cj</p>
+                        <p className={cn("text-base font-black", darkMode ? "text-cyan-400/60" : "text-cyan-600/60")}>{liveDemandM2} m²</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Gráfica consumo últimos 12 meses */}
+                  <div className={cn("rounded-xl p-4 border", darkMode ? "bg-white/3 border-white/6" : "bg-gray-50 border-gray-100")}>
+                    <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-3", darkMode ? "text-gray-600" : "text-gray-400")}>Consumo mensual — últimos 12 meses</p>
+                    <div className="flex items-end gap-1.5 h-24">
+                      {last12.map((bar, i) => (
+                        <div key={i} className="flex-1 flex flex-col items-center gap-1 h-full justify-end">
+                          {bar.qty > 0 && <span className={cn("text-[8px] font-bold", darkMode ? "text-gray-500" : "text-gray-400")}>{bar.qty}</span>}
+                          <div className={cn("w-full rounded-t-sm transition-all",
+                            i === 11 ? (darkMode ? "bg-cyan-500" : "bg-cyan-500") : (darkMode ? "bg-white/20" : "bg-gray-300")
+                          )} style={{ height: `${Math.max(4, (bar.qty / maxQty) * 72)}px` }} />
+                          <span className={cn("text-[7px] font-semibold", darkMode ? "text-gray-700" : "text-gray-400")}>{bar.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <p className={cn("text-[9px] mt-2", darkMode ? "text-gray-700" : "text-gray-400")}>
+                      Promedio: {m.avgMonthly.toFixed(1)} cj/mes · Mes actual destacado en cyan
+                    </p>
+                  </div>
+
+                  {/* Top consumidores */}
+                  {m.topClients.length > 0 && (
+                    <div className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-white/3 border-white/6" : "bg-gray-50 border-gray-100")}>
+                      <p className={cn("px-4 py-2.5 text-[9px] font-bold uppercase tracking-wider border-b", darkMode ? "text-gray-600 border-white/6" : "text-gray-400 border-gray-100")}>Top consumidores</p>
+                      {m.topClients.map(([name, qty], i) => {
+                        const m2 = parseFloat((qty / Math.max(projectionPeriod, 3) * m.m2box).toFixed(1));
+                        const pct = Math.round((qty / (m.topClients[0]?.[1] || 1)) * 100);
+                        return (
+                          <div key={i} className={cn("px-4 py-2.5 flex items-center gap-3 border-b last:border-0", darkMode ? "border-white/4" : "border-gray-50")}>
+                            <span className={cn("text-[10px] font-black w-5 shrink-0", darkMode ? "text-gray-600" : "text-gray-300")}>#{i+1}</span>
+                            <span className={cn("text-xs font-semibold flex-1 truncate", darkMode ? "text-gray-300" : "text-gray-700")}>{name}</span>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <div className={cn("h-1.5 w-20 rounded-full overflow-hidden", darkMode ? "bg-white/8" : "bg-gray-200")}>
+                                <div className="h-full rounded-full bg-cyan-500" style={{ width: `${pct}%` }} />
+                              </div>
+                              <span className={cn("text-[10px] font-bold w-16 text-right", darkMode ? "text-cyan-500" : "text-cyan-600")}>{m2} m²/m</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Órdenes activas */}
+                  {m.fujiOrders.length > 0 && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={cn("text-[9px] font-bold uppercase tracking-wider", darkMode ? "text-gray-600" : "text-gray-400")}>Órdenes activas:</span>
+                      {m.fujiOrders.map(o => (
+                        <span key={o} className={cn("text-[9px] font-mono font-bold px-2 py-1 rounded-lg border",
+                          darkMode ? "bg-white/5 border-white/10 text-gray-400" : "bg-white border-gray-200 text-gray-500"
+                        )}>{o}</span>
+                      ))}
+                    </div>
+                  )}
+
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className={cn("px-6 py-3 border-t flex items-center justify-between shrink-0", darkMode ? "border-white/8 bg-white/2" : "border-gray-100 bg-gray-50/60")}>
+                <p className={cn("text-[9px]", darkMode ? "text-gray-700" : "text-gray-400")}>Click fuera o ESC para cerrar</p>
+                <button onClick={() => setProjectionSizeModal(null)}
+                  className="px-4 py-1.5 rounded-lg text-xs font-bold bg-[#1A3A5C] text-white hover:bg-[#22487A] transition-colors">
+                  Cerrar
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── UNIFIED DELETE ENTRY MODAL ── */}
+      {transitRevertModal && (() => {
+        const m = transitRevertModal;
+        const ftLabel = m.ft === 'DIHT' ? 'DI-HT' : m.ft === 'DIHL' ? 'DI-HL' : 'DI-ML';
+        const MONTH_KEYS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        const entryMonth = MONTH_KEYS[new Date(m.entryDate).getMonth()];
+        const currentTransit = Object.values(stockFilmTransit[String(m.year)]?.[m.filmKey] || {}).reduce((s: number, v: any) => s + (v || 0), 0);
+        const MONTH_NAMES: Record<string,string> = {
+          Jan:'Enero',Feb:'Febrero',Mar:'Marzo',Apr:'Abril',May:'Mayo',Jun:'Junio',
+          Jul:'Julio',Aug:'Agosto',Sep:'Septiembre',Oct:'Octubre',Nov:'Noviembre',Dec:'Diciembre'
+        };
+
+        const doDelete = async () => {
+          await deleteDoc(doc(db, 'stock_entries', m.entryId));
+          addAuditLog('delete_record', `Eliminó entrada de ${m.entryQty} cj ${ftLabel} ${m.size} (${m.entryDate})`);
+        };
+
+        const doRevert = () => {
+          const qty = parseInt(transitRevertQty) || m.entryQty;
+          const currentVal = stockFilmTransit[String(m.year)]?.[m.filmKey]?.[entryMonth] || 0;
+          updateStockFilmTransit(m.year, m.filmKey, entryMonth, currentVal + qty);
+          addAuditLog('update_stock', `Revirtió tránsito +${qty} cj ${ftLabel} ${m.size} en ${MONTH_NAMES[entryMonth]} ${m.year}`);
+        };
+
+        return (
+          <div className="fixed inset-0 z-[9996] flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+            <div className={cn("relative w-full max-w-sm mx-4 rounded-2xl shadow-2xl border overflow-hidden",
+              darkMode ? "bg-[#16161A] border-white/12" : "bg-white border-gray-200"
+            )}>
+              {/* Header */}
+              <div className={cn("px-6 py-5 border-b", darkMode ? "border-white/8" : "border-gray-100")}>
+                <div className="flex items-start gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-red-500/15 flex items-center justify-center shrink-0 mt-0.5">
+                    <Trash2 className="w-4 h-4 text-red-400" />
+                  </div>
+                  <div>
+                    <p className={cn("text-sm font-black", darkMode ? "text-white" : "text-gray-900")}>Eliminar entrada de stock</p>
+                    <p className={cn("text-[10px] mt-1 font-mono", darkMode ? "text-gray-500" : "text-gray-400")}>
+                      {m.entryQty} cj · {ftLabel} {m.size} · {m.entryDate}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Info panel */}
+              <div className="px-6 py-4">
+                <div className={cn("rounded-xl p-3.5 border flex items-center justify-between", darkMode ? "bg-amber-500/8 border-amber-500/20" : "bg-amber-50 border-amber-200")}>
+                  <div>
+                    <p className={cn("text-[9px] font-bold uppercase tracking-wider", darkMode ? "text-amber-500/70" : "text-amber-600/70")}>Tránsito actual — {ftLabel} {m.size}</p>
+                    <p className={cn("text-lg font-black mt-0.5", darkMode ? "text-amber-400" : "text-amber-600")}>{currentTransit} cj</p>
+                  </div>
+                  <div className="text-right">
+                    <p className={cn("text-[9px]", darkMode ? "text-amber-500/60" : "text-amber-500/80")}>Se restauraría en</p>
+                    <p className={cn("text-[10px] font-bold", darkMode ? "text-amber-400" : "text-amber-700")}>{MONTH_NAMES[entryMonth]} {m.year}</p>
+                    <p className={cn("text-[9px]", darkMode ? "text-amber-500/60" : "text-amber-500/80")}>→ {currentTransit + m.entryQty} cj</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Two action buttons */}
+              <div className="px-6 pb-6 space-y-2.5">
+                {/* Option 1: Solo eliminar */}
+                <button
+                  onClick={async () => {
+                    try { await doDelete(); showToast('Entrada eliminada', 'info'); } catch { showToast('Error al eliminar', 'error'); }
+                    setTransitRevertModal(null);
+                  }}
+                  className={cn("w-full py-3 px-4 rounded-xl text-sm font-bold text-left transition-all border flex items-center justify-between group",
+                    darkMode ? "bg-white/4 border-white/10 hover:bg-red-500/10 hover:border-red-500/30" : "bg-gray-50 border-gray-200 hover:bg-red-50 hover:border-red-200"
+                  )}
+                >
+                  <div>
+                    <p className={cn("font-black text-xs", darkMode ? "text-white" : "text-gray-800")}>Solo eliminar registro</p>
+                    <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-500" : "text-gray-400")}>El tránsito queda en {currentTransit} cj</p>
+                  </div>
+                  <Trash2 className={cn("w-4 h-4 shrink-0 transition-colors", darkMode ? "text-gray-600 group-hover:text-red-400" : "text-gray-300 group-hover:text-red-400")} />
+                </button>
+
+                {/* Option 2: Eliminar y restaurar tránsito */}
+                <button
+                  onClick={async () => {
+                    try { await doDelete(); doRevert(); showToast(`Entrada eliminada · tránsito restaurado a ${currentTransit + m.entryQty} cj`, 'success'); } catch { showToast('Error al eliminar', 'error'); }
+                    setTransitRevertModal(null);
+                  }}
+                  className="w-full py-3 px-4 rounded-xl text-sm font-bold text-left transition-all bg-[#1A3A5C] hover:bg-[#22487A] text-white flex items-center justify-between group"
+                >
+                  <div>
+                    <p className="font-black text-xs">Eliminar y restaurar tránsito</p>
+                    <p className="text-[9px] mt-0.5 text-white/60">Tránsito vuelve a {currentTransit + m.entryQty} cj en {MONTH_NAMES[entryMonth]}</p>
+                  </div>
+                  <History className="w-4 h-4 shrink-0 text-white/60 group-hover:text-white transition-colors" />
+                </button>
+
+                {/* Cancel */}
+                <button
+                  onClick={() => setTransitRevertModal(null)}
+                  className={cn("w-full py-2 rounded-xl text-xs font-bold transition-colors text-center",
+                    darkMode ? "text-gray-600 hover:text-gray-400" : "text-gray-400 hover:text-gray-600"
+                  )}
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── TRANSIT DEDUCTION MODAL — after stock entry ── */}
+      {transitDeductModal && (() => {
+        const m = transitDeductModal;
+        const ftLabel = m.ft === 'DIHT' ? 'DI-HT' : m.ft === 'DIHL' ? 'DI-HL' : 'DI-ML';
+        const deductQty = parseInt(transitDeductQty) || 0;
+        const MONTH_NAMES: Record<string,string> = {
+          Jan:'Enero',Feb:'Febrero',Mar:'Marzo',Apr:'Abril',May:'Mayo',Jun:'Junio',
+          Jul:'Julio',Aug:'Agosto',Sep:'Septiembre',Oct:'Octubre',Nov:'Noviembre',Dec:'Diciembre'
+        };
+
+        const handleConfirmDeduct = () => {
+          if (deductQty <= 0) { setTransitDeductModal(null); setNewStockEntry({}); return; }
+          // Distribute deduction across months with transit (largest first)
+          let remaining = deductQty;
+          const monthsSorted = Object.entries(m.transitByMonth)
+            .filter(([,v]) => (v as number) > 0)
+            .sort(([,a],[,b]) => (b as number) - (a as number));
+          for (const [month, val] of monthsSorted) {
+            if (remaining <= 0) break;
+            const toDeduct = Math.min(remaining, val as number);
+            const newVal = Math.max(0, (val as number) - toDeduct);
+            updateStockFilmTransit(m.year, m.filmKey, month, newVal);
+            remaining -= toDeduct;
+          }
+          showToast(`Entrada registrada y ${deductQty} cj descontadas del tránsito`, 'success');
+          addAuditLog('update_stock', `Entrada ${m.entryQty} cj ${ftLabel} ${m.size} → descontó ${deductQty} cj del tránsito`);
+          setTransitDeductModal(null);
+          setNewStockEntry({});
+        };
+
+        return (
+          <div className="fixed inset-0 z-[9996] flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+            <div className={cn("relative w-full max-w-md mx-4 rounded-2xl shadow-2xl border overflow-hidden",
+              darkMode ? "bg-[#16161A] border-white/12" : "bg-white border-gray-200"
+            )}>
+              {/* Header */}
+              <div className={cn("px-6 py-4 border-b", darkMode ? "border-white/8 bg-amber-500/8" : "border-amber-100 bg-amber-50")}>
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-amber-500/20 flex items-center justify-center shrink-0">
+                    <Package className="w-4 h-4 text-amber-400" />
+                  </div>
+                  <div>
+                    <p className={cn("text-sm font-black", darkMode ? "text-white" : "text-gray-900")}>
+                      ¿Descontar del tránsito?
+                    </p>
+                    <p className={cn("text-[10px] mt-0.5", darkMode ? "text-gray-500" : "text-gray-500")}>
+                      Entrada registrada: <span className="font-bold">{m.entryQty} cj {ftLabel} {m.size}</span>
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-5 space-y-4">
+                {/* Context */}
+                <div className={cn("rounded-xl p-4 border", darkMode ? "bg-white/3 border-white/8" : "bg-gray-50 border-gray-100")}>
+                  <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-2", darkMode ? "text-gray-600" : "text-gray-400")}>
+                    Tránsito actual — {ftLabel} {m.size}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {Object.entries(m.transitByMonth).filter(([,v]) => (v as number) > 0).map(([month, val]) => (
+                      <span key={month} className={cn("text-[10px] font-bold px-2.5 py-1 rounded-lg",
+                        darkMode ? "bg-amber-500/15 text-amber-300" : "bg-amber-50 text-amber-700"
+                      )}>
+                        {MONTH_NAMES[month] || month}: {val as number} cj
+                      </span>
+                    ))}
+                  </div>
+                  <p className={cn("text-xs font-black mt-2", darkMode ? "text-amber-400" : "text-amber-600")}>
+                    Total en tránsito: {m.totalTransit} cj
+                  </p>
+                </div>
+
+                {/* Deduct amount */}
+                <div>
+                  <label className={cn("text-[9px] font-bold uppercase tracking-wider block mb-2", darkMode ? "text-gray-500" : "text-gray-400")}>
+                    Cajas a descontar del tránsito
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="number" min={0} max={m.totalTransit}
+                      value={transitDeductQty}
+                      onChange={e => setTransitDeductQty(e.target.value)}
+                      className={cn("w-28 text-center text-lg font-black rounded-xl px-3 py-2.5 outline-none focus:ring-2 focus:ring-amber-500/30 border",
+                        darkMode ? "bg-white/8 text-white border-white/10" : "bg-white text-gray-800 border-gray-200"
+                      )}
+                    />
+                    <div className={cn("text-xs", darkMode ? "text-gray-500" : "text-gray-400")}>
+                      <p>de {m.totalTransit} cj disponibles</p>
+                      <p className="text-[9px] mt-0.5">Sugerido: {Math.min(m.entryQty, m.totalTransit)} cj</p>
+                    </div>
+                  </div>
+                  {deductQty > 0 && (
+                    <p className={cn("text-[10px] mt-2", darkMode ? "text-gray-600" : "text-gray-400")}>
+                      Tránsito restante después: <span className="font-bold">{Math.max(0, m.totalTransit - deductQty)} cj</span>
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className={cn("px-5 py-4 border-t flex items-center justify-between gap-3", darkMode ? "border-white/8" : "border-gray-100")}>
+                <button
+                  onClick={() => { setTransitDeductModal(null); setNewStockEntry({}); showToast(`Entrada registrada: ${m.entryQty} cj ${ftLabel} ${m.size}`, 'success'); }}
+                  className={cn("px-4 py-2 rounded-xl text-xs font-bold transition-colors", darkMode ? "bg-white/5 text-gray-400 hover:bg-white/10" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}
+                >
+                  No descontar
+                </button>
+                <button
+                  onClick={handleConfirmDeduct}
+                  disabled={deductQty <= 0}
+                  className={cn("flex-1 py-2 rounded-xl text-xs font-black transition-all",
+                    deductQty > 0
+                      ? "bg-amber-500 text-white hover:bg-amber-600 shadow-sm"
+                      : (darkMode ? "bg-white/5 text-gray-600 cursor-not-allowed" : "bg-gray-100 text-gray-400 cursor-not-allowed")
+                  )}
+                >
+                  Descontar {deductQty > 0 ? `${deductQty} cj` : ''} del tránsito
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── BULK WARRANTY UPDATE MODAL ── */}
+      {showBulkWarrantyModal && (() => {
+        const months = parseInt(bulkWarrantyMonths) || 12;
+        // Preview: count impresoras con installDate
+        const allPrinters = allClients.flatMap(c => (c.printers || []).map(p => ({ ...p, clientName: c.name, clientId: c.id })));
+        const withDate = allPrinters.filter(p => p.installDate);
+        const withoutDate = allPrinters.filter(p => !p.installDate);
+
+        const handleRun = async () => {
+          setBulkWarrantyProgress({ done: 0, total: withDate.length, status: 'running' });
+          // Group by client to batch updates
+          const byClient: Record<number, typeof allClients[0]> = {};
+          allClients.forEach(c => { if (c.printers?.some(p => p.installDate)) byClient[c.id] = c; });
+          let done = 0;
+          for (const client of Object.values(byClient)) {
+            const updatedPrinters = (client.printers || []).map(p => {
+              if (!p.installDate) return p;
+              const installDate = new Date(p.installDate);
+              installDate.setMonth(installDate.getMonth() + months);
+              const warrantyDate = installDate.toISOString().split('T')[0];
+              return { ...p, warrantyDate };
+            });
+            await setDoc(doc(db, 'clientes', client.id.toString()), { ...client, printers: updatedPrinters }, { merge: true });
+            done += updatedPrinters.filter(p => p.installDate).length;
+            setBulkWarrantyProgress(prev => ({ ...prev, done }));
+          }
+          addAuditLog('update_client', `Actualizó garantía masiva de ${withDate.length} impresoras a ${months} meses desde instalación`);
+          setBulkWarrantyProgress(prev => ({ ...prev, status: 'done' }));
+        };
+
+        return (
+          <div className="fixed inset-0 z-[9996] flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => bulkWarrantyProgress.status !== 'running' && setShowBulkWarrantyModal(false)} />
+            <div className={cn("relative w-full max-w-md mx-4 rounded-2xl shadow-2xl border overflow-hidden",
+              darkMode ? "bg-[#16161A] border-white/12" : "bg-white border-gray-200"
+            )} onClick={e => e.stopPropagation()}>
+
+              {/* Header */}
+              <div className={cn("px-6 py-4 border-b", darkMode ? "border-white/8 bg-amber-500/8" : "border-amber-100 bg-amber-50")}>
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-amber-500/20 flex items-center justify-center shrink-0">
+                    <Shield className="w-4 h-4 text-amber-400" />
+                  </div>
+                  <div>
+                    <p className={cn("text-sm font-black", darkMode ? "text-white" : "text-gray-900")}>Actualización masiva de garantías</p>
+                    <p className={cn("text-[10px] mt-0.5", darkMode ? "text-gray-500" : "text-gray-500")}>
+                      Asigna fecha de garantía a todas las impresoras con fecha de instalación
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-5 space-y-4">
+                {/* Summary */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className={cn("rounded-xl p-3 border text-center", darkMode ? "bg-white/4 border-white/8" : "bg-gray-50 border-gray-100")}>
+                    <p className={cn("text-2xl font-black", darkMode ? "text-emerald-400" : "text-emerald-600")}>{withDate.length}</p>
+                    <p className={cn("text-[9px] font-bold uppercase tracking-wider mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>Con fecha instalación</p>
+                    <p className={cn("text-[8px] mt-0.5", darkMode ? "text-gray-700" : "text-gray-400")}>Se actualizará la garantía</p>
+                  </div>
+                  <div className={cn("rounded-xl p-3 border text-center", darkMode ? "bg-white/4 border-white/8" : "bg-gray-50 border-gray-100")}>
+                    <p className={cn("text-2xl font-black", darkMode ? "text-gray-600" : "text-gray-400")}>{withoutDate.length}</p>
+                    <p className={cn("text-[9px] font-bold uppercase tracking-wider mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>Sin fecha instalación</p>
+                    <p className={cn("text-[8px] mt-0.5", darkMode ? "text-gray-700" : "text-gray-400")}>Sin cambios</p>
+                  </div>
+                </div>
+
+                {/* Months selector */}
+                <div>
+                  <label className={cn("text-[9px] font-bold uppercase tracking-wider block mb-2", darkMode ? "text-gray-500" : "text-gray-400")}>
+                    Meses de garantía desde la fecha de instalación
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <div className={cn("flex gap-1 p-1 rounded-xl", darkMode ? "bg-white/5" : "bg-gray-100")}>
+                      {[6, 12, 18, 24, 36].map(m => (
+                        <button key={m} onClick={() => setBulkWarrantyMonths(String(m))}
+                          className={cn("px-3 py-1.5 rounded-lg text-[10px] font-black transition-all",
+                            bulkWarrantyMonths === String(m)
+                              ? "bg-amber-500 text-white shadow-sm"
+                              : (darkMode ? "text-gray-500 hover:text-gray-300 hover:bg-white/5" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200")
+                          )}>
+                          {m}m
+                        </button>
+                      ))}
+                    </div>
+                    <input type="number" min={1} max={120}
+                      value={bulkWarrantyMonths}
+                      onChange={e => setBulkWarrantyMonths(e.target.value)}
+                      className={cn("w-16 text-center text-sm font-black rounded-xl px-2 py-1.5 outline-none border focus:ring-2 focus:ring-amber-500/30",
+                        darkMode ? "bg-white/8 text-white border-white/10" : "bg-white text-gray-800 border-gray-200"
+                      )}
+                    />
+                  </div>
+                  {withDate.length > 0 && (
+                    <p className={cn("text-[9px] mt-2", darkMode ? "text-gray-600" : "text-gray-400")}>
+                      Ejemplo: instalación 2025-08-18 + {months}m → garantía <span className="font-bold">
+                        {(() => { const d = new Date('2025-08-18'); d.setMonth(d.getMonth() + months); return d.toISOString().split('T')[0]; })()}
+                      </span>
+                    </p>
+                  )}
+                </div>
+
+                {/* Progress */}
+                {bulkWarrantyProgress.status !== 'idle' && (
+                  <div className={cn("rounded-xl p-4 border", darkMode ? "bg-white/3 border-white/8" : "bg-gray-50 border-gray-100")}>
+                    <div className="flex items-center justify-between mb-2">
+                      <p className={cn("text-xs font-bold", darkMode ? "text-gray-300" : "text-gray-700")}>
+                        {bulkWarrantyProgress.status === 'done' ? '✅ Completado' : 'Actualizando...'}
+                      </p>
+                      <p className={cn("text-xs font-black", darkMode ? "text-amber-400" : "text-amber-600")}>
+                        {bulkWarrantyProgress.done} / {bulkWarrantyProgress.total}
+                      </p>
+                    </div>
+                    <div className={cn("h-2 rounded-full overflow-hidden", darkMode ? "bg-white/8" : "bg-gray-200")}>
+                      <div className="h-full bg-amber-500 rounded-full transition-all"
+                        style={{ width: `${bulkWarrantyProgress.total > 0 ? (bulkWarrantyProgress.done / bulkWarrantyProgress.total) * 100 : 0}%` }} />
+                    </div>
+                    {bulkWarrantyProgress.status === 'done' && (
+                      <p className={cn("text-[9px] mt-1.5", darkMode ? "text-gray-500" : "text-gray-400")}>
+                        {bulkWarrantyProgress.done} impresoras actualizadas correctamente
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className={cn("px-5 py-4 border-t flex items-center justify-between gap-3", darkMode ? "border-white/8" : "border-gray-100")}>
+                <button
+                  onClick={() => setShowBulkWarrantyModal(false)}
+                  disabled={bulkWarrantyProgress.status === 'running'}
+                  className={cn("px-4 py-2 rounded-xl text-xs font-bold transition-colors",
+                    darkMode ? "bg-white/5 text-gray-400 hover:bg-white/10 disabled:opacity-40" : "bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-40"
+                  )}
+                >
+                  {bulkWarrantyProgress.status === 'done' ? 'Cerrar' : 'Cancelar'}
+                </button>
+                {bulkWarrantyProgress.status !== 'done' && (
+                  <button
+                    onClick={handleRun}
+                    disabled={withDate.length === 0 || bulkWarrantyProgress.status === 'running'}
+                    className={cn("flex-1 py-2 rounded-xl text-xs font-black transition-all",
+                      withDate.length > 0 && bulkWarrantyProgress.status === 'idle'
+                        ? "bg-amber-500 text-white hover:bg-amber-600 shadow-sm"
+                        : (darkMode ? "bg-white/5 text-gray-600 cursor-not-allowed" : "bg-gray-100 text-gray-400 cursor-not-allowed")
+                    )}
+                  >
+                    {bulkWarrantyProgress.status === 'running' ? 'Actualizando...' : `Actualizar ${withDate.length} impresoras`}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── PROVINCE CLIENTS MODAL ── */}
+      {provinceClientsModal && (() => {
+        const { province, clients: provClients } = provinceClientsModal;
+
+        // Compute metrics per client
+        const clientMetrics = provClients.map(client => {
+          const consumos = filteredConsumosForView.filter(r => r.client_id === client.id && !r.is_return);
+          const totalM2 = consumos.reduce((s, r) => s + getTotalM2(effectiveQty(r), r.size, r.film_type), 0);
+          const totalCajas = consumos.reduce((s, r) => s + effectiveQty(r), 0);
+          const totalRevenue = consumos.reduce((s, r) => s + r.quantity * (r.unit_cost || 0), 0);
+          const lastOrder = consumos.length > 0 ? consumos.sort((a,b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime())[0].order_date : null;
+          const daysSinceLastOrder = lastOrder ? Math.floor((Date.now() - new Date(lastOrder).getTime()) / (1000*60*60*24)) : null;
+          return { client, totalM2: parseFloat(totalM2.toFixed(1)), totalCajas, totalRevenue, lastOrder, daysSinceLastOrder, facturas: consumos.length };
+        }).sort((a,b) => b.totalM2 - a.totalM2);
+
+        const totalProvM2 = clientMetrics.reduce((s,c) => s + c.totalM2, 0);
+        const maxM2 = clientMetrics[0]?.totalM2 || 1;
+
+        return (
+          <div className="fixed inset-0 z-[9995] flex items-center justify-center" onClick={() => setProvinceClientsModal(null)}>
+            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+            <div className={cn("relative w-full max-w-2xl mx-4 rounded-2xl shadow-2xl border max-h-[88vh] flex flex-col",
+              darkMode ? "bg-[#16161A] border-white/12" : "bg-white border-gray-200"
+            )} onClick={e => e.stopPropagation()}>
+
+              {/* Header */}
+              <div className={cn("px-6 py-4 border-b shrink-0", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className={cn("w-9 h-9 rounded-xl flex items-center justify-center shrink-0", darkMode ? "bg-cyan-500/15" : "bg-cyan-50")}>
+                      <MapPin className="w-4 h-4 text-cyan-500" />
+                    </div>
+                    <div>
+                      <p className={cn("text-sm font-black", darkMode ? "text-white" : "text-gray-900")}>{province}</p>
+                      <p className={cn("text-[10px]", darkMode ? "text-gray-500" : "text-gray-400")}>
+                        {provClients.length} clientes · {totalProvM2.toLocaleString('es-EC', {minimumFractionDigits:1, maximumFractionDigits:1})} m² totales
+                      </p>
+                    </div>
+                  </div>
+                  <button onClick={() => setProvinceClientsModal(null)}
+                    className={cn("p-1.5 rounded-lg transition-colors", darkMode ? "hover:bg-white/8 text-gray-500" : "hover:bg-gray-100 text-gray-400")}>
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                {/* KPIs rápidos */}
+                <div className="grid grid-cols-4 gap-3 mt-4">
+                  {[
+                    { label: 'Clientes', val: provClients.length, color: darkMode ? 'text-white' : 'text-gray-900' },
+                    { label: 'Total m²', val: `${totalProvM2.toLocaleString('es-EC',{minimumFractionDigits:1,maximumFractionDigits:1})}`, color: darkMode ? 'text-cyan-400' : 'text-cyan-600' },
+                    { label: 'Activos (90d)', val: clientMetrics.filter(c => c.daysSinceLastOrder !== null && c.daysSinceLastOrder <= 90).length, color: darkMode ? 'text-emerald-400' : 'text-emerald-600' },
+                    { label: 'Inactivos (+90d)', val: clientMetrics.filter(c => c.daysSinceLastOrder === null || c.daysSinceLastOrder > 90).length, color: 'text-red-400' },
+                  ].map((k,i) => (
+                    <div key={i} className={cn("rounded-xl p-3 border text-center", darkMode ? "bg-white/4 border-white/8" : "bg-gray-50 border-gray-100")}>
+                      <p className={cn("text-lg font-black leading-none", k.color)}>{k.val}</p>
+                      <p className={cn("text-[8px] font-bold uppercase tracking-wider mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>{k.label}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Client list */}
+              <div className="overflow-y-auto custom-scrollbar flex-1">
+                <table className="w-full text-xs">
+                  <thead className={cn("text-[8px] font-bold uppercase tracking-wider sticky top-0", darkMode ? "text-gray-600 bg-[#16161A]" : "text-gray-400 bg-white")}>
+                    <tr className={cn("border-b", darkMode ? "border-white/6" : "border-gray-100")}>
+                      <th className="px-5 py-2.5 text-left">#</th>
+                      <th className="px-5 py-2.5 text-left">Cliente</th>
+                      <th className="px-4 py-2.5 text-center">m²</th>
+                      <th className="px-4 py-2.5 text-center">Cajas</th>
+                      <th className="px-4 py-2.5 text-center">Facturas</th>
+                      <th className="px-4 py-2.5 text-center">Último pedido</th>
+                      <th className="px-4 py-2.5 text-center">Estado</th>
+                      <th className="px-4 py-2.5 text-left">Participación</th>
+                    </tr>
+                  </thead>
+                  <tbody className={cn("divide-y", darkMode ? "divide-white/4" : "divide-gray-50")}>
+                    {clientMetrics.map((cm, i) => {
+                      const pct = totalProvM2 > 0 ? (cm.totalM2 / totalProvM2) * 100 : 0;
+                      const barPct = maxM2 > 0 ? (cm.totalM2 / maxM2) * 100 : 0;
+                      const isInactive = cm.daysSinceLastOrder === null || cm.daysSinceLastOrder > 90;
+                      const isAtRisk = cm.daysSinceLastOrder !== null && cm.daysSinceLastOrder > 60 && cm.daysSinceLastOrder <= 90;
+                      return (
+                        <tr key={cm.client.id}
+                          className={cn("transition-colors cursor-pointer", darkMode ? "hover:bg-white/4" : "hover:bg-gray-50")}
+                          onClick={() => { setSelectedClient(cm.client); setView('clients'); setProvinceClientsModal(null); }}
+                        >
+                          <td className={cn("px-5 py-3 font-black", i < 3 ? 'text-[#ED1C24]' : (darkMode ? 'text-gray-700' : 'text-gray-300'))}>{i+1}</td>
+                          <td className="px-5 py-3">
+                            <p className={cn("font-semibold text-xs leading-tight", darkMode ? "text-gray-200" : "text-gray-800")}>{cm.client.name}</p>
+                            <p className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>{cm.client.salesperson || '—'}</p>
+                          </td>
+                          <td className={cn("px-4 py-3 text-center font-black", darkMode ? "text-cyan-400" : "text-cyan-600")}>
+                            {cm.totalM2 > 0 ? `${cm.totalM2.toLocaleString('es-EC',{minimumFractionDigits:1,maximumFractionDigits:1})}` : '—'}
+                          </td>
+                          <td className={cn("px-4 py-3 text-center font-semibold", darkMode ? "text-gray-400" : "text-gray-600")}>{cm.totalCajas || '—'}</td>
+                          <td className={cn("px-4 py-3 text-center", darkMode ? "text-gray-500" : "text-gray-400")}>{cm.facturas}</td>
+                          <td className={cn("px-4 py-3 text-center text-[10px]", darkMode ? "text-gray-500" : "text-gray-400")}>
+                            {cm.lastOrder ? (
+                              <div>
+                                <p className="font-mono">{cm.lastOrder}</p>
+                                <p className={cn("text-[8px]", isInactive ? 'text-red-400' : isAtRisk ? 'text-amber-400' : 'text-emerald-400')}>
+                                  hace {cm.daysSinceLastOrder}d
+                                </p>
+                              </div>
+                            ) : <span className={cn(darkMode ? "text-gray-700" : "text-gray-300")}>Sin pedidos</span>}
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <span className={cn("text-[8px] font-black px-2 py-0.5 rounded-full",
+                              isInactive ? "bg-red-500/15 text-red-400" :
+                              isAtRisk ? "bg-amber-500/15 text-amber-400" :
+                              "bg-emerald-500/15 text-emerald-400"
+                            )}>
+                              {isInactive ? 'Inactivo' : isAtRisk ? 'En riesgo' : 'Activo'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-2">
+                              <div className={cn("h-1.5 w-20 rounded-full overflow-hidden", darkMode ? "bg-white/8" : "bg-gray-200")}>
+                                <div className="h-full rounded-full bg-cyan-500 transition-all" style={{ width: `${barPct}%` }} />
+                              </div>
+                              <span className={cn("text-[9px] font-bold w-8", darkMode ? "text-gray-600" : "text-gray-400")}>{pct.toFixed(0)}%</span>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className={cn("px-5 py-3 border-t shrink-0 flex justify-between items-center", darkMode ? "border-white/8" : "border-gray-100")}>
+                <p className={cn("text-[9px]", darkMode ? "text-gray-700" : "text-gray-400")}>Clic en un cliente para ver su ficha completa</p>
+                <button onClick={() => setProvinceClientsModal(null)}
+                  className={cn("px-4 py-1.5 rounded-xl text-xs font-bold transition-colors", darkMode ? "bg-white/5 text-gray-400 hover:bg-white/10" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}>
+                  Cerrar
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── AUDIT LOG DETAIL MODAL ── */}
+      {selectedAuditLog && (() => {
+        const log = selectedAuditLog;
+        const d = new Date(log.timestamp);
+        const ACTION_META: Record<string,{label:string;color:string;bg:string}> = {
+          create_client:  {label:'Nuevo cliente',    color:'#10b981',bg:'bg-emerald-500/15'},
+          update_client:  {label:'Editó cliente',    color:'#3b82f6',bg:'bg-blue-500/15'},
+          delete_client:  {label:'Eliminó cliente',  color:'#ef4444',bg:'bg-red-500/15'},
+          merge_clients:  {label:'Fusionó clientes', color:'#f59e0b',bg:'bg-amber-500/15'},
+          import_csv:     {label:'Importó CSV',      color:'#8b5cf6',bg:'bg-purple-500/15'},
+          create_record:  {label:'Nueva factura',    color:'#10b981',bg:'bg-emerald-500/15'},
+          update_record:  {label:'Editó factura',    color:'#3b82f6',bg:'bg-blue-500/15'},
+          delete_record:  {label:'Eliminó registro', color:'#ef4444',bg:'bg-red-500/15'},
+          update_stock:   {label:'Actualizó stock',  color:'#06b6d4',bg:'bg-cyan-500/15'},
+        };
+        const meta = ACTION_META[log.action] || {label:log.action, color:'#64748b', bg:'bg-white/5'};
+        const m = log.meta || {};
+
+        // Build detail rows from meta
+        const renderMeta = () => {
+          if (!log.meta || Object.keys(log.meta).length === 0) return null;
+          const LABELS: Record<string,string> = {
+            nombre:'Nombre', provincia:'Provincia', ruc:'RUC', contacto:'Contacto', vendedor:'Vendedor', codigo:'Código',
+            operacion:'Operación', cliente:'Cliente', factura:'Factura', medida:'Medida', cantidad:'Cantidad (cj)',
+            tipoFilm:'Tipo de película', fecha:'Fecha', costo:'Costo unitario', esDevolucion:'¿Devolución?',
+            totalImpresoras:'Total impresoras', tipo:'Tipo', ordenCompra:'Orden de compra',
+            facturaProveedor:'Factura proveedor', lote:'Lote', altName:'Denominación alternativa',
+          };
+          const simple = Object.entries(m).filter(([k,v]) => typeof v !== 'object' && !Array.isArray(v) && k !== 'impresoras' && k !== 'cambios');
+          const cambios = m.cambios as string[] | undefined;
+          const printers = m.impresoras as any[] | undefined;
+
+          return (
+            <div className="space-y-4">
+              {/* Cambios detectados — most prominent */}
+              {cambios && cambios.length > 0 && cambios[0] !== 'Sin cambios detectados' && (
+                <div>
+                  <p className={cn("text-[9px] font-black uppercase tracking-wider mb-2 flex items-center gap-1.5", darkMode ? "text-amber-500" : "text-amber-600")}>
+                    <span>⚡</span> Cambios detectados
+                  </p>
+                  <div className={cn("rounded-xl border overflow-hidden", darkMode ? "border-amber-500/20 bg-amber-500/5" : "border-amber-200 bg-amber-50/60")}>
+                    {cambios.map((c, i) => (
+                      <div key={i} className={cn("px-4 py-2.5 text-xs font-medium border-b last:border-0",
+                        darkMode ? "border-amber-500/10 text-amber-200" : "border-amber-100 text-amber-800"
+                      )}>{c}</div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {cambios && cambios[0] === 'Sin cambios detectados' && (
+                <div className={cn("px-4 py-3 rounded-xl text-xs font-medium", darkMode ? "bg-white/4 text-gray-500" : "bg-gray-50 text-gray-400")}>
+                  Sin cambios detectados en los campos
+                </div>
+              )}
+
+              {/* Simple fields */}
+              {simple.length > 0 && (
+                <div>
+                  <p className={cn("text-[9px] font-black uppercase tracking-wider mb-2", darkMode ? "text-gray-600" : "text-gray-400")}>Información del evento</p>
+                  <div className={cn("rounded-xl overflow-hidden border", darkMode ? "border-white/8" : "border-gray-100")}>
+                    {simple.map(([k, v], i) => (
+                      <div key={k} className={cn("flex items-center justify-between px-4 py-2.5 border-b last:border-0",
+                        darkMode ? "border-white/5" : "border-gray-50",
+                        i % 2 === 0 ? (darkMode ? "bg-white/2" : "bg-gray-50/40") : ""
+                      )}>
+                        <span className={cn("text-[9px] font-bold uppercase tracking-wider w-36 shrink-0", darkMode ? "text-gray-600" : "text-gray-400")}>{LABELS[k] || k}</span>
+                        <span className={cn("text-xs font-semibold text-right flex-1", darkMode ? "text-gray-200" : "text-gray-700")}>
+                          {v === true ? '✓ Sí' : v === false ? '✗ No' : String(v)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Printers table */}
+              {printers && printers.length > 0 && (
+                <div>
+                  <p className={cn("text-[9px] font-black uppercase tracking-wider mb-2", darkMode ? "text-gray-600" : "text-gray-400")}>Estado actual de impresoras</p>
+                  <div className={cn("rounded-xl overflow-hidden border divide-y", darkMode ? "border-white/8 divide-white/5" : "border-gray-100 divide-gray-50")}>
+                    {printers.map((p: any, i: number) => (
+                      <div key={i} className={cn("px-4 py-2.5", i % 2 === 0 ? (darkMode ? "bg-white/2" : "bg-gray-50/30") : "")}>
+                        <p className={cn("text-xs font-black", darkMode ? "text-gray-200" : "text-gray-700")}>{p.tipo || 'Sin tipo'}</p>
+                        <div className="flex gap-3 mt-0.5 flex-wrap">
+                          {p.serial && <span className={cn("text-[9px] font-mono", darkMode ? "text-gray-500" : "text-gray-400")}>S/N: {p.serial}</span>}
+                          {p.instalacion && p.instalacion !== '—' && <span className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>Inst: {p.instalacion}</span>}
+                          {p.sucursal && p.sucursal !== '—' && <span className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>{p.sucursal}</span>}
+                          {p.bandejas && p.bandejas !== '—' && <span className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>Bandeja: {p.bandejas}</span>}
+                          {p.garantia && p.garantia !== '—' && <span className={cn("text-[9px] font-bold", darkMode ? "text-amber-500/80" : "text-amber-600")}>Grtía: {p.garantia}</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        };
+
+        return (
+          <div className="fixed inset-0 z-[9997] flex items-center justify-center" onClick={() => setSelectedAuditLog(null)}>
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+            <div className={cn("relative w-full max-w-md mx-4 rounded-2xl shadow-2xl border overflow-hidden max-h-[85vh] flex flex-col",
+              darkMode ? "bg-[#16161A] border-white/12" : "bg-white border-gray-200"
+            )} onClick={e => e.stopPropagation()}>
+              {/* Header */}
+              <div className={cn("px-5 py-4 border-b shrink-0", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0 mt-0.5"
+                      style={{ background: meta.color + '20' }}>
+                      <span className="w-2 h-2 rounded-full block" style={{ background: meta.color }} />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <span className={cn("text-[9px] font-black px-2 py-0.5 rounded-lg", meta.bg)} style={{ color: meta.color }}>
+                          {meta.label}
+                        </span>
+                      </div>
+                      <p className={cn("text-sm font-black leading-tight", darkMode ? "text-white" : "text-gray-900")}>{log.detail}</p>
+                      <div className="flex items-center gap-2 mt-1.5">
+                        <span className={cn("text-[9px] font-bold", darkMode ? "text-gray-500" : "text-gray-400")}>{log.user}</span>
+                        <span className={cn("text-[8px]", darkMode ? "text-gray-700" : "text-gray-300")}>·</span>
+                        <span className={cn("text-[9px] font-mono", darkMode ? "text-gray-600" : "text-gray-400")}>
+                          {d.toLocaleDateString('es-EC',{day:'2-digit',month:'short',year:'numeric'})} {d.toLocaleTimeString('es-EC',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <button onClick={() => setSelectedAuditLog(null)}
+                    className={cn("p-1.5 rounded-lg transition-colors shrink-0", darkMode ? "hover:bg-white/8 text-gray-500" : "hover:bg-gray-100 text-gray-400")}>
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Detail content */}
+              <div className="p-5 overflow-y-auto custom-scrollbar flex-1">
+                {log.meta && Object.keys(log.meta).length > 0 ? (
+                  renderMeta()
+                ) : (
+                  <div className={cn("flex flex-col items-center justify-center py-8 gap-2", darkMode ? "text-gray-700" : "text-gray-300")}>
+                    <FileText className="w-8 h-8" />
+                    <p className="text-xs font-semibold">Sin detalles adicionales</p>
+                    <p className={cn("text-[9px]", darkMode ? "text-gray-700" : "text-gray-400")}>Los eventos registrados a partir de ahora incluirán más información</p>
+                  </div>
+                )}
+              </div>
+
+              <div className={cn("px-5 py-3 border-t shrink-0", darkMode ? "border-white/8" : "border-gray-100")}>
+                <button onClick={() => setSelectedAuditLog(null)}
+                  className={cn("w-full py-2 rounded-xl text-xs font-bold transition-colors",
+                    darkMode ? "bg-white/5 text-gray-400 hover:bg-white/10" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                  )}>Cerrar</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── AUDIT LOG MODAL ── */}
+      {showAuditLog && (
+        <div className="fixed inset-0 z-[9994] flex items-center justify-center" onClick={() => setShowAuditLog(false)}>
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+          <div className={cn("relative w-full max-w-2xl mx-4 rounded-2xl shadow-2xl border max-h-[90vh] flex flex-col", darkMode ? "bg-[#16161A] border-white/12" : "bg-white border-gray-200")} onClick={e => e.stopPropagation()}>
+            <div className={cn("flex items-center justify-between px-6 py-4 border-b shrink-0", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+              <div className="flex items-center gap-3">
+                <History className="w-4 h-4 text-blue-400" />
+                <div>
+                  <p className={cn("text-sm font-black", darkMode ? "text-white" : "text-gray-900")}>Historial de Auditoría</p>
+                  <p className={cn("text-[10px]", darkMode ? "text-gray-500" : "text-gray-400")}>{auditLogs.length} eventos registrados</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {/* PDF Export */}
+                {auditLogs.length > 0 && (
+                  <button
+                    onClick={() => {
+                      const now = new Date();
+                      const ACTION_META: Record<string,{label:string;color:string;cat:string;catLabel:string}> = {
+                        create_client:  {label:'Nuevo cliente',     color:'#10b981', cat:'clientes',   catLabel:'Clientes'},
+                        update_client:  {label:'Editó cliente',     color:'#3b82f6', cat:'clientes',   catLabel:'Clientes'},
+                        delete_client:  {label:'Eliminó cliente',   color:'#ef4444', cat:'clientes',   catLabel:'Clientes'},
+                        merge_clients:  {label:'Fusionó clientes',  color:'#f59e0b', cat:'clientes',   catLabel:'Clientes'},
+                        import_csv:     {label:'Importó CSV',       color:'#8b5cf6', cat:'clientes',   catLabel:'Clientes'},
+                        create_record:  {label:'Nueva factura',     color:'#10b981', cat:'registros',  catLabel:'Facturas'},
+                        update_record:  {label:'Editó factura',     color:'#3b82f6', cat:'registros',  catLabel:'Facturas'},
+                        delete_record:  {label:'Eliminó registro',  color:'#ef4444', cat:'registros',  catLabel:'Facturas'},
+                        update_stock:   {label:'Actualizó stock',   color:'#06b6d4', cat:'inventario', catLabel:'Inventario'},
+                        create_entry:   {label:'Entrada de stock',  color:'#10b981', cat:'inventario', catLabel:'Inventario'},
+                        delete_entry:   {label:'Eliminó entrada',   color:'#ef4444', cat:'inventario', catLabel:'Inventario'},
+                      };
+                      const CAT_ORDER = ['clientes','registros','inventario'];
+                      const CAT_COLORS: Record<string,string> = { clientes:'#1A3A5C', registros:'#7c3aed', inventario:'#0891b2' };
+                      const CAT_ICONS: Record<string,string> = { clientes:'👤', registros:'🧾', inventario:'📦' };
+
+                      // Group by date then by category
+                      const grouped: Record<string, Record<string, typeof auditLogs>> = {};
+                      auditLogs.forEach(log => {
+                        const d = new Date(log.timestamp);
+                        const dateKey = d.toLocaleDateString('es-EC',{weekday:'long',day:'2-digit',month:'long',year:'numeric'});
+                        const cat = ACTION_META[log.action]?.cat || 'otros';
+                        if (!grouped[dateKey]) grouped[dateKey] = {};
+                        if (!grouped[dateKey][cat]) grouped[dateKey][cat] = [];
+                        grouped[dateKey][cat].push(log);
+                      });
+
+                      const sectionsHtml = Object.entries(grouped).map(([dateLabel, cats]) => {
+                        const catsHtml = CAT_ORDER.filter(c => cats[c]?.length).map(cat => {
+                          const catMeta = { color: CAT_COLORS[cat], icon: CAT_ICONS[cat] };
+                          const rows = (cats[cat] || []).map(log => {
+                            const d = new Date(log.timestamp);
+                            const hora = d.toLocaleTimeString('es-EC',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+                            const m = ACTION_META[log.action] || {label:log.action, color:'#64748b', cat:'', catLabel:''};
+
+                            // Build meta detail block — always show WHAT happened
+                            let metaHtml = '';
+                            if (log.meta) {
+                              const lm = log.meta as Record<string,any>;
+                              const cambios = lm.cambios as string[] | undefined;
+
+                              let rows = '';
+
+                              if (cambios && cambios.length > 0 && cambios[0] !== 'Sin cambios detectados') {
+                                rows = cambios.map(c => `<div class="meta-change-row">${c}</div>`).join('');
+                              } else {
+                                // Fallback: show simple fields as readable sentences
+                                const FIELD_LABELS: Record<string,string> = {
+                                  operacion:'Operación', cliente:'Cliente', factura:'Factura', medida:'Medida',
+                                  cantidad:'Cantidad (cj)', tipoFilm:'Tipo de película', fecha:'Fecha',
+                                  costo:'Costo unitario', totalImpresoras:'Total impresoras',
+                                  ordenCompra:'Orden de compra', facturaProveedor:'Factura proveedor', lote:'Lote',
+                                  nombre:'Nombre', provincia:'Provincia', ruc:'RUC', vendedor:'Vendedor',
+                                };
+                                const keyFields = ['operacion','cliente','nombre','factura','medida','cantidad','tipoFilm','ordenCompra','lote','provincia','vendedor']
+                                  .filter(k => lm[k] !== undefined && String(lm[k]) !== '' && String(lm[k]) !== '—');
+                                rows = keyFields.map(k =>
+                                  `<div class="meta-change-row"><span class="meta-key-inline">${FIELD_LABELS[k]||k}:</span> ${lm[k]}</div>`
+                                ).join('');
+                              }
+
+                              if (rows) metaHtml = `<tr class="meta-row"><td colspan="4"><div class="meta-block">${rows}</div></td></tr>`;
+                            } else {
+                              // No meta — show detail text as subtle note
+                              metaHtml = `<tr class="meta-row"><td colspan="4"><div class="meta-block-plain">${log.detail}</div></td></tr>`;
+                            }
+
+                            return `<tr>
+                              <td class="time">${hora}</td>
+                              <td><span class="badge" style="background:${m.color}18;color:${m.color};border:1px solid ${m.color}40">${m.label}</span></td>
+                              <td class="user">${log.user}</td>
+                              <td class="detail">${log.detail}${log.entityId ? ` <span class="eid">ID:${log.entityId}</span>` : ''}</td>
+                            </tr>${metaHtml}`;
+                          }).join('');
+                          return `<div class="cat-block" style="border-left:3px solid ${catMeta.color}">
+                            <div class="cat-header" style="background:${catMeta.color}10">
+                              <span class="cat-icon">${catMeta.icon}</span>
+                              <span class="cat-title" style="color:${catMeta.color}">${ACTION_META[Object.keys(cats[cat])[0]]?.catLabel || cat}</span>
+                              <span class="cat-count" style="background:${catMeta.color}20;color:${catMeta.color}">${cats[cat].length} eventos</span>
+                            </div>
+                            <table><thead><tr><th>Hora</th><th>Acción</th><th>Usuario</th><th>Detalle</th></tr></thead>
+                            <tbody>${rows}</tbody></table>
+                          </div>`;
+                        }).join('');
+                        const totalDay = Object.values(cats).reduce((s,v)=>s+v.length,0);
+                        return `<div class="date-section">
+                          <div class="date-header">
+                            <span class="date-label">${dateLabel}</span>
+                            <span class="date-count">${totalDay} evento${totalDay!==1?'s':''}</span>
+                          </div>
+                          ${catsHtml}
+                        </div>`;
+                      }).join('');
+
+                      const html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"/>
+<title>Auditoría — Orimec ${format(now,'dd/MM/yyyy')}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'Segoe UI',Arial,sans-serif;font-size:10px;color:#1e293b;background:white;}
+@page{margin:12mm 10mm;size:A4 portrait;}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+.header{display:flex;align-items:flex-start;justify-content:space-between;padding-bottom:10px;border-bottom:3px solid #1A3A5C;margin-bottom:14px;}
+.brand{font-size:20px;font-weight:900;color:#1A3A5C;letter-spacing:-0.5px;}
+.sub{font-size:7.5px;color:#4A9FD4;letter-spacing:2px;text-transform:uppercase;margin-top:2px;}
+.doc-title{font-size:14px;font-weight:800;color:#1A3A5C;text-align:right;}
+.doc-sub{font-size:8px;color:#94a3b8;margin-top:3px;text-align:right;}
+.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px;}
+.kpi{background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:8px;padding:9px 12px;}
+.kpi .val{font-size:22px;font-weight:900;line-height:1;}
+.kpi .lbl{font-size:7.5px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#94a3b8;margin-top:3px;}
+.date-section{margin-bottom:16px;}
+.date-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;padding-bottom:4px;border-bottom:1.5px solid #e2e8f0;}
+.date-label{font-size:10px;font-weight:800;color:#1e293b;text-transform:capitalize;}
+.date-count{font-size:8px;font-weight:700;color:#94a3b8;background:#f1f5f9;padding:2px 7px;border-radius:20px;}
+.cat-block{border-radius:6px;overflow:hidden;margin-bottom:8px;}
+.cat-header{display:flex;align-items:center;gap:6px;padding:6px 10px;}
+.cat-icon{font-size:11px;}
+.cat-title{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:0.8px;}
+.cat-count{font-size:7.5px;font-weight:800;padding:1.5px 7px;border-radius:20px;margin-left:auto;}
+table{width:100%;border-collapse:collapse;font-size:9px;}
+thead tr{background:#1A3A5C;color:white;}
+thead th{padding:4px 7px;text-align:left;font-size:7.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;}
+tbody tr:nth-child(even){background:#f8fafc;}
+tbody tr.meta-row{background:transparent!important;}
+tbody td{padding:4px 7px;border-bottom:1px solid #f1f5f9;vertical-align:middle;}
+.time{font-family:monospace;color:#64748b;white-space:nowrap;width:70px;}
+.user{font-weight:700;width:70px;}
+.detail{color:#334155;}
+.badge{display:inline-block;padding:1.5px 5px;border-radius:4px;font-size:7.5px;font-weight:800;white-space:nowrap;}
+.eid{font-size:7px;font-family:monospace;background:#f1f5f9;color:#94a3b8;padding:1px 4px;border-radius:3px;margin-left:4px;}
+/* Meta detail block — concise */
+.meta-block{margin:0 0 5px 12px;padding:5px 10px;background:#fffbeb;border-left:3px solid #f59e0b;border-radius:0 4px 4px 0;}
+.meta-block-plain{margin:0 0 5px 12px;padding:5px 10px;background:#f1f5f9;border-left:3px solid #94a3b8;border-radius:0 4px 4px 0;font-size:8.5px;color:#475569;}
+.meta-change-row{font-size:8.5px;color:#92400e;padding:2px 0;border-bottom:1px dashed #fde68a;}
+.meta-change-row:last-child{border-bottom:none;}
+.meta-key-inline{font-weight:700;color:#b45309;margin-right:4px;}
+.footer{margin-top:14px;padding-top:8px;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;font-size:7.5px;color:#94a3b8;}
+</style></head><body>
+<div class="header">
+  <div><div class="brand">ORIMEC</div><div class="sub">Oriental Medical del Ecuador C.A.</div></div>
+  <div><div class="doc-title">Historial de Auditoría</div><div class="doc-sub">Generado el ${format(now,'dd/MM/yyyy HH:mm')} por ${appUser?.nombre || appUser?.email || 'Admin'}</div></div>
+</div>
+<div class="summary">
+  <div class="kpi"><div class="val" style="color:#1A3A5C">${auditLogs.length}</div><div class="lbl">Total eventos</div></div>
+  <div class="kpi"><div class="val" style="color:#ef4444">${auditLogs.filter(l=>l.action.includes('delete')).length}</div><div class="lbl">Eliminaciones</div></div>
+  <div class="kpi"><div class="val" style="color:#10b981">${auditLogs.filter(l=>l.action.includes('create')).length}</div><div class="lbl">Creaciones</div></div>
+  <div class="kpi"><div class="val" style="color:#3b82f6">${auditLogs.filter(l=>l.action.includes('update')||(l.action==='import_csv')).length}</div><div class="lbl">Actualizaciones</div></div>
+</div>
+${sectionsHtml}
+<div class="footer">
+  <span>Orimec · Sistema de Gestión Fujifilm · Documento confidencial</span>
+  <span>${auditLogs.length} eventos · ${format(now,'dd/MM/yyyy')}</span>
+</div>
+</body></html>`;
+                      const win = window.open('','_blank','width=900,height=700');
+                      if (!win) { showToast('Permite ventanas emergentes para exportar PDF','warning'); return; }
+                      win.document.write(html);
+                      win.document.close();
+                      win.onload = () => setTimeout(() => { win.print(); win.onafterprint = ()=>win.close(); showToast('PDF de auditoría generado','success'); }, 400);
+                    }}
+                    className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-colors",
+                      darkMode ? "bg-white/5 text-gray-400 hover:bg-white/10 hover:text-gray-200" : "bg-gray-100 text-gray-500 hover:bg-gray-200 hover:text-gray-700"
+                    )}
+                    title="Exportar historial como PDF"
+                  >
+                    <FileText className="w-3.5 h-3.5" /> PDF
+                  </button>
+                )}
+                {/* Limpiar — solo admin */}
+                {role === 'admin' && (
+                  <button onClick={() => { if (window.confirm('¿Limpiar todo el historial de auditoría?')) { setAuditLogs([]); localStorage.removeItem('orimec_audit'); } }}
+                    className={cn("px-3 py-1.5 rounded-lg text-[10px] font-bold transition-colors", darkMode ? "bg-white/5 text-gray-500 hover:bg-red-500/15 hover:text-red-400" : "bg-gray-100 text-gray-500 hover:bg-red-50 hover:text-red-500")}>
+                    Limpiar
+                  </button>
+                )}
+                <button onClick={() => setShowAuditLog(false)} className={cn("p-1.5 rounded-lg transition-colors", darkMode ? "hover:bg-white/8 text-gray-500" : "hover:bg-gray-100 text-gray-400")}>
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            <div className="overflow-y-auto custom-scrollbar flex-1">
+              {/* Category filter tabs */}
+              {auditLogs.length > 0 && (() => {
+                const CATEGORIES = [
+                  { key: 'all', label: 'Todos', icon: '◎', actions: null },
+                  { key: 'clientes', label: 'Clientes', icon: '👤', actions: ['create_client','update_client','delete_client','merge_clients','import_csv'] },
+                  { key: 'inventario', label: 'Inventario', icon: '📦', actions: ['update_stock','create_entry','delete_entry'] },
+                  { key: 'registros', label: 'Facturas', icon: '🧾', actions: ['create_record','update_record','delete_record'] },
+                ] as const;
+                const ACTION_META: Record<string, { label: string; color: string; bg: string; category: string }> = {
+                  create_client:  { label: 'Nuevo cliente',      color: '#10b981', bg: 'bg-emerald-500/15', category: 'clientes' },
+                  update_client:  { label: 'Editó cliente',      color: '#3b82f6', bg: 'bg-blue-500/15',    category: 'clientes' },
+                  delete_client:  { label: 'Eliminó cliente',    color: '#ef4444', bg: 'bg-red-500/15',     category: 'clientes' },
+                  merge_clients:  { label: 'Fusionó clientes',   color: '#f59e0b', bg: 'bg-amber-500/15',   category: 'clientes' },
+                  import_csv:     { label: 'Importó CSV',        color: '#8b5cf6', bg: 'bg-purple-500/15',  category: 'clientes' },
+                  create_record:  { label: 'Nueva factura',      color: '#10b981', bg: 'bg-emerald-500/15', category: 'registros' },
+                  update_record:  { label: 'Editó factura',      color: '#3b82f6', bg: 'bg-blue-500/15',    category: 'registros' },
+                  delete_record:  { label: 'Eliminó registro',   color: '#ef4444', bg: 'bg-red-500/15',     category: 'registros' },
+                  update_stock:   { label: 'Actualizó stock',    color: '#06b6d4', bg: 'bg-cyan-500/15',    category: 'inventario' },
+                  create_entry:   { label: 'Entrada de stock',   color: '#10b981', bg: 'bg-emerald-500/15', category: 'inventario' },
+                  delete_entry:   { label: 'Eliminó entrada',    color: '#ef4444', bg: 'bg-red-500/15',     category: 'inventario' },
+                };
+
+                const filtered = auditCategory === 'all'
+                  ? auditLogs
+                  : auditLogs.filter(l => ACTION_META[l.action]?.category === auditCategory);
+
+                const countFor = (cat: string) => cat === 'all' ? auditLogs.length
+                  : auditLogs.filter(l => ACTION_META[l.action]?.category === cat).length;
+
+                // Group by date
+                const grouped: Record<string, typeof auditLogs> = {};
+                filtered.forEach(log => {
+                  const d = new Date(log.timestamp);
+                  const key = d.toLocaleDateString('es-EC', { weekday:'long', day:'2-digit', month:'long', year:'numeric' });
+                  if (!grouped[key]) grouped[key] = [];
+                  grouped[key].push(log);
+                });
+
+                return (
+                  <div>
+                    {/* Category tabs */}
+                    <div className={cn("px-5 py-3 border-b flex items-center gap-1.5 flex-wrap", darkMode ? "border-white/6 bg-white/2" : "border-gray-100 bg-gray-50/60")}>
+                      {CATEGORIES.map(cat => {
+                        const count = countFor(cat.key);
+                        return (
+                          <button key={cat.key} onClick={() => setAuditCategory(cat.key as any)}
+                            className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black transition-all border",
+                              auditCategory === cat.key
+                                ? (darkMode ? "bg-white/12 border-white/20 text-white" : "bg-white border-gray-300 text-gray-800 shadow-sm")
+                                : (darkMode ? "bg-transparent border-white/6 text-gray-600 hover:text-gray-400 hover:border-white/12" : "bg-transparent border-gray-200 text-gray-400 hover:text-gray-600")
+                            )}
+                          >
+                            <span>{cat.icon}</span>
+                            {cat.label}
+                            <span className={cn("px-1.5 py-0.5 rounded-full text-[8px] font-black",
+                              auditCategory === cat.key
+                                ? (darkMode ? "bg-white/15 text-white" : "bg-gray-100 text-gray-700")
+                                : (darkMode ? "bg-white/8 text-gray-600" : "bg-gray-100 text-gray-400")
+                            )}>{count}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Stats row */}
+                    <div className={cn("px-5 py-3 grid grid-cols-4 gap-3 border-b", darkMode ? "border-white/5 bg-white/1" : "border-gray-50")}>
+                      {[
+                        { label: 'Total eventos', val: auditLogs.length, color: darkMode ? 'text-white' : 'text-gray-800' },
+                        { label: 'Hoy', val: auditLogs.filter(l => new Date(l.timestamp).toDateString() === new Date().toDateString()).length, color: darkMode ? 'text-cyan-400' : 'text-cyan-600' },
+                        { label: 'Eliminaciones', val: auditLogs.filter(l => l.action.includes('delete')).length, color: 'text-red-400' },
+                        { label: 'Usuarios activos', val: [...new Set(auditLogs.map(l => l.user))].length, color: darkMode ? 'text-emerald-400' : 'text-emerald-600' },
+                      ].map((s, i) => (
+                        <div key={i} className="text-center">
+                          <p className={cn("text-base font-black leading-none", s.color)}>{s.val}</p>
+                          <p className={cn("text-[8px] mt-0.5 font-semibold uppercase tracking-wider", darkMode ? "text-gray-700" : "text-gray-400")}>{s.label}</p>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Grouped entries */}
+                    {filtered.length === 0 ? (
+                      <div className={cn("flex flex-col items-center justify-center py-12 gap-2", darkMode ? "text-gray-700" : "text-gray-300")}>
+                        <History className="w-8 h-8" />
+                        <p className="text-xs font-semibold">Sin eventos en esta categoría</p>
+                      </div>
+                    ) : (
+                      Object.entries(grouped).map(([dateLabel, logs]) => (
+                        <div key={dateLabel}>
+                          {/* Date separator */}
+                          <div className={cn("px-5 py-2 flex items-center gap-3 sticky top-0 z-10", darkMode ? "bg-[#16161A]" : "bg-white")}>
+                            <span className={cn("text-[9px] font-black uppercase tracking-wider capitalize", darkMode ? "text-gray-600" : "text-gray-400")}>{dateLabel}</span>
+                            <div className={cn("flex-1 h-px", darkMode ? "bg-white/6" : "bg-gray-100")} />
+                            <span className={cn("text-[8px] font-bold px-2 py-0.5 rounded-full", darkMode ? "bg-white/8 text-gray-600" : "bg-gray-100 text-gray-400")}>{logs.length}</span>
+                          </div>
+                          {/* Events for this date */}
+                          {logs.map(log => {
+                            const d = new Date(log.timestamp);
+                            const meta = ACTION_META[log.action] || { label: log.action, color: '#64748b', bg: 'bg-white/5', category: 'other' };
+                            const hora = d.toLocaleTimeString('es-EC', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+                            return (
+                              <div key={log.id} onClick={() => setSelectedAuditLog(log)}
+                                className={cn("px-5 py-3 flex items-start gap-3.5 border-b last:border-0 transition-colors cursor-pointer",
+                                  darkMode ? "border-white/4 hover:bg-white/4" : "border-gray-50 hover:bg-gray-50"
+                                )}>
+                                {/* Color dot */}
+                                <div className="shrink-0 mt-1.5 w-2 h-2 rounded-full" style={{ background: meta.color }} />
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="min-w-0">
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <span className={cn("text-[8px] font-black px-2 py-0.5 rounded-lg shrink-0", meta.bg)}
+                                          style={{ color: meta.color }}>
+                                          {meta.label}
+                                        </span>
+                                        <p className={cn("text-xs font-semibold truncate", darkMode ? "text-gray-200" : "text-gray-700")}>{log.detail}</p>
+                                      </div>
+                                      <div className="flex items-center gap-2 mt-1">
+                                        <span className={cn("text-[9px] font-bold", darkMode ? "text-gray-500" : "text-gray-400")}>{log.user}</span>
+                                        <span className={cn("text-[8px]", darkMode ? "text-gray-700" : "text-gray-300")}>·</span>
+                                        <span className={cn("text-[9px] font-mono", darkMode ? "text-gray-600" : "text-gray-400")}>{hora}</span>
+                                        {log.entityId && (
+                                          <span className={cn("text-[8px] font-mono px-1.5 py-0.5 rounded", darkMode ? "bg-white/5 text-gray-700" : "bg-gray-100 text-gray-400")}>
+                                            ID:{log.entityId}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <ChevronRight className={cn("w-3.5 h-3.5 shrink-0 mt-0.5 transition-colors", log.meta ? (darkMode ? "text-gray-600 group-hover:text-gray-400" : "text-gray-300 group-hover:text-gray-500") : (darkMode ? "text-gray-800" : "text-gray-200"))} />
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                );
+              })()}
+
+              {auditLogs.length === 0 && (
+                <div className={cn("flex flex-col items-center justify-center py-16 gap-3", darkMode ? "text-gray-700" : "text-gray-300")}>
+                  <History className="w-10 h-10" />
+                  <p className="text-sm font-semibold">Sin eventos registrados</p>
+                  <p className={cn("text-[10px]", darkMode ? "text-gray-700" : "text-gray-400")}>Las acciones del sistema aparecerán aquí</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── GOALS CONFIG MODAL ── */}
+      {showGoalsModal && (
+        <div className="fixed inset-0 z-[9994] flex items-center justify-center" onClick={() => setShowGoalsModal(false)}>
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+          <div className={cn("relative w-full max-w-md mx-4 rounded-2xl shadow-2xl border", darkMode ? "bg-[#16161A] border-white/12" : "bg-white border-gray-200")} onClick={e => e.stopPropagation()}>
+            <div className={cn("flex items-center justify-between px-6 py-4 border-b", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+              <div className="flex items-center gap-3">
+                <Target className="w-4 h-4 text-[#ED1C24]" />
+                <div>
+                  <p className={cn("text-sm font-black", darkMode ? "text-white" : "text-gray-900")}>Metas por Vendedor</p>
+                  <p className={cn("text-[10px]", darkMode ? "text-gray-500" : "text-gray-400")}>Meta mensual en m²</p>
+                </div>
+              </div>
+              <button onClick={() => setShowGoalsModal(false)} className={cn("p-1.5 rounded-lg transition-colors", darkMode ? "hover:bg-white/8 text-gray-500" : "hover:bg-gray-100 text-gray-400")}>
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-5 space-y-3">
+              {salespersonPerformance.map((sp: any) => (
+                <div key={sp.name} className="flex items-center gap-4">
+                  <div className="flex-1">
+                    <p className={cn("text-xs font-bold", darkMode ? "text-gray-300" : "text-gray-700")}>{sp.name}</p>
+                    <p className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>
+                      {sp.m2?.toFixed(0) || 0} m² este período
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number" min={0} placeholder="0"
+                      value={goalsEditForm[sp.name] || ''}
+                      onChange={e => setGoalsEditForm(prev => ({ ...prev, [sp.name]: e.target.value }))}
+                      className={cn("w-24 text-center text-sm font-black rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-[#ED1C24]/30",
+                        darkMode ? "bg-white/8 text-white border border-white/10" : "bg-gray-50 text-gray-800 border border-gray-200"
+                      )}
+                    />
+                    <span className={cn("text-[10px]", darkMode ? "text-gray-600" : "text-gray-400")}>m²/mes</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className={cn("px-5 py-4 border-t flex justify-end gap-2", darkMode ? "border-white/8" : "border-gray-100")}>
+              <button onClick={() => setShowGoalsModal(false)}
+                className={cn("px-4 py-2 rounded-xl text-xs font-bold transition-colors", darkMode ? "bg-white/5 text-gray-400 hover:bg-white/10" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}>
+                Cancelar
+              </button>
+              <button onClick={() => {
+                const ng: Record<string,number> = {};
+                Object.entries(goalsEditForm).forEach(([k,v]) => { ng[k] = parseInt(v) || 0; });
+                setSalespersonGoals(ng);
+                localStorage.setItem('sp_goals', JSON.stringify(ng));
+                setShowGoalsModal(false);
+                showToast('Metas actualizadas', 'success');
+              }}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-[#1A3A5C] text-white hover:bg-[#22487A] transition-colors">
+                Guardar metas
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── GLOBAL SEARCH MODAL (Cmd+K) ── */}
+      {globalSearchOpen && (
+        <GlobalSearch
+          darkMode={darkMode}
+          allClients={allClients}
+          allConsumos={allConsumos}
+          altNames={altNames}
+          onSelectClient={(client) => { setSelectedClient(client); }}
+          onNavigate={(v) => setView(v as any)}
+          onClose={() => setGlobalSearchOpen(false)}
+        />
+      )}
+
       <style dangerouslySetInnerHTML={{ __html: `
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800;900&display=swap');
         .custom-scrollbar::-webkit-scrollbar { width: 4px; }
@@ -10061,6 +13305,139 @@ function App() {
         * { scrollbar-width: thin; scrollbar-color: rgba(160,160,160,0.2) transparent; }
       `}} />
       </div>
+
+    {/* ── RESUMEN DEL DÍA MODAL — fuera del contenedor escalado ── */}
+      {!bannerCollapsed && !loading && (
+        <div className="fixed inset-0 z-[9990] flex items-center justify-center" onClick={() => setBannerCollapsed(true)}>
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+          <div
+            className={cn(
+              "relative w-full max-w-2xl mx-4 rounded-2xl shadow-2xl border overflow-hidden",
+              darkMode ? "bg-[#16161A] border-white/10" : "bg-white border-gray-200"
+            )}
+            onClick={e => e.stopPropagation()}
+            style={{ fontFamily: "'DM Sans','Inter',system-ui,sans-serif" }}
+          >
+            {/* Header */}
+            <div className={cn("flex items-center justify-between px-6 py-4 border-b", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+              <div className="flex items-center gap-3">
+                <div className={cn(
+                  "w-2 h-2 rounded-full shrink-0",
+                  dayBrief.todayFacturas > 0 ? "bg-emerald-400 shadow-sm shadow-emerald-400/50" : (darkMode ? "bg-gray-600" : "bg-gray-300")
+                )} />
+                <div>
+                  <p className={cn("text-sm font-black leading-none", darkMode ? "text-white" : "text-gray-900")}>
+                    {dayBrief.greeting}, {appUser?.nombre?.split(' ')[0] || appUser?.email?.split('@')[0]}
+                  </p>
+                  <p className={cn("text-[10px] font-medium mt-0.5 capitalize", darkMode ? "text-gray-500" : "text-gray-400")}>
+                    {format(new Date(), "EEEE d 'de' MMMM yyyy")}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setBannerCollapsed(true)}
+                className={cn("p-1.5 rounded-lg transition-colors", darkMode ? "hover:bg-white/8 text-gray-500 hover:text-gray-300" : "hover:bg-gray-100 text-gray-400 hover:text-gray-600")}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 space-y-4">
+              {/* KPIs del día */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className={cn("rounded-xl p-4 border", darkMode ? "bg-white/3 border-white/6" : "bg-gray-50 border-gray-100")}>
+                  <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-2", darkMode ? "text-gray-600" : "text-gray-400")}>m² vendidos hoy</p>
+                  <p className={cn("text-3xl font-black leading-none", dayBrief.todayM2 > 0 ? (darkMode ? "text-cyan-400" : "text-cyan-600") : (darkMode ? "text-gray-700" : "text-gray-300"))}>
+                    {dayBrief.todayM2 > 0 ? dayBrief.todayM2.toLocaleString('es-EC') : '—'}
+                  </p>
+                  <p className={cn("text-[9px] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>metros cuadrados</p>
+                </div>
+                <div className={cn("rounded-xl p-4 border", darkMode ? "bg-white/3 border-white/6" : "bg-gray-50 border-gray-100")}>
+                  <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-2", darkMode ? "text-gray-600" : "text-gray-400")}>Facturas hoy</p>
+                  <p className={cn("text-3xl font-black leading-none", dayBrief.todayFacturas > 0 ? (darkMode ? "text-white" : "text-gray-900") : (darkMode ? "text-gray-700" : "text-gray-300"))}>
+                    {dayBrief.todayFacturas > 0 ? dayBrief.todayFacturas : '—'}
+                  </p>
+                  <p className={cn("text-[9px] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>
+                    {dayBrief.todayClientes > 0 ? `${dayBrief.todayClientes} cliente${dayBrief.todayClientes !== 1 ? 's' : ''}` : 'sin actividad hoy'}
+                  </p>
+                </div>
+                <div className={cn("rounded-xl p-4 border", darkMode ? "bg-white/3 border-white/6" : "bg-gray-50 border-gray-100")}>
+                  <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-2", darkMode ? "text-gray-600" : "text-gray-400")}>Total clientes</p>
+                  <p className={cn("text-3xl font-black leading-none", darkMode ? "text-white" : "text-gray-900")}>{allClients.length}</p>
+                  <p className={cn("text-[9px] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>registrados en el sistema</p>
+                </div>
+              </div>
+
+              {/* Alertas */}
+              <div>
+                <p className={cn("text-[9px] font-black uppercase tracking-wider mb-2", darkMode ? "text-gray-600" : "text-gray-400")}>Alertas del sistema</p>
+                <div className="space-y-2">
+                  {dayBrief.stockBajo > 0 ? (
+                    <button
+                      onClick={() => { setBannerCollapsed(true); setView('intelligence'); setIntelligenceTab('projection'); setGlobalFilmFilter('DIHT'); }}
+                      className={cn("w-full flex items-center justify-between px-4 py-3 rounded-xl border text-left transition-all group",
+                        darkMode ? "bg-red-500/8 border-red-500/20 hover:bg-red-500/15" : "bg-red-50 border-red-200 hover:bg-red-100")}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-red-500/20 flex items-center justify-center shrink-0">
+                          <AlertTriangle className="w-4 h-4 text-red-400" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-bold text-red-400">{dayBrief.stockBajo} producto{dayBrief.stockBajo !== 1 ? 's' : ''} con stock crítico</p>
+                          <p className={cn("text-[10px]", darkMode ? "text-gray-600" : "text-gray-400")}>Menos de 2 meses de cobertura — ver en Proyección →</p>
+                        </div>
+                      </div>
+                      <ArrowRight className="w-4 h-4 text-red-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                    </button>
+                  ) : (
+                    <div className={cn("flex items-center gap-3 px-4 py-3 rounded-xl border", darkMode ? "bg-emerald-500/5 border-emerald-500/15" : "bg-emerald-50 border-emerald-200")}>
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <p className="text-sm font-semibold text-emerald-400">Stock en niveles normales</p>
+                    </div>
+                  )}
+
+                  {dayBrief.clientesEnRiesgo > 0 ? (
+                    <button
+                      onClick={() => { setBannerCollapsed(true); setView('intelligence'); setIntelligenceTab('health'); }}
+                      className={cn("w-full flex items-center justify-between px-4 py-3 rounded-xl border text-left transition-all group",
+                        darkMode ? "bg-amber-500/8 border-amber-500/20 hover:bg-amber-500/15" : "bg-amber-50 border-amber-200 hover:bg-amber-100")}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-amber-500/20 flex items-center justify-center shrink-0">
+                          <Clock className="w-4 h-4 text-amber-400" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-bold text-amber-400">{dayBrief.clientesEnRiesgo} cliente{dayBrief.clientesEnRiesgo !== 1 ? 's' : ''} sin compra en +60 días</p>
+                          <p className={cn("text-[10px]", darkMode ? "text-gray-600" : "text-gray-400")}>Requieren seguimiento del vendedor — ver en Salud →</p>
+                        </div>
+                      </div>
+                      <ArrowRight className="w-4 h-4 text-amber-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                    </button>
+                  ) : (
+                    <div className={cn("flex items-center gap-3 px-4 py-3 rounded-xl border", darkMode ? "bg-emerald-500/5 border-emerald-500/15" : "bg-emerald-50 border-emerald-200")}>
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <p className="text-sm font-semibold text-emerald-400">Todos los clientes activos recientemente</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className={cn("px-6 py-3 border-t flex items-center justify-between", darkMode ? "border-white/8 bg-white/2" : "border-gray-100 bg-gray-50/60")}>
+              <p className={cn("text-[9px]", darkMode ? "text-gray-700" : "text-gray-400")}>Click fuera o ESC para cerrar</p>
+              <button
+                onClick={() => setBannerCollapsed(true)}
+                className="px-4 py-1.5 rounded-lg text-xs font-bold bg-[#1A3A5C] text-white hover:bg-[#22487A] transition-colors"
+              >
+                Entendido
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
@@ -10077,7 +13454,9 @@ function AppGate() {
 export default function Root() {
   return (
     <AuthProvider>
-      <AppGate />
+      <ToastProvider>
+        <AppGate />
+      </ToastProvider>
     </AuthProvider>
   );
 }
