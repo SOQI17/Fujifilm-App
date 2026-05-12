@@ -5680,7 +5680,7 @@ ${rows.map(r=>{
           <div className="col-span-12 flex flex-col gap-6 min-h-0 overflow-y-auto pr-2 pb-8 custom-scrollbar">
 
 
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div className="flex items-center gap-3">
                 <div>
                   <h2 className="text-xl font-black tracking-tight">Dashboard de Análisis</h2>
@@ -6460,7 +6460,7 @@ ${rows.map(r=>{
           <div className="col-span-12 flex flex-col gap-6 min-h-0 overflow-y-auto pr-2 pb-8 custom-scrollbar">
 
             {/* Header */}
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div>
                 <h2 className="text-xl font-black tracking-tight flex items-center gap-2">
                   <Package className="w-5 h-5 text-[#ED1C24]" /> Control de Inventario
@@ -6469,12 +6469,12 @@ ${rows.map(r=>{
                   Stock real · Entradas · Lotes · Mínimos
                 </p>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 flex-wrap">
                 {/* Film type filter removed from inventory header — each tab manages its own filter */}
                 <div className={cn("flex items-center gap-1 p-1 rounded-xl", darkMode ? "bg-white/5" : "bg-gray-100")}>
                   {([['overview','Stock Tiempo'], ['movements','Movimientos'], ['stock-film','Stock Film']] as const).map(([tab, label]) => (
                     <button key={tab} onClick={() => setInventoryTab(tab)}
-                      className={cn("px-3 py-1.5 rounded-lg text-xs font-semibold transition-all",
+                      className={cn("px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap",
                         inventoryTab === tab
                           ? tab === 'stock-film'
                             ? "bg-cyan-500 text-white shadow-sm"
@@ -6485,9 +6485,9 @@ ${rows.map(r=>{
                 </div>
                 <button
                   onClick={() => { setNewStockEntry({ date: new Date().toISOString().split('T')[0], film_type: (globalFilmFilter === 'DIHL' ? 'DIHL' : globalFilmFilter === 'DIML' ? 'DIML' : 'DIHT') as 'DIHT'|'DIHL'|'DIML' }); setIsStockEntryModalOpen(true); }}
-                  className="bg-[#ED1C24] text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 hover:bg-[#D11920] shadow-md shadow-red-500/20 transition-all"
+                  className="bg-[#ED1C24] text-white px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 hover:bg-[#D11920] shadow-md shadow-red-500/20 transition-all whitespace-nowrap"
                 >
-                  <Plus className="w-3.5 h-3.5" /> Nueva Entrada
+                  <Plus className="w-3.5 h-3.5" /><span className="hidden sm:inline"> Nueva Entrada</span>
                 </button>
               </div>
             </div>
@@ -7728,7 +7728,7 @@ ${rows.map(r=>{
 
             {/* Year selector + product cards */}
             {/* Year selector */}
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className={cn("text-[10px] font-black uppercase tracking-widest flex items-center gap-2", darkMode ? "text-gray-500" : "text-gray-400")}>
                 <Layers className="w-3.5 h-3.5" /> Detalle mensual por producto
               </h3>
@@ -8158,7 +8158,7 @@ ${rows.map(r=>{
             </div>
 
             {/* Tab nav */}
-            <div className={cn("flex items-center gap-1 p-1 rounded-xl", darkMode ? "bg-white/5" : "bg-gray-100")}>
+            <div className={cn("flex items-center gap-1 p-1 rounded-xl overflow-x-auto scrollbar-hide", darkMode ? "bg-white/5" : "bg-gray-100")}>
               {([
                 ['projection',    'Proyección',    Target     ],
                 ['comparativo',   'Comparativo',   BarChart3  ],
