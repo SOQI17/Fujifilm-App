@@ -961,8 +961,10 @@ function App() {
     return saved === 'dark';
   });
   // Zoom automático: la app está diseñada para 1440px de ancho
-  // En pantallas más pequeñas se escala proporcionalmente
+  // En móvil (< 768px) se desactiva el zoom para que fluya con scroll nativo
+  const isMobile = () => window.innerWidth < 768;
   const calcZoom = () => {
+    if (isMobile()) return 1;
     const designWidth = 1440;
     const minZoom = 0.55;
     const maxZoom = 1.5;
@@ -4518,14 +4520,18 @@ ${rows.map(r=>{
     }
   };
 
+  const isMobileView = window.innerWidth < 768;
   return (
-    <div className="w-screen h-screen overflow-hidden bg-transparent">
+    <div className={isMobileView ? "w-full min-h-screen bg-transparent" : "w-screen h-screen overflow-hidden bg-transparent"}>
       <div 
         className={cn(
-          "flex flex-col text-sm overflow-hidden transition-all duration-300",
+          "flex flex-col text-sm transition-all duration-300",
+          isMobileView ? "overflow-x-hidden overflow-y-auto" : "overflow-hidden",
           darkMode ? "bg-[#0F0F11] text-white" : "bg-[#F4F5F7] text-[#111827]"
         )}
-        style={{ 
+        style={isMobileView ? {
+          fontFamily: "'DM Sans', 'Inter', system-ui, sans-serif"
+        } : { 
           transform: `scale(${zoomLevel})`,
           transformOrigin: 'top left',
           width: `${100 / zoomLevel}vw`,
@@ -4562,7 +4568,7 @@ ${rows.map(r=>{
       )}
       {/* Header Corporativo Orimec */}
       <header className={cn(
-        "border-b px-6 py-3 flex items-center justify-between z-10 shrink-0 transition-colors duration-300",
+        "border-b px-3 md:px-6 py-3 flex items-center justify-between z-10 shrink-0 transition-colors duration-300",
         darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/80 shadow-sm"
       )}>
         <div className="flex items-center gap-6">
@@ -4587,7 +4593,7 @@ ${rows.map(r=>{
           )} />
 
           <nav className={cn(
-            "flex items-center gap-1 p-1 rounded-xl transition-colors duration-300",
+            "flex items-center gap-1 p-1 rounded-xl transition-colors duration-300 overflow-x-auto scrollbar-hide max-w-[calc(100vw-160px)] md:max-w-none",
             darkMode ? "bg-white/5" : "bg-gray-100/80"
           )}>
             {[
@@ -4700,7 +4706,7 @@ ${rows.map(r=>{
             <button
               onClick={() => setGlobalSearchOpen(true)}
               className={cn(
-                "flex items-center gap-2 pl-3 pr-3 py-2 rounded-xl w-64 text-xs font-medium transition-all text-left",
+                "hidden md:flex items-center gap-2 pl-3 pr-3 py-2 rounded-xl w-64 text-xs font-medium transition-all text-left",
                 darkMode
                   ? "bg-white/5 text-gray-500 hover:bg-white/8 hover:text-gray-400 border border-white/6"
                   : "bg-gray-100 text-gray-400 hover:bg-gray-200/70 border border-transparent"
@@ -4727,7 +4733,7 @@ ${rows.map(r=>{
               title="Exportar a Excel"
             >
               <Download className="w-3.5 h-3.5" />
-              Exportar
+              <span className="hidden md:inline">Exportar</span>
             </button>
           )}
 
@@ -4743,7 +4749,7 @@ ${rows.map(r=>{
               title="Importar CSV"
             >
               <Upload className="w-3.5 h-3.5" />
-              Importar CSV
+              <span className="hidden md:inline">Importar CSV</span>
             </button>
           )}
 
@@ -4752,13 +4758,13 @@ ${rows.map(r=>{
               onClick={handleOpenNewClient}
               className="bg-[#ED1C24] text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 hover:bg-[#D11920] shadow-md shadow-red-500/20 transition-all"
             >
-              <Plus className="w-3.5 h-3.5" /> Nuevo Cliente
+              <Plus className="w-3.5 h-3.5" /><span className="hidden md:inline"> Nuevo Cliente</span>
             </button>
           )}
         </div>
       </header>
 
-      <main className="flex-1 grid grid-cols-12 gap-6 p-6 min-h-0">
+      <main className="flex-1 grid grid-cols-12 gap-3 md:gap-6 p-3 md:p-6 min-h-0">
         {view === 'usuarios' && role === 'admin' && (
           <div className="col-span-12 h-full overflow-hidden">
             <UsersPanel darkMode={darkMode} />
@@ -4767,7 +4773,7 @@ ${rows.map(r=>{
         {view === 'clients' && (
           <>
             {/* Sidebar: Centros Médicos */}
-            <div className="col-span-4 flex flex-col min-h-0">
+            <div className="col-span-12 md:col-span-4 flex flex-col min-h-0">
               <div className={cn(
                 "flex items-center justify-between px-1 mb-3 shrink-0"
               )}>
@@ -4849,7 +4855,7 @@ ${rows.map(r=>{
             </div>
 
             {/* Dashboard de Análisis */}
-            <div className="col-span-8 flex flex-col min-h-0 overflow-y-auto pr-2 pb-8 custom-scrollbar">
+            <div className="col-span-12 md:col-span-8 flex flex-col min-h-0 overflow-y-auto pr-2 pb-8 custom-scrollbar">
               {selectedClient ? (
                 <div className="flex flex-col gap-5">
                   {/* Client Card */}
@@ -5740,7 +5746,7 @@ ${rows.map(r=>{
                 )}
               </div>
             </div>
-            <div className="grid grid-cols-5 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 md:gap-4">
               {loading ? (
                 Array.from({ length: 5 }).map((_, i) => (
                   <React.Fragment key={i}><SkeletonDashboardCard darkMode={darkMode} /></React.Fragment>
@@ -6508,7 +6514,7 @@ ${rows.map(r=>{
                           </button>
                         )}
                       </div>
-                      <div className="grid grid-cols-4 gap-3">
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                         {SIZES.map(size => (
                           <div key={size} className={cn("rounded-xl p-3 border", darkMode ? "bg-white/4 border-white/8" : "bg-gray-50 border-gray-100")}>
                             <span className={cn("text-[10px] font-black uppercase px-2 py-0.5 rounded mb-3 inline-block", darkMode ? "bg-white/10 text-white" : "bg-gray-800 text-white")}>{size}</span>
@@ -6545,7 +6551,7 @@ ${rows.map(r=>{
                 })()}
 
                 {/* Stock cards per size */}
-                <div className="grid grid-cols-4 gap-5">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
                   {stockSummary.map(item => (
                     <div key={item.size} className={cn("rounded-xl p-5 border relative overflow-hidden transition-all",
                       item.status === 'critical' ? (darkMode ? "bg-red-500/10 border-red-500/30" : "bg-red-50 border-red-200") :
@@ -7703,7 +7709,7 @@ ${rows.map(r=>{
               const totalInstaladas = IMAGER_PRODUCTS.filter(p => p.category === 'Impresora Principal')
                 .reduce((s, p) => s + (imagerFromClients[p.key]?.installs?.length || 0), 0);
               return (
-                <div className="grid grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   {[
                     { label: 'Unidades en bodega', value: totalUnits, sub: `${printers.length} impresoras · ${accessories.length} accesorios`, color: darkMode ? 'text-cyan-400' : 'text-cyan-600' },
                     { label: 'Instaladas en clientes', value: totalInstaladas, sub: 'Impresoras registradas activas', color: darkMode ? 'text-emerald-400' : 'text-emerald-600' },
@@ -12046,7 +12052,7 @@ ${rows.map(r=>{
                 <div className="p-6 space-y-5">
 
                   {/* KPIs principales */}
-                  <div className="grid grid-cols-4 gap-3">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                     {[
                       { label: 'Stock bodega', value: `${m.currentStock} cj`, sub: `${(m.currentStock * m.m2box).toFixed(1)} m²`, color: darkMode ? 'text-cyan-400' : 'text-cyan-600' },
                       { label: 'En tránsito', value: `${m.realTransit} cj`, sub: `${(m.realTransit * m.m2box).toFixed(1)} m²`, color: 'text-amber-400' },
@@ -13303,6 +13309,8 @@ ${sectionsHtml}
         .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(160,160,160,0.2); border-radius: 10px; }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(160,160,160,0.4); }
         * { scrollbar-width: thin; scrollbar-color: rgba(160,160,160,0.2) transparent; }
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
       `}} />
       </div>
 
