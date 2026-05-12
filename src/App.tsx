@@ -5817,12 +5817,12 @@ ${rows.map(r=>{
             </div>
 
             {loading ? (
-              <div className="grid grid-cols-12 gap-5">
-                <div className={cn("col-span-8 p-6 rounded-xl border", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+              <div className="grid grid-cols-12 gap-4 md:gap-5">
+                <div className={cn("col-span-12 md:col-span-8 p-4 md:p-6 rounded-xl border", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
                   <SkeletonBlock darkMode={darkMode} className="h-3 w-48 mb-6" />
                   <SkeletonBlock darkMode={darkMode} className="h-64 w-full" />
                 </div>
-                <div className={cn("col-span-4 p-6 rounded-xl border", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                <div className={cn("col-span-12 md:col-span-4 p-4 md:p-6 rounded-xl border", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
                   <SkeletonBlock darkMode={darkMode} className="h-3 w-32 mb-6" />
                   <div className="space-y-3">
                     {Array.from({ length: 5 }).map((_,i) => <React.Fragment key={i}><SkeletonBlock darkMode={darkMode} className="h-8 w-full" /></React.Fragment>)}
@@ -5830,9 +5830,9 @@ ${rows.map(r=>{
                 </div>
               </div>
             ) : (
-            <div className="grid grid-cols-12 gap-5">
+            <div className="grid grid-cols-12 gap-4 md:gap-5">
               <div className={cn(
-                "col-span-8 p-6 rounded-xl border transition-colors duration-300",
+                "col-span-12 md:col-span-8 p-4 md:p-6 rounded-xl border transition-colors duration-300",
                 darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
               )}>
                 <div className="flex items-center justify-between mb-6">
@@ -5902,7 +5902,7 @@ ${rows.map(r=>{
               </div>
 
               <div className={cn(
-                "col-span-4 p-6 rounded-xl border transition-colors duration-300",
+                "col-span-12 md:col-span-4 p-4 md:p-6 rounded-xl border transition-colors duration-300",
                 darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
               )}>
                 <h3 className={cn("text-[10px] font-bold uppercase tracking-wider mb-5 flex items-center gap-2", darkMode ? "text-gray-500" : "text-gray-400")}>
@@ -5943,7 +5943,7 @@ ${rows.map(r=>{
               
               {/* Estadísticas por Vendedor */}
               <div className={cn(
-                "col-span-12 p-6 rounded-xl border transition-colors duration-300",
+                "col-span-12 p-4 md:p-6 rounded-xl border transition-colors duration-300",
                 darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
               )}>
                 <div className="flex items-center justify-between mb-5">
@@ -6167,7 +6167,7 @@ ${rows.map(r=>{
 
               {/* Métricas de Impresoras */}
               <div className={cn(
-                "col-span-12 p-6 rounded-xl border transition-colors duration-300",
+                "col-span-12 p-4 md:p-6 rounded-xl border transition-colors duration-300",
                 darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
               )}>
                 <h3 className={cn("text-[10px] font-bold uppercase tracking-wider mb-5 flex items-center gap-2", darkMode ? "text-gray-500" : "text-gray-400")}>
@@ -9244,10 +9244,10 @@ ${rows.map(r=>{
                           En Tránsito
                         </button>
                         {/* Period selector */}
-                        <div className={cn("flex items-center gap-1 p-1 rounded-xl ml-auto", darkMode ? "bg-white/5" : "bg-gray-100")}>
+                        <div className={cn("flex items-center gap-1 p-1 rounded-xl overflow-x-auto scrollbar-hide", darkMode ? "bg-white/5" : "bg-gray-100")}>
                           {([1, 3, 6, 12] as const).map(p => (
                             <button key={p} onClick={() => setProjectionPeriod(p)}
-                              className={cn("px-3 py-1 rounded-lg text-[10px] font-black transition-all",
+                              className={cn("px-2 sm:px-3 py-1 rounded-lg text-[10px] font-black transition-all whitespace-nowrap",
                                 projectionPeriod === p
                                   ? "bg-[#ED1C24] text-white shadow-sm"
                                   : (darkMode ? "text-gray-500 hover:text-gray-300 hover:bg-white/5" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200")
@@ -9310,7 +9310,7 @@ ${rows.map(r=>{
                             </div>
 
                             {/* Size cards — wider, clearer */}
-                            <div className="p-4 grid grid-cols-2 gap-4">
+                            <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
                               {products.map(p => {
                                 if (!p) return null;
                                 const { size, fuji, m2box, currentStock, totalWithTransit, realTransit, avgMonthly, demandPeriod, demandM2, safetyStock, coverageCurrent, coverageWithTransit, coverageFujiCurrent, coverageFujiHistoric, toOrder, toOrderM2, status, topClients } = p;
@@ -9380,7 +9380,7 @@ ${rows.map(r=>{
                                       </div>
 
                                       {/* Stats row */}
-                                      <div className={cn("grid grid-cols-4 gap-2 text-[9px] pt-3 border-t", darkMode ? "border-white/8" : "border-black/6")}>
+                                      <div className={cn("grid grid-cols-3 sm:grid-cols-4 gap-2 text-[9px] pt-3 border-t", darkMode ? "border-white/8" : "border-black/6")}>
                                         <div>
                                           <p className={darkMode ? "text-gray-600" : "text-gray-400"}>Stock bodega</p>
                                           <p className={cn("font-black text-xs", darkMode ? "text-cyan-400" : "text-cyan-600")}>{currentStock} cj</p>
@@ -11472,7 +11472,7 @@ ${rows.map(r=>{
                 </div>
 
                 {/* Bottom: Top Clients + Size dist + Province */}
-                <div className="grid grid-cols-12 gap-5">
+                <div className="grid grid-cols-12 gap-4 md:gap-5">
                   {/* Top Clients */}
                   <div className={cn("col-span-6 rounded-xl p-5 border", darkMode ? "bg-white/3 border-white/6" : "bg-gray-50 border-gray-100")}>
                     <p className={cn("text-[10px] font-bold uppercase tracking-wider mb-4", darkMode ? "text-gray-500" : "text-gray-400")}>Top clientes por m²</p>
