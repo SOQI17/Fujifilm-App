@@ -4855,15 +4855,21 @@ ${rows.map(r=>{
             </div>
 
             {/* Dashboard de Análisis */}
-            <div className={cn("col-span-12 md:col-span-8 flex flex-col min-h-0 overflow-y-auto pr-0 md:pr-2 pb-8 custom-scrollbar", !selectedClient && "hidden md:flex")}>
+            <div className={cn(
+              "md:col-span-8 md:flex flex-col md:min-h-0 md:overflow-y-auto md:pr-2 pb-8 custom-scrollbar",
+              selectedClient
+                ? "fixed md:relative inset-0 md:inset-auto z-50 md:z-auto col-span-12 flex overflow-y-auto p-3 md:p-0"
+                : "hidden md:flex col-span-12",
+              darkMode ? "bg-[#0F0F11]" : "bg-[#F4F5F7]"
+            )}>
               {selectedClient ? (
                 <div className="flex flex-col gap-5">
                   {/* Back button — mobile only */}
                   <button
                     onClick={() => setSelectedClient(null)}
                     className={cn(
-                      "md:hidden flex items-center gap-2 text-xs font-bold px-3 py-2 rounded-xl w-fit transition-all",
-                      darkMode ? "bg-white/8 text-gray-300 hover:bg-white/12" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                      "md:hidden flex items-center gap-2 text-sm font-bold px-4 py-2.5 rounded-xl w-fit transition-all mb-1 border",
+                      darkMode ? "bg-white/8 border-white/10 text-gray-200 hover:bg-white/15" : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50 shadow-sm"
                     )}
                   >
                     <ChevronRight className="w-4 h-4 rotate-180" /> Volver a clientes
