@@ -4588,12 +4588,12 @@ ${rows.map(r=>{
           </div>
 
           <div className={cn(
-            "h-6 w-px",
+            "hidden lg:block h-6 w-px",
             darkMode ? "bg-white/10" : "bg-gray-200"
           )} />
 
           <nav className={cn(
-            "flex items-center gap-1 p-1 rounded-xl transition-colors duration-300 overflow-x-auto scrollbar-hide max-w-[calc(100vw-160px)] md:max-w-none",
+            "flex items-center gap-1 p-1 rounded-xl transition-colors duration-300 overflow-x-auto scrollbar-hide max-w-[calc(100vw-160px)] lg:max-w-none",
             darkMode ? "bg-white/5" : "bg-gray-100/80"
           )}>
             {[
@@ -4608,7 +4608,7 @@ ${rows.map(r=>{
                 key={id}
                 onClick={() => setView(id as any)}
                 className={cn(
-                  "px-3.5 py-1.5 rounded-lg font-semibold text-xs flex items-center gap-1.5 transition-all",
+                  "px-2.5 md:px-3.5 py-1.5 rounded-lg font-semibold text-xs flex items-center gap-1.5 transition-all whitespace-nowrap",
                   view === id
                     ? (darkMode
                         ? "bg-[#ED1C24] text-white shadow-sm shadow-red-500/20"
@@ -4625,13 +4625,13 @@ ${rows.map(r=>{
           </nav>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-1.5 md:gap-2.5 overflow-hidden">
           {/* User chip */}
           <div className={cn(
-            "flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-semibold",
+            "flex items-center gap-2 px-2 md:px-3 py-1.5 rounded-xl border text-xs font-semibold",
             darkMode ? "bg-white/5 border-white/8 text-gray-400" : "bg-gray-100 border-gray-200 text-gray-500"
           )}>
-            <span className="max-w-[80px] truncate">{appUser?.nombre}</span>
+            <span className="hidden lg:inline max-w-[80px] truncate">{appUser?.nombre}</span>
             <span className={cn(
               "px-1.5 py-0.5 rounded-md text-[9px] font-bold",
               appUser?.role === 'admin' ? 'bg-[#ED1C24]/15 text-[#ED1C24]' :
@@ -4663,7 +4663,7 @@ ${rows.map(r=>{
                 setZoomLevel(calcZoom());
               }}
               className={cn(
-                "flex items-center gap-1 px-2 py-1.5 rounded-lg text-[10px] font-black border transition-all",
+                "hidden lg:flex items-center gap-1 px-2 py-1.5 rounded-lg text-[10px] font-black border transition-all",
                 darkMode ? "bg-white/5 border-white/10 text-gray-500 hover:bg-white/8 hover:text-gray-300" : "bg-gray-100 border-gray-200 text-gray-400 hover:bg-gray-200 hover:text-gray-600"
               )}
               title="Restablecer zoom automático"
@@ -4706,7 +4706,7 @@ ${rows.map(r=>{
             <button
               onClick={() => setGlobalSearchOpen(true)}
               className={cn(
-                "hidden md:flex items-center gap-2 pl-3 pr-3 py-2 rounded-xl w-64 text-xs font-medium transition-all text-left",
+                "hidden lg:flex items-center gap-2 pl-3 pr-3 py-2 rounded-xl w-48 xl:w-64 text-xs font-medium transition-all text-left",
                 darkMode
                   ? "bg-white/5 text-gray-500 hover:bg-white/8 hover:text-gray-400 border border-white/6"
                   : "bg-gray-100 text-gray-400 hover:bg-gray-200/70 border border-transparent"
@@ -4733,7 +4733,7 @@ ${rows.map(r=>{
               title="Exportar a Excel"
             >
               <Download className="w-3.5 h-3.5" />
-              <span className="hidden md:inline">Exportar</span>
+              <span className="hidden lg:inline">Exportar</span>
             </button>
           )}
 
@@ -4749,7 +4749,7 @@ ${rows.map(r=>{
               title="Importar CSV"
             >
               <Upload className="w-3.5 h-3.5" />
-              <span className="hidden md:inline">Importar CSV</span>
+              <span className="hidden lg:inline">Importar CSV</span>
             </button>
           )}
 
@@ -4758,7 +4758,7 @@ ${rows.map(r=>{
               onClick={handleOpenNewClient}
               className="bg-[#ED1C24] text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 hover:bg-[#D11920] shadow-md shadow-red-500/20 transition-all"
             >
-              <Plus className="w-3.5 h-3.5" /><span className="hidden md:inline"> Nuevo Cliente</span>
+              <Plus className="w-3.5 h-3.5" /><span className="hidden lg:inline"> Nuevo Cliente</span>
             </button>
           )}
         </div>
