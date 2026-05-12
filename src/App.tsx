@@ -4764,7 +4764,7 @@ ${rows.map(r=>{
         </div>
       </header>
 
-      <main className="flex-1 grid grid-cols-12 content-start gap-3 md:gap-6 p-3 md:p-6 min-h-0 overflow-y-auto md:overflow-hidden">
+      <main className="flex-1 grid grid-cols-12 gap-3 md:gap-6 p-3 md:p-6 min-h-0 overflow-hidden">
         {view === 'usuarios' && role === 'admin' && (
           <div className="col-span-12 h-full overflow-hidden">
             <UsersPanel darkMode={darkMode} />
@@ -4773,7 +4773,7 @@ ${rows.map(r=>{
         {view === 'clients' && (
           <>
             {/* Sidebar: Centros Médicos */}
-            <div className={cn("col-span-12 md:col-span-4 flex flex-col min-h-0", selectedClient ? "hidden md:flex" : "flex")}>
+            <div className={cn("col-span-12 md:col-span-4 flex flex-col", selectedClient ? "hidden md:flex" : "flex", "md:min-h-0")}>
               <div className={cn(
                 "flex items-center justify-between px-1 mb-3 shrink-0"
               )}>
