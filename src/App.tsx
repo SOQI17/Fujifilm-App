@@ -5009,7 +5009,7 @@ ${rows.map(r=>{
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-4 gap-4">
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                         <div className={cn(
                           "rounded-xl p-4 border",
                           darkMode ? "bg-white/4 border-white/6" : "bg-gray-50 border-gray-100"
@@ -5130,7 +5130,7 @@ ${rows.map(r=>{
                               const isDisabled = role === 'vendedor' || (!isEditingPrinters && isExistingPrinter);
                               
                               return (
-                                <div key={printer.id} className="grid grid-cols-12 gap-4 items-end">
+                                <div key={printer.id} className="grid grid-cols-6 md:grid-cols-12 gap-3 md:gap-4 items-end">
                                   <div className="col-span-2">
                                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Tipo Impresora</label>
                                     <input 
@@ -5405,7 +5405,7 @@ ${rows.map(r=>{
                   </div>
 
                   {/* Charts Section */}
-                  <div className="grid grid-cols-2 gap-5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className={cn(
                       "rounded-xl p-6 border transition-colors duration-300",
                       darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
@@ -5708,8 +5708,8 @@ ${rows.map(r=>{
                 )}
               </div>
               <div className="flex items-center gap-3">
-                <div className="flex items-center gap-2">
-                  <label className={cn("text-[9px] font-bold uppercase tracking-widest", darkMode ? "text-gray-600" : "text-gray-400")}>Desde:</label>
+                <div className="flex items-center gap-1.5">
+                  <label className={cn("hidden sm:block text-[9px] font-bold uppercase tracking-widest", darkMode ? "text-gray-600" : "text-gray-400")}>Desde:</label>
                   <input
                     type="date"
                     value={dashboardStartDate}
@@ -5720,8 +5720,8 @@ ${rows.map(r=>{
                     )}
                   />
                 </div>
-                <div className="flex items-center gap-2">
-                  <label className={cn("text-[9px] font-bold uppercase tracking-widest", darkMode ? "text-gray-600" : "text-gray-400")}>Hasta:</label>
+                <div className="flex items-center gap-1.5">
+                  <label className={cn("hidden sm:block text-[9px] font-bold uppercase tracking-widest", darkMode ? "text-gray-600" : "text-gray-400")}>Hasta:</label>
                   <input
                     type="date"
                     value={dashboardEndDate}
@@ -5835,7 +5835,7 @@ ${rows.map(r=>{
                 "col-span-12 md:col-span-8 p-4 md:p-6 rounded-xl border transition-colors duration-300",
                 darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
               )}>
-                <div className="flex items-center justify-between mb-6">
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-5">
                   <h3 className={cn("text-[10px] font-bold uppercase tracking-wider flex items-center gap-2", darkMode ? "text-gray-500" : "text-gray-400")}>
                     <BarChart3 className="w-3.5 h-3.5 text-[#ED1C24]" /> Distribución Global por Medida — m²
                   </h3>
@@ -5852,7 +5852,7 @@ ${rows.map(r=>{
                     ))}
                   </div>
                 </div>
-                <div className="h-72">
+                <div className="h-48 md:h-72">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={(() => {
                       const filtered = sizeChartFilter === 'all' ? allConsumos
@@ -5946,7 +5946,7 @@ ${rows.map(r=>{
                 "col-span-12 p-4 md:p-6 rounded-xl border transition-colors duration-300",
                 darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
               )}>
-                <div className="flex items-center justify-between mb-5">
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-5">
                   <h3 className={cn("text-[10px] font-bold uppercase tracking-wider flex items-center gap-2", darkMode ? "text-gray-500" : "text-gray-400")}>
                     <Users className="w-3.5 h-3.5 text-[#ED1C24]" /> Estadísticas por Vendedor
                   </h3>
@@ -6174,7 +6174,7 @@ ${rows.map(r=>{
                   <Printer className="w-3.5 h-3.5 text-[#ED1C24]" /> Análisis de Impresoras Instaladas
                 </h3>
                 
-                <div className="grid grid-cols-4 gap-4 mb-6">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-6">
                   <div className={cn(
                     "p-4 rounded-xl border transition-colors duration-300",
                     darkMode ? "bg-white/4 border-white/6" : "bg-gray-50 border-gray-100"
@@ -6230,7 +6230,7 @@ ${rows.map(r=>{
 
                 <div className="grid grid-cols-12 gap-6">
                   {/* Tipos de Impresora */}
-                  <div className="col-span-4">
+                  <div className="col-span-12 md:col-span-4">
                     <h4 className={cn("text-[9px] font-bold uppercase tracking-wider mb-3", darkMode ? "text-gray-600" : "text-gray-400")}>Distribución por Tipo</h4>
                     <div className="space-y-2">
                       {printerMetrics.typeData.map((type, idx) => (
@@ -6261,7 +6261,7 @@ ${rows.map(r=>{
                   </div>
 
                   {/* Seriales Duplicados */}
-                  <div className="col-span-8">
+                  <div className="col-span-12 md:col-span-8">
                     <div className="flex items-center justify-between mb-4">
                       <h4 className="text-[10px] font-bold text-gray-400 uppercase">Seriales Duplicados</h4>
                       {printerMetrics.repeatedSerials.length > 0 && (
@@ -6308,9 +6308,9 @@ ${rows.map(r=>{
                   </div>
                 </div>
 
-                <div className="grid grid-cols-12 gap-8 mt-8">
+                <div className="grid grid-cols-12 gap-6 mt-8">
                   {/* Relación Consumo vs Impresoras */}
-                  <div className="col-span-8">
+                  <div className="col-span-12 md:col-span-8">
                     <h4 className="text-[10px] font-bold text-gray-400 uppercase mb-4">Relación Consumo vs Impresoras (Top 10)</h4>
                     <div className="overflow-x-auto">
                       <table className="w-full text-left">
@@ -6345,7 +6345,7 @@ ${rows.map(r=>{
                   </div>
 
                   {/* Clientes sin impresora */}
-                  <div className="col-span-4">
+                  <div className="col-span-12 md:col-span-4">
                     <h4 className="text-[10px] font-bold text-gray-400 uppercase mb-4">Clientes sin Impresora Registrada</h4>
                     <div className="space-y-2 max-h-[300px] overflow-y-auto custom-scrollbar pr-2">
                       {printerMetrics.clientsWithoutPrinters.map((client, idx) => (
@@ -6957,7 +6957,7 @@ ${rows.map(r=>{
                       return { month, totalIn, totalOut, totalBalance, totalInM2: parseFloat(totalInM2.toFixed(1)), totalOutM2: parseFloat(totalOutM2.toFixed(1)), totalBalanceM2: parseFloat(totalBalanceM2.toFixed(1)) };
                     });
                     return (
-                      <div className="grid grid-cols-12 gap-2 mb-2">
+                      <div className="grid grid-cols-6 md:grid-cols-12 gap-1 md:gap-2 mb-2">
                         {totals.map((t, i) => (
                           <div key={i} className={cn("rounded-lg p-2.5 border text-center", darkMode ? "bg-white/4 border-white/8" : "bg-gray-50 border-gray-100")}>
                             <p className={cn("text-[9px] font-black uppercase mb-1.5", darkMode ? "text-gray-500" : "text-gray-400")}>{t.month}</p>
@@ -8278,7 +8278,7 @@ ${rows.map(r=>{
               return (
                 <div className="space-y-5">
                   {/* Header KPIs — one card per year */}
-                  <div className="grid grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     {YEARS.map(y => {
                       const gt = grandTotal(y);
                       const prev = y > 2024 ? grandTotal(y - 1) : null;
@@ -8467,7 +8467,7 @@ ${rows.map(r=>{
                         <span className={cn("text-[10px] font-bold", darkMode ? "text-gray-400" : "text-gray-600")}>Trimax — Histórico (ya no se vende)</span>
                         <span className={cn("ml-auto text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>Solo 2024 · referencia histórica</span>
                       </div>
-                      <div className="p-5 grid grid-cols-4 gap-3">
+                      <div className="p-5 grid grid-cols-2 sm:grid-cols-4 gap-3">
                         {Object.entries(TRIMAX_2024.bySize).map(([sz, data]) => (
                           <div key={sz} className={cn("rounded-xl p-3.5 border", darkMode ? "bg-white/3 border-white/6" : "bg-gray-50 border-gray-100")}>
                             <span className={cn("text-[10px] font-black px-2 py-0.5 rounded inline-block mb-2", darkMode ? "bg-white/10 text-white" : "bg-gray-800 text-white")}>{sz}</span>
@@ -8476,7 +8476,7 @@ ${rows.map(r=>{
                             <p className={cn("text-[9px] mt-1", darkMode ? "text-gray-700" : "text-gray-300")}>{data.m2PerBox} m²/cj</p>
                           </div>
                         ))}
-                        <div className={cn("col-span-4 rounded-xl p-3 border text-center", darkMode ? "bg-orange-500/5 border-orange-500/15" : "bg-orange-50 border-orange-100")}>
+                        <div className={cn("col-span-6 md:col-span-4 rounded-xl p-3 border text-center", darkMode ? "bg-orange-500/5 border-orange-500/15" : "bg-orange-50 border-orange-100")}>
                           <span className="text-orange-400 font-black text-lg">{TRIMAX_2024.totalM2.toLocaleString('es-EC', { maximumFractionDigits: 0 })} m²</span>
                           <span className={cn("text-[10px] ml-2", darkMode ? "text-gray-500" : "text-gray-400")}>total TXE 2024 · {TRIMAX_2024.totalBoxes.toLocaleString()} cajas · mercado que migró a Fujifilm</span>
                         </div>
@@ -8667,7 +8667,7 @@ ${rows.map(r=>{
             {intelligenceTab === 'seasonality' && (
               <div className="space-y-5">
                 {/* Summary badges */}
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div className={cn("rounded-xl p-5 border", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
                     <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-2", darkMode ? "text-gray-600" : "text-gray-400")}>Mes pico del año</p>
                     <p className="text-2xl font-black text-[#ED1C24]">
@@ -8731,7 +8731,7 @@ ${rows.map(r=>{
                 </div>
 
                 {/* Per-size breakdown */}
-                <div className="grid grid-cols-4 gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   {seasonalityData.SIZES.map(size => {
                     const sizeData = seasonalityData.chartData.map((m: any) => ({ label: m.label, qty: m[size] || 0, topClient: m[`${size}_topClient`] || '—', topQty: m[`${size}_topQty`] || 0 }));
                     const peakIdx = sizeData.reduce((best: number, m: any, i: number) => m.qty > sizeData[best].qty ? i : best, 0);
@@ -8794,7 +8794,7 @@ ${rows.map(r=>{
                           </BarChart>
                         </ResponsiveContainer>
                         {isExpanded && (
-                          <div className="mt-4 grid grid-cols-12 gap-2">
+                          <div className="mt-4 grid grid-cols-6 gap-1 overflow-x-auto">
                             {sizeData.map((m: any, i: number) => (
                               <div key={i} className={cn("text-center p-2 rounded-lg", i === peakIdx ? (darkMode ? "bg-[#ED1C24]/15 border border-[#ED1C24]/30" : "bg-red-50 border border-red-200") : (darkMode ? "bg-white/3" : "bg-gray-50"))}>
                                 <p className={cn("text-[9px] font-bold uppercase", i === peakIdx ? "text-[#ED1C24]" : (darkMode ? "text-gray-500" : "text-gray-400"))}>{m.label}</p>
@@ -9346,7 +9346,7 @@ ${rows.map(r=>{
 
                                     <div className="p-5">
                                       {/* TWO MAIN COLUMNS: demanda | a pedir */}
-                                      <div className="grid grid-cols-2 gap-4 mb-4">
+                                      <div className="grid grid-cols-2 gap-3 mb-4">
                                         {/* Demanda */}
                                         <div className={cn("rounded-xl p-3.5", darkMode ? "bg-white/5" : "bg-white/80 border border-black/6")}>
                                           <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-2", darkMode ? "text-gray-500" : "text-gray-400")}>Demanda · {periodSuffix}</p>
@@ -9953,7 +9953,7 @@ ${rows.map(r=>{
                         <X className="w-3.5 h-3.5" />
                       </button>
                     </div>
-                    <div className="grid grid-cols-3 gap-2 mt-3">
+                    <div className="grid grid-cols-3 gap-1.5 mt-3">
                       {[
                         { v: totalBoxes, label: 'cajas', color: 'text-red-400' },
                         { v: `${totalM2.toFixed(1)}`, label: 'm²', color: darkMode ? 'text-cyan-400' : 'text-cyan-600' },
@@ -10302,7 +10302,7 @@ ${rows.map(r=>{
                       </button>
                     </div>
                     {/* KPIs */}
-                    <div className="grid grid-cols-3 gap-2 mt-3">
+                    <div className="grid grid-cols-3 gap-1.5 mt-3">
                       <div className={cn("rounded-lg p-2 text-center", darkMode ? "bg-white/5" : "bg-white border border-gray-100")}>
                         <p className="font-black text-base text-red-400 leading-none">{totalBoxes}</p>
                         <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>cajas</p>
@@ -10449,7 +10449,7 @@ ${rows.map(r=>{
                     </div>
                   </div>
                 )}
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Fecha de Pedido</label>
                     <input 
@@ -10477,7 +10477,7 @@ ${rows.map(r=>{
                     />
                   </div>
                 </div>
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">
                       Cantidad (Cajas)
@@ -10528,7 +10528,7 @@ ${rows.map(r=>{
                   </div>
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Tipo de Película</label>
-                    <div className="grid grid-cols-3 gap-1.5">
+                    <div className="grid grid-cols-3 gap-1">
                       {(['DIHT', 'DIHL', 'DIML'] as const).map(ft => (
                         <button
                           key={ft}
@@ -10551,7 +10551,7 @@ ${rows.map(r=>{
                     </div>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Lote</label>
                     <input 
@@ -10580,7 +10580,7 @@ ${rows.map(r=>{
                     />
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Costo Unitario ($)</label>
                     <input 
@@ -10744,7 +10744,7 @@ ${rows.map(r=>{
                     )}
                   />
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">COD Cliente</label>
                     <input 
@@ -11165,7 +11165,7 @@ ${rows.map(r=>{
                         )}
                       </div>
                       {printer && (
-                        <div className={cn("mt-3 pt-3 border-t grid grid-cols-3 gap-2", darkMode ? "border-white/6" : "border-gray-100")}>
+                        <div className={cn("mt-3 pt-3 border-t grid grid-cols-3 gap-1.5", darkMode ? "border-white/6" : "border-gray-100")}>
                           <div>
                             <p className={cn("text-[9px] font-bold uppercase tracking-wide", darkMode ? "text-gray-600" : "text-gray-400")}>Modelo</p>
                             <p className="text-xs font-semibold mt-0.5">{printer.type || '—'}</p>
@@ -11246,7 +11246,7 @@ ${rows.map(r=>{
                   ))}
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {/* Date */}
                 <div>
                   <label className={cn("text-[9px] font-bold uppercase tracking-wider block mb-1.5", darkMode ? "text-gray-500" : "text-gray-400")}>Fecha *</label>
@@ -11289,7 +11289,7 @@ ${rows.map(r=>{
                 </div>
               </div>
               {/* Orden + Factura */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className={cn("text-[9px] font-bold uppercase tracking-wider block mb-1.5", darkMode ? "text-gray-500" : "text-gray-400")}>
                     Orden de compra
@@ -11420,7 +11420,7 @@ ${rows.map(r=>{
 
               <div className="p-7 space-y-7">
                 {/* KPI Cards */}
-                <div className="grid grid-cols-4 gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   {[
                     { label: 'Total Cajas', value: totalCajas.toLocaleString(), sub: 'vendidas', color: darkMode ? 'text-white' : 'text-gray-800' },
                     { label: 'Total m²', value: totalM2sp.toLocaleString('es-EC', { maximumFractionDigits: 1 }), sub: 'metros cuadrados', color: darkMode ? 'text-cyan-400' : 'text-cyan-600' },
@@ -11474,7 +11474,7 @@ ${rows.map(r=>{
                 {/* Bottom: Top Clients + Size dist + Province */}
                 <div className="grid grid-cols-12 gap-4 md:gap-5">
                   {/* Top Clients */}
-                  <div className={cn("col-span-6 rounded-xl p-5 border", darkMode ? "bg-white/3 border-white/6" : "bg-gray-50 border-gray-100")}>
+                  <div className={cn("col-span-12 md:col-span-6 rounded-xl p-4 md:p-5 border", darkMode ? "bg-white/3 border-white/6" : "bg-gray-50 border-gray-100")}>
                     <p className={cn("text-[10px] font-bold uppercase tracking-wider mb-4", darkMode ? "text-gray-500" : "text-gray-400")}>Top clientes por m²</p>
                     <div className="space-y-2.5">
                       {topClients.map((c, i) => (
@@ -11496,7 +11496,7 @@ ${rows.map(r=>{
                   </div>
 
                   {/* Size + Province */}
-                  <div className="col-span-6 space-y-4">
+                  <div className="col-span-12 md:col-span-6 space-y-4">
                     {/* Size distribution */}
                     <div className={cn("rounded-xl p-5 border", darkMode ? "bg-white/3 border-white/6" : "bg-gray-50 border-gray-100")}>
                       <p className={cn("text-[10px] font-bold uppercase tracking-wider mb-3", darkMode ? "text-gray-500" : "text-gray-400")}>Distribución por medida</p>
@@ -11669,7 +11669,7 @@ ${rows.map(r=>{
                     </div>
                   )}
                   {/* Summary badges */}
-                  <div className="grid grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div className={cn(
                       "rounded-xl p-4 border text-center",
                       darkMode ? "bg-emerald-500/10 border-emerald-500/20" : "bg-emerald-50 border-emerald-200"
@@ -12472,7 +12472,7 @@ ${rows.map(r=>{
 
               <div className="p-5 space-y-4">
                 {/* Summary */}
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className={cn("rounded-xl p-3 border text-center", darkMode ? "bg-white/4 border-white/8" : "bg-gray-50 border-gray-100")}>
                     <p className={cn("text-2xl font-black", darkMode ? "text-emerald-400" : "text-emerald-600")}>{withDate.length}</p>
                     <p className={cn("text-[9px] font-bold uppercase tracking-wider mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>Con fecha instalación</p>
@@ -12618,7 +12618,7 @@ ${rows.map(r=>{
                   </button>
                 </div>
                 {/* KPIs rápidos */}
-                <div className="grid grid-cols-4 gap-3 mt-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
                   {[
                     { label: 'Clientes', val: provClients.length, color: darkMode ? 'text-white' : 'text-gray-900' },
                     { label: 'Total m²', val: `${totalProvM2.toLocaleString('es-EC',{minimumFractionDigits:1,maximumFractionDigits:1})}`, color: darkMode ? 'text-cyan-400' : 'text-cyan-600' },
@@ -13141,7 +13141,7 @@ ${sectionsHtml}
                     </div>
 
                     {/* Stats row */}
-                    <div className={cn("px-5 py-3 grid grid-cols-4 gap-3 border-b", darkMode ? "border-white/5 bg-white/1" : "border-gray-50")}>
+                    <div className={cn("px-5 py-3 grid grid-cols-2 md:grid-cols-4 gap-3 border-b", darkMode ? "border-white/5 bg-white/1" : "border-gray-50")}>
                       {[
                         { label: 'Total eventos', val: auditLogs.length, color: darkMode ? 'text-white' : 'text-gray-800' },
                         { label: 'Hoy', val: auditLogs.filter(l => new Date(l.timestamp).toDateString() === new Date().toDateString()).length, color: darkMode ? 'text-cyan-400' : 'text-cyan-600' },
