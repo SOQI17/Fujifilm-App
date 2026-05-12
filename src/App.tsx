@@ -4764,7 +4764,7 @@ ${rows.map(r=>{
         </div>
       </header>
 
-      <main className="flex-1 grid grid-cols-12 gap-3 md:gap-6 p-3 md:p-6 min-h-0">
+      <main className="flex-1 grid grid-cols-12 content-start gap-3 md:gap-6 p-3 md:p-6 min-h-0 overflow-y-auto md:overflow-hidden">
         {view === 'usuarios' && role === 'admin' && (
           <div className="col-span-12 h-full overflow-hidden">
             <UsersPanel darkMode={darkMode} />
@@ -4773,7 +4773,7 @@ ${rows.map(r=>{
         {view === 'clients' && (
           <>
             {/* Sidebar: Centros Médicos */}
-            <div className="col-span-12 md:col-span-4 flex flex-col min-h-0">
+            <div className={cn("col-span-12 md:col-span-4 flex flex-col min-h-0", selectedClient ? "hidden md:flex" : "flex")}>
               <div className={cn(
                 "flex items-center justify-between px-1 mb-3 shrink-0"
               )}>
@@ -4855,12 +4855,22 @@ ${rows.map(r=>{
             </div>
 
             {/* Dashboard de Análisis */}
-            <div className="col-span-12 md:col-span-8 flex flex-col min-h-0 overflow-y-auto pr-2 pb-8 custom-scrollbar">
+            <div className={cn("col-span-12 md:col-span-8 flex flex-col min-h-0 overflow-y-auto pr-0 md:pr-2 pb-8 custom-scrollbar", !selectedClient && "hidden md:flex")}>
               {selectedClient ? (
                 <div className="flex flex-col gap-5">
+                  {/* Back button — mobile only */}
+                  <button
+                    onClick={() => setSelectedClient(null)}
+                    className={cn(
+                      "md:hidden flex items-center gap-2 text-xs font-bold px-3 py-2 rounded-xl w-fit transition-all",
+                      darkMode ? "bg-white/8 text-gray-300 hover:bg-white/12" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                    )}
+                  >
+                    <ChevronRight className="w-4 h-4 rotate-180" /> Volver a clientes
+                  </button>
                   {/* Client Card */}
                   <div className={cn(
-                    "rounded-2xl p-7 border relative overflow-hidden transition-colors duration-300",
+                    "rounded-2xl p-5 md:p-7 border relative overflow-hidden transition-colors duration-300",
                     darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
                   )}>
                     <div className={cn(
