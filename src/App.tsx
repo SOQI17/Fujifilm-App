@@ -5717,7 +5717,7 @@ ${rows.map(r=>{
         )}
 
         {view === 'dashboard' && (
-          <div className="col-span-12 flex flex-col gap-6 pb-8">
+          <div className="col-span-12 w-full flex flex-col gap-6 pb-8">
 
 
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -6497,7 +6497,7 @@ ${rows.map(r=>{
         )}
 
         {view === 'inventory' && (
-          <div className="col-span-12 flex flex-col gap-6 pb-8">
+          <div className="col-span-12 w-full flex flex-col gap-6 pb-8">
 
             {/* Header */}
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -7702,7 +7702,7 @@ ${rows.map(r=>{
 
         {/* ══════════════ VIEW: IMAGER ══════════════ */}
         {view === 'imager' && (
-          <div className="col-span-12 flex flex-col gap-6 pb-8">
+          <div className="col-span-12 w-full flex flex-col gap-6 pb-8">
 
             {/* Header */}
             <div className="flex items-center justify-between flex-wrap gap-3">
@@ -8158,7 +8158,7 @@ ${rows.map(r=>{
         )}
 
         {view === 'intelligence' && (
-          <div className="col-span-12 flex flex-col gap-6 pb-8">
+          <div className="col-span-12 w-full" style={{display:"flex", flexDirection:"column", gap:"1.5rem", paddingBottom:"2rem"}}>
 
             {/* Header */}
             <div className="flex items-center justify-between flex-wrap gap-3">
@@ -9252,9 +9252,9 @@ ${rows.map(r=>{
                   };
 
                   return (
-                    <div className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                    <div className={cn("rounded-xl border", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
                       {/* Header */}
-                      <div className={cn("px-6 py-4 border-b flex items-center gap-3 flex-wrap", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+                      <div className={cn("px-6 py-4 border-b flex items-center gap-3 flex-wrap rounded-t-xl", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
                         <Boxes className="w-4 h-4 text-[#ED1C24] shrink-0" />
                         <div>
                           <h3 className={cn("text-[10px] font-bold uppercase tracking-wider", darkMode ? "text-gray-300" : "text-gray-700")}>
