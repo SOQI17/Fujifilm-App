@@ -4764,7 +4764,7 @@ ${rows.map(r=>{
         </div>
       </header>
 
-      <main className="flex-1 grid grid-cols-12 gap-3 md:gap-6 p-3 md:p-6 min-h-0 overflow-hidden">
+      <main className="flex-1 grid grid-cols-12 gap-3 md:gap-6 p-3 md:p-6 overflow-y-auto custom-scrollbar" style={{alignContent: "start"}}>
         {view === 'usuarios' && role === 'admin' && (
           <div className="col-span-12 h-full overflow-hidden">
             <UsersPanel darkMode={darkMode} />
@@ -4880,7 +4880,7 @@ ${rows.map(r=>{
 
             {/* Dashboard de Análisis */}
             <div className={cn(
-              "md:col-span-8 md:flex flex-col md:min-h-0 md:overflow-y-auto md:pr-2 pb-8 custom-scrollbar",
+              "md:col-span-8 md:flex flex-col pb-8",
               selectedClient
                 ? "fixed md:relative inset-0 md:inset-auto z-50 md:z-auto col-span-12 flex overflow-y-auto p-3 md:p-0"
                 : "hidden md:flex col-span-12",
@@ -5717,7 +5717,7 @@ ${rows.map(r=>{
         )}
 
         {view === 'dashboard' && (
-          <div className="col-span-12 flex flex-col gap-6 overflow-y-auto pr-2 pb-8 custom-scrollbar">
+          <div className="col-span-12 flex flex-col gap-6 pb-8">
 
 
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -6497,7 +6497,7 @@ ${rows.map(r=>{
         )}
 
         {view === 'inventory' && (
-          <div className="col-span-12 flex flex-col gap-6 overflow-y-auto pr-2 pb-8 custom-scrollbar">
+          <div className="col-span-12 flex flex-col gap-6 pb-8">
 
             {/* Header */}
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -7702,7 +7702,7 @@ ${rows.map(r=>{
 
         {/* ══════════════ VIEW: IMAGER ══════════════ */}
         {view === 'imager' && (
-          <div className="col-span-12 flex flex-col gap-6 overflow-y-auto pr-2 pb-8 custom-scrollbar">
+          <div className="col-span-12 flex flex-col gap-6 pb-8">
 
             {/* Header */}
             <div className="flex items-center justify-between flex-wrap gap-3">
@@ -8158,7 +8158,7 @@ ${rows.map(r=>{
         )}
 
         {view === 'intelligence' && (
-          <div className="col-span-12 flex flex-col gap-6 overflow-y-auto pr-2 pb-8 custom-scrollbar">
+          <div className="col-span-12 flex flex-col gap-6 pb-8">
 
             {/* Header */}
             <div className="flex items-center justify-between flex-wrap gap-3">
