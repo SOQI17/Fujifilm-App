@@ -4789,6 +4789,32 @@ ${rows.map(r=>{
                   )}>{filteredClients.length}</span>
                 </h2>
               </div>
+              {/* Search bar — visible on mobile, hidden on desktop (uses global search there) */}
+              <div className={cn(
+                "lg:hidden relative mb-3 shrink-0"
+              )}>
+                <Search className={cn("absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5", darkMode ? "text-gray-600" : "text-gray-400")} />
+                <input
+                  type="text"
+                  placeholder="Buscar cliente..."
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                  className={cn(
+                    "w-full pl-9 pr-9 py-2.5 rounded-xl text-xs font-medium outline-none border transition-all",
+                    darkMode
+                      ? "bg-white/6 border-white/8 text-white placeholder:text-gray-600 focus:border-white/20 focus:bg-white/10"
+                      : "bg-white border-gray-200 text-gray-800 placeholder:text-gray-400 focus:border-gray-300 shadow-sm"
+                  )}
+                />
+                {searchTerm && (
+                  <button
+                    onClick={() => setSearchTerm('')}
+                    className={cn("absolute right-3 top-1/2 -translate-y-1/2", darkMode ? "text-gray-600 hover:text-gray-400" : "text-gray-400 hover:text-gray-600")}
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
               <div className="flex-1 overflow-y-auto space-y-2 pr-1 pb-8 custom-scrollbar">
               {loading ? (
                 // Skeleton mientras carga
