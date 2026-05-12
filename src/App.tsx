@@ -5717,7 +5717,7 @@ ${rows.map(r=>{
         )}
 
         {view === 'dashboard' && (
-          <div className="col-span-12 flex flex-col gap-6 min-h-0 overflow-y-auto pr-2 pb-8 custom-scrollbar">
+          <div className="col-span-12 flex flex-col gap-6 overflow-y-auto pr-2 pb-8 custom-scrollbar">
 
 
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -6497,7 +6497,7 @@ ${rows.map(r=>{
         )}
 
         {view === 'inventory' && (
-          <div className="col-span-12 flex flex-col gap-6 min-h-0 overflow-y-auto pr-2 pb-8 custom-scrollbar">
+          <div className="col-span-12 flex flex-col gap-6 overflow-y-auto pr-2 pb-8 custom-scrollbar">
 
             {/* Header */}
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -7702,7 +7702,7 @@ ${rows.map(r=>{
 
         {/* ══════════════ VIEW: IMAGER ══════════════ */}
         {view === 'imager' && (
-          <div className="col-span-12 flex flex-col gap-6 min-h-0 overflow-y-auto pr-2 pb-8 custom-scrollbar">
+          <div className="col-span-12 flex flex-col gap-6 overflow-y-auto pr-2 pb-8 custom-scrollbar">
 
             {/* Header */}
             <div className="flex items-center justify-between flex-wrap gap-3">
@@ -8158,7 +8158,7 @@ ${rows.map(r=>{
         )}
 
         {view === 'intelligence' && (
-          <div className="col-span-12 flex flex-col gap-6 min-h-0 overflow-y-auto pr-2 pb-8 custom-scrollbar">
+          <div className="col-span-12 flex flex-col gap-6 overflow-y-auto pr-2 pb-8 custom-scrollbar">
 
             {/* Header */}
             <div className="flex items-center justify-between flex-wrap gap-3">
@@ -8316,9 +8316,9 @@ ${rows.map(r=>{
               };
 
               return (
-                <div className="space-y-5">
+                <div className="space-y-5 overflow-y-auto pb-8 custom-scrollbar">
                   {/* Header KPIs — one card per year */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-start">
                     {YEARS.map(y => {
                       const gt = grandTotal(y);
                       const prev = y > 2024 ? grandTotal(y - 1) : null;
@@ -9110,7 +9110,7 @@ ${rows.map(r=>{
             )}
 
             {intelligenceTab === 'projection' && (
-              <div className="space-y-5">
+              <div className="space-y-5 pb-4">
                 {/* Header summary */}
                 <div className={cn("rounded-xl border p-5 flex items-center gap-6 flex-wrap", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
                   <div className="text-center px-5 border-r border-white/8">
