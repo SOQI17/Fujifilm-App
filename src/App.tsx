@@ -4568,13 +4568,13 @@ ${rows.map(r=>{
       )}
       {/* Header Corporativo Orimec */}
       <header className={cn(
-        "border-b px-3 md:px-6 py-3 flex items-center justify-between z-10 shrink-0 transition-colors duration-300",
+        "border-b px-3 md:px-6 py-2 md:py-3 flex items-center justify-between z-10 shrink-0 transition-colors duration-300 overflow-hidden",
         darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/80 shadow-sm"
       )}>
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 md:gap-4 min-w-0 flex-1">
+          <div className="flex items-center gap-2 shrink-0">
             {/* Icon badge */}
-            <OrimecLogo size={36} />
+            <OrimecLogo size={32} />
             {/* Wordmark — only show on wider screens */}
             <div className="hidden lg:block">
               <h1 className="text-base font-black tracking-tight leading-none">
@@ -4588,12 +4588,12 @@ ${rows.map(r=>{
           </div>
 
           <div className={cn(
-            "hidden lg:block h-6 w-px",
+            "hidden xl:block h-6 w-px",
             darkMode ? "bg-white/10" : "bg-gray-200"
           )} />
 
           <nav className={cn(
-            "flex items-center gap-1 p-1 rounded-xl transition-colors duration-300 overflow-x-auto scrollbar-hide max-w-[calc(100vw-160px)] lg:max-w-none",
+            "flex items-center gap-0.5 md:gap-1 p-1 rounded-xl transition-colors duration-300 overflow-x-auto scrollbar-hide flex-1 min-w-0",
             darkMode ? "bg-white/5" : "bg-gray-100/80"
           )}>
             {[
@@ -4619,16 +4619,16 @@ ${rows.map(r=>{
                 )}
               >
                 <Icon className="w-3.5 h-3.5" />
-                {label}
+                <span className="hidden sm:inline">{label}</span>
               </button>
             ))}
           </nav>
         </div>
 
-        <div className="flex items-center gap-1.5 md:gap-2.5 overflow-hidden">
+        <div className="flex items-center gap-1.5 md:gap-2 shrink-0">
           {/* User chip */}
           <div className={cn(
-            "flex items-center gap-2 px-2 md:px-3 py-1.5 rounded-xl border text-xs font-semibold",
+            "hidden sm:flex items-center gap-2 px-2 md:px-3 py-1.5 rounded-xl border text-xs font-semibold",
             darkMode ? "bg-white/5 border-white/8 text-gray-400" : "bg-gray-100 border-gray-200 text-gray-500"
           )}>
             <span className="hidden lg:inline max-w-[80px] truncate">{appUser?.nombre}</span>
@@ -4677,7 +4677,7 @@ ${rows.map(r=>{
             <button
               onClick={() => setShowAuditLog(true)}
               className={cn(
-                "relative p-2 rounded-xl transition-all duration-300",
+                "hidden md:flex relative p-2 rounded-xl transition-all duration-300",
                 darkMode ? "bg-white/5 text-gray-500 hover:bg-white/8 hover:text-gray-300 border border-white/6" : "bg-gray-100 text-gray-500 hover:bg-gray-200 border border-transparent"
               )}
               title="Historial de auditoría"
@@ -4725,7 +4725,7 @@ ${rows.map(r=>{
             <button
               onClick={handleExportExcel}
               className={cn(
-                "px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all",
+                "hidden md:flex px-2 py-2 rounded-xl text-xs font-semibold items-center gap-1.5 transition-all",
                 darkMode
                   ? "bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/10"
                   : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200/60"
@@ -4741,7 +4741,7 @@ ${rows.map(r=>{
             <button
               onClick={handleOpenCsvImport}
               className={cn(
-                "px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all",
+                "hidden md:flex px-2 py-2 rounded-xl text-xs font-semibold items-center gap-1.5 transition-all",
                 darkMode
                   ? "bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 border border-blue-500/10"
                   : "bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200/60"
@@ -4756,7 +4756,7 @@ ${rows.map(r=>{
           {(role === 'admin' || role === 'financiero') && (
             <button
               onClick={handleOpenNewClient}
-              className="bg-[#ED1C24] text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 hover:bg-[#D11920] shadow-md shadow-red-500/20 transition-all"
+              className="hidden md:flex bg-[#ED1C24] text-white px-3 py-2 rounded-xl text-xs font-bold items-center gap-1.5 hover:bg-[#D11920] shadow-md shadow-red-500/20 transition-all"
             >
               <Plus className="w-3.5 h-3.5" /><span className="hidden lg:inline"> Nuevo Cliente</span>
             </button>
@@ -6570,7 +6570,7 @@ ${rows.map(r=>{
                         )}
                       </div>
 
-                      <p className="text-4xl font-black leading-none">{item.current}</p>
+                      <p className="text-3xl sm:text-4xl font-black leading-none">{item.current}</p>
                       <p className={cn("text-[10px] mt-1 font-medium", darkMode ? "text-gray-500" : "text-gray-400")}>cajas disponibles</p>
                       {(() => {
                         // Show m² for both DIHT and DIHL if filter is 'all', or just for the active filter
@@ -8286,20 +8286,20 @@ ${rows.map(r=>{
                       const isCurrentYearCard = y === 2026 && isCurrentYear2026;
                       return (
                         <div key={y} className={cn("rounded-xl border p-5", YEAR_BG[y])}>
-                          <div className="flex items-center justify-between mb-3">
+                          <div className="flex flex-wrap items-center justify-between gap-1 mb-3">
                             <span className={cn("text-xs font-black", YEAR_COLORS[y])}>{y}</span>
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1.5 flex-wrap">
                               {isCurrentYearCard && (
                                 <div className={cn("flex rounded-xl overflow-hidden border", darkMode ? "border-white/15" : "border-gray-200")}>
                                   <button onClick={() => setComparativo2026Mode('real')}
-                                    className={cn("px-3.5 py-1.5 text-[11px] font-black transition-colors",
+                                    className={cn("px-2.5 py-1 text-[10px] font-black transition-colors",
                                       comparativo2026Mode === 'real'
                                         ? (darkMode ? "bg-emerald-500/30 text-emerald-300" : "bg-emerald-500 text-white")
                                         : (darkMode ? "bg-white/5 text-gray-500 hover:text-gray-300" : "bg-white text-gray-400 hover:text-gray-600"))}>
                                     Real
                                   </button>
                                   <button onClick={() => setComparativo2026Mode('proyectado')}
-                                    className={cn("px-3.5 py-1.5 text-[11px] font-black transition-colors border-l",
+                                    className={cn("px-2.5 py-1 text-[10px] font-black transition-colors border-l",
                                       darkMode ? "border-white/15" : "border-gray-200",
                                       comparativo2026Mode === 'proyectado'
                                         ? (darkMode ? "bg-emerald-500/30 text-emerald-300" : "bg-emerald-500 text-white")
@@ -8339,10 +8339,10 @@ ${rows.map(r=>{
                   {/* Per film type breakdown */}
                   {FT_ALL.map(ft => (
                     <div key={ft} className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
-                      <div className={cn("px-6 py-3 border-b flex items-center gap-3", ft === 'DIHL' ? (darkMode ? "bg-blue-500/5 border-blue-500/15" : "bg-blue-50 border-blue-100") : (darkMode ? "bg-[#ED1C24]/5 border-[#ED1C24]/15" : "bg-red-50 border-red-100"))}>
+                      <div className={cn("px-4 py-3 border-b flex items-center gap-2 flex-wrap", ft === 'DIHL' ? (darkMode ? "bg-blue-500/5 border-blue-500/15" : "bg-blue-50 border-blue-100") : (darkMode ? "bg-[#ED1C24]/5 border-[#ED1C24]/15" : "bg-red-50 border-red-100"))}>
                         <span className={cn("text-[9px] font-black px-2.5 py-1 rounded-lg", ft === 'DIHL' ? "bg-blue-500/20 text-blue-400" : "bg-[#ED1C24]/15 text-[#ED1C24]")}>{ft === 'DIHT' ? 'DI-HT' : 'DI-HL'}</span>
                         <span className={cn("text-[10px] font-bold", darkMode ? "text-gray-400" : "text-gray-600")}>Comparativo anual por medida</span>
-                        <div className="ml-auto flex items-center gap-6">
+                        <div className="ml-auto flex items-center gap-3 flex-wrap justify-end">
                           {YEARS.map(y => {
                             const total = SIZES_FJ.reduce((s, sz) => {
                               const src = y === 2026 ? get2026(ft, sz) : fujiByYearSizeType[y][ft][sz];
@@ -8358,19 +8358,19 @@ ${rows.map(r=>{
                         </div>
                       </div>
                       <div className="overflow-x-auto">
-                        <table className="w-full text-xs min-w-[700px]">
+                        <table className="w-full text-xs min-w-[500px]">
                           <thead className={cn("text-[9px] font-bold uppercase tracking-wider", darkMode ? "text-gray-600 bg-white/2" : "text-gray-400 bg-gray-50/60")}>
                             <tr>
-                              <th className={cn("px-5 py-2.5 text-left sticky left-0", darkMode ? "bg-[#16161A]" : "bg-white")}>Medida</th>
+                              <th className={cn("px-3 py-2.5 text-left sticky left-0", darkMode ? "bg-[#16161A]" : "bg-white")}>Medida</th>
                               {YEARS.map(y => (
-                                <th key={y} colSpan={2} className={cn("px-4 py-2.5 text-center border-l", darkMode ? "border-white/6" : "border-gray-100", YEAR_COLORS[y])}>
+                                <th key={y} colSpan={2} className={cn("px-2 py-2.5 text-center border-l", darkMode ? "border-white/6" : "border-gray-100", YEAR_COLORS[y])}>
                                   {y}{y === 2026 && isCurrentYear2026 ? (comparativo2026Mode === 'real' ? ' (real)' : ' (proy.)') : ''}
                                 </th>
                               ))}
                               <th className={cn("px-4 py-2.5 text-center border-l", darkMode ? "border-white/6 text-gray-600" : "border-gray-100 text-gray-400")}>Crecimiento</th>
                             </tr>
                             <tr className={cn("text-[8px]", darkMode ? "text-gray-700 bg-white/1" : "text-gray-300 bg-gray-50/30")}>
-                              <th className={cn("px-5 pb-1.5 sticky left-0", darkMode ? "bg-[#16161A]" : "bg-white")} />
+                              <th className={cn("px-3 pb-1.5 sticky left-0", darkMode ? "bg-[#16161A]" : "bg-white")} />
                               {YEARS.map(y => (
                                 <>
                                   <th key={`${y}-cj`} className={cn("px-3 pb-1.5 text-center border-l", darkMode ? "border-white/6" : "border-gray-100")}>Cajas</th>
