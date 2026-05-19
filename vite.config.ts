@@ -1,10 +1,10 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import {defineConfig, loadEnv} from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
-export default defineConfig(({command, mode}) => {
+export default defineConfig(({ command, mode }) => {
   const env = loadEnv(mode, '.', '');
   return {
     base: command === 'build' ? './' : '/',
@@ -34,6 +34,10 @@ export default defineConfig(({command, mode}) => {
               type: 'image/svg+xml'
             }
           ]
+        },
+        // 👇 AGREGA ESTA SECCIÓN AQUÍ 👇
+        workbox: {
+          maximumFileSizeToCacheInBytes: 5242880 // Sube el límite a 5 MB
         }
       })
     ],
@@ -46,8 +50,6 @@ export default defineConfig(({command, mode}) => {
       },
     },
     server: {
-      // HMR is disabled in AI Studio via DISABLE_HMR env var.
-      // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
     },
   };
