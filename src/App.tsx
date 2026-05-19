@@ -941,9 +941,263 @@ interface ConsumptionRecord {
   unit_cost?: number;
   film_type?: 'DIHT' | 'DIHL' | string;
   is_return?: boolean;
-  adapted_to?: string;   // talla física entregada (ej: '8x10')
-  adapted_ratio?: number; // cajas físicas por caja facturada (ej: 2)
+  adapted_to?: string;
+  adapted_ratio?: number;
+  // Nota de Crédito
+  nc_type?: 'devolucion' | 'anulacion'; // tipo de NC
+  nc_number?: string;                    // número de la NC
+  nc_invoice_ref?: string;               // factura original que anula
+  nc_new_invoice?: string;               // nueva factura (para anulación+refacturación)
+  nc_reason?: string;                    // motivo
 }
+
+// ── PURCHASES DASHBOARD COMPONENT ──────────────────────────────────────────
+
+
+
+const PURCHASE_ORDERS_2025 = [
+  {orden:"FJ-2002",fecha:"2025-03-31",fob:329981.2,cif:339651.01,gastos_locales:20472.58,total_inversion:361821.83,total_venta_est:690118.04,items:[
+    {desc:"MAIN UNIT DRYPIX LITE E",cat:"impresora",size:null,qty:180,fob_uni:1581.84,costo_uni:1734.4754,venta_uni:3467.4643,costo_total:312205.56,margen:50.0},
+    {desc:"OPTION FOR DPXLITE DPX LITE FEEDER",cat:"feeder",size:null,qty:100,fob_uni:250.0,costo_uni:274.123,venta_uni:304.4506,costo_total:27412.3,margen:10.0},
+    {desc:"OPTION FOR DPXLITE DPX LITE MAGAZINE S",cat:"magazine",size:null,qty:170,fob_uni:75.0,costo_uni:82.2369,venta_uni:155.2699,costo_total:13980.28,margen:47.0},
+    {desc:"OPTION FOR DPXLITE DPX LITE MAGAZINE L",cat:"magazine",size:null,qty:100,fob_uni:75.0,costo_uni:82.2369,venta_uni:91.3352,costo_total:8223.69,margen:10.0},
+  ]},
+  {orden:"FJ-2001",fecha:"2025-04-24",fob:68234.8,cif:71323.56,gastos_locales:6875.46,total_inversion:78555.65,total_venta_est:157111.26,items:[
+    {desc:"MEDICAL DRY IMAGING DI-HT 20X25",cat:"film_diht",size:"20x25",qty:550,fob_uni:22.52,costo_uni:25.9263,venta_uni:51.8526,costo_total:14259.48,margen:50.0},
+    {desc:"MEDICAL DRY IMAGING DI-HT 25X30",cat:"film_diht",size:"25x30",qty:460,fob_uni:33.78,costo_uni:38.8893,venta_uni:77.7786,costo_total:17889.08,margen:50.0},
+    {desc:"MEDICAL DRY IMAGING DI-HT 26X36",cat:"film_diht",size:"26x36",qty:120,fob_uni:42.16,costo_uni:48.5368,venta_uni:97.0736,costo_total:5824.42,margen:50.0},
+    {desc:"MEDICAL DRY IMAGING DI-HT 35X43",cat:"film_diht",size:"35x43",qty:520,fob_uni:67.79,costo_uni:78.0436,venta_uni:156.0872,costo_total:40582.67,margen:50.0},
+  ]},
+  {orden:"FJ-2002 (2)",fecha:"2025-05-23",fob:750.0,cif:770.5,gastos_locales:1001.06,total_inversion:1775.41,total_venta_est:0,items:[
+    {desc:"OPTION FOR DPXLITE DPX LITE MAGAZINE S",cat:"magazine",size:null,qty:10,fob_uni:75.0,costo_uni:177.541,venta_uni:0,costo_total:1775.41,margen:0},
+  ]},
+  {orden:"AJ-156",fecha:"2025-07-30",fob:54640.17,cif:55157.46,gastos_locales:3767.02,total_inversion:59200.25,total_venta_est:118400.51,items:[
+    {desc:"MEDICAL DRY IMAGING DI-HL 20X25",cat:"film_dihl",size:"20x25",qty:100,fob_uni:53.0,costo_uni:60.7634,venta_uni:121.5268,costo_total:6076.34,margen:50.0},
+    {desc:"MEDICAL DRY IMAGING DI-HL 26X36",cat:"film_dihl",size:"26x36",qty:10,fob_uni:99.21,costo_uni:113.7423,venta_uni:227.4846,costo_total:1137.42,margen:50.0},
+    {desc:"MEDICAL DRY IMAGING DI-HL 35X43",cat:"film_dihl",size:"35x43",qty:70,fob_uni:106.35,costo_uni:121.928,venta_uni:243.856,costo_total:8534.96,margen:50.0},
+    {desc:"MAIN UNIT DRYPIX PLUS 2T",cat:"impresora",size:null,qty:2,fob_uni:3500.0,costo_uni:4012.6725,venta_uni:8025.3449,costo_total:8025.34,margen:50.0},
+    {desc:"DRYPIX EDGE 3T",cat:"impresora",size:null,qty:3,fob_uni:7300.0,costo_uni:8369.2963,venta_uni:16738.5926,costo_total:25107.89,margen:50.0},
+    {desc:"DRYPIX SMART 2T",cat:"impresora",size:null,qty:6,fob_uni:1500.0,costo_uni:1719.7168,venta_uni:3439.4335,costo_total:10318.3,margen:50.0},
+  ]},
+  {orden:"AJ-157",fecha:"2025-08-18",fob:7656.49,cif:7725.34,gastos_locales:1866.03,total_inversion:9630.0,total_venta_est:19260.0,items:[
+    {desc:"MEDICAL DRY IMAGING DI-HT 20X25",cat:"film_diht",size:"20x25",qty:250,fob_uni:26.51,costo_uni:38.52,venta_uni:77.04,costo_total:9630.0,margen:50.0},
+  ]},
+  {orden:"FJ-2012",fecha:"2025-09-12",fob:16533.52,cif:20731.5,gastos_locales:0,total_inversion:18657.92,total_venta_est:37315.85,items:[
+    {desc:"MEDICAL DRY IMAGING DI-HT 20X25",cat:"film_diht",size:"20x25",qty:500,fob_uni:23.2,costo_uni:37.3158,venta_uni:74.6317,costo_total:18657.92,margen:50.0},
+  ]},
+  {orden:"FJ-2007",fecha:"2025-10-28",fob:65284.6,cif:69115.66,gastos_locales:6573.73,total_inversion:76034.96,total_venta_est:0,items:[
+    {desc:"MEDICAL DRY IMAGING DI-HT 20X25",cat:"film_diht",size:"20x25",qty:370,fob_uni:22.52,costo_uni:26.2292,venta_uni:0,costo_total:9704.8,margen:0},
+    {desc:"MEDICAL DRY IMAGING DI-HT 25X30",cat:"film_diht",size:"25x30",qty:300,fob_uni:33.78,costo_uni:39.3435,venta_uni:0,costo_total:11803.05,margen:0},
+    {desc:"MEDICAL DRY IMAGING DI-HT 26X36",cat:"film_diht",size:"26x36",qty:80,fob_uni:42.16,costo_uni:49.1037,venta_uni:0,costo_total:3928.29,margen:0},
+    {desc:"MEDICAL DRY IMAGING DI-HT 35X43",cat:"film_diht",size:"35x43",qty:350,fob_uni:67.79,costo_uni:78.9552,venta_uni:0,costo_total:27634.31,margen:0},
+    {desc:"MEDICAL DRY IMAGING DI-HL 20X25",cat:"film_dihl",size:"20x25",qty:75,fob_uni:53.0,costo_uni:61.7239,venta_uni:0,costo_total:4629.29,margen:0},
+    {desc:"MEDICAL DRY IMAGING DI-HL 26X36",cat:"film_dihl",size:"26x36",qty:60,fob_uni:99.21,costo_uni:115.5393,venta_uni:0,costo_total:6932.36,margen:0},
+    {desc:"MEDICAL DRY IMAGING DI-HL 35X43",cat:"film_dihl",size:"35x43",qty:70,fob_uni:106.35,costo_uni:123.8549,venta_uni:0,costo_total:8669.84,margen:0},
+    {desc:"MEDICAL DRY IMAGING DI-ML 20X25",cat:"film_diml",size:"20x25",qty:40,fob_uni:58.67,costo_uni:68.3256,venta_uni:0,costo_total:2733.02,margen:0},
+  ]},
+] as const;
+
+function PurchasesDashboardView({ darkMode, globalMetrics }: {
+  darkMode: boolean;
+  globalMetrics: any;
+}) {
+  const orders = PURCHASE_ORDERS_2025 as any[];
+
+  // Film items only
+  const filmItems: any[] = orders.flatMap((o: any) =>
+    o.items
+      .filter((i: any) => i.cat.startsWith('film'))
+      .map((i: any) => ({ ...i, orden: o.orden, fecha: o.fecha }))
+  );
+
+  // Film-only orders (orders that contain at least one film item)
+  const filmOrders = orders.filter((o: any) => o.items.some((i: any) => i.cat.startsWith('film')));
+
+  const totalFilmInversion = filmItems.reduce((s: number, i: any) => s + i.costo_total, 0);
+  const totalFilmUnits = filmItems.reduce((s: number, i: any) => s + i.qty, 0);
+  const totalVentas = globalMetrics.totalRevenue || 0;
+  const margenGlobal = totalVentas > 0 ? ((totalVentas - totalFilmInversion) / totalVentas * 100) : 0;
+
+  // By size
+  const bySize: Record<string, { qty: number; costo: number; venta_est: number; items: any[] }> = {};
+  filmItems.forEach((i: any) => {
+    const k = i.size || 'otros';
+    if (!bySize[k]) bySize[k] = { qty: 0, costo: 0, venta_est: 0, items: [] };
+    bySize[k].qty += i.qty;
+    bySize[k].costo += i.costo_total;
+    bySize[k].venta_est += (i.venta_uni || 0) * i.qty;
+    bySize[k].items.push(i);
+  });
+
+  // By type
+  const byType: Record<string, { qty: number; costo: number }> = {};
+  filmItems.forEach((i: any) => {
+    const t = i.cat.replace('film_', '').toUpperCase();
+    if (!byType[t]) byType[t] = { qty: 0, costo: 0 };
+    byType[t].qty += i.qty;
+    byType[t].costo += i.costo_total;
+  });
+
+  const sizeMapPurchase: Record<string, string> = { '20x25': '8x10', '25x30': '10x12', '35x43': '14x17', '26x36': '11x14' };
+  const sizeRows = Object.entries(bySize).sort((a, b) => b[1].costo - a[1].costo).map(([size, data]) => {
+    const salesSize = sizeMapPurchase[size] || size;
+    const vendido = (globalMetrics.sizeData || []).find((s: any) => s.name === salesSize)?.value || 0;
+    const rotacion = data.qty > 0 ? Math.round((vendido / data.qty) * 100) : 0;
+    const balance = vendido - data.qty;
+    const costoUni = data.qty > 0 ? data.costo / data.qty : 0;
+    const ventaUni = data.venta_est > 0 ? data.venta_est / data.qty : 0;
+    const margen = ventaUni > 0 ? ((ventaUni - costoUni) / ventaUni * 100) : 0;
+    return { size, salesSize, comprado: data.qty, vendido, costo: data.costo, costoUni, ventaUni, rotacion, margen, balance };
+  });
+
+  const typeColors: Record<string, string> = { DIHT: '#ED1C24', DIHL: '#3B82F6', DIML: '#8B5CF6' };
+  const maxTypeCosto = Math.max(...Object.values(byType).map((d: any) => d.costo));
+
+  return (
+    <div className="flex flex-col gap-5">
+
+      {/* ── KPIs ── */}
+      <div className="grid grid-cols-4 gap-4">
+        {[
+          { label: 'Inversión en película', val: `$${(totalFilmInversion/1000).toFixed(1)}k`, sub: `${filmOrders.length} órdenes de compra`, color: darkMode ? 'text-blue-400' : 'text-blue-700', bg: darkMode ? 'bg-blue-500/10 border-blue-500/20' : 'bg-blue-50 border-blue-200' },
+          { label: 'Cajas importadas', val: totalFilmUnits.toLocaleString(), sub: `${sizeRows.length} medidas distintas`, color: darkMode ? 'text-cyan-400' : 'text-cyan-700', bg: darkMode ? 'bg-cyan-500/10 border-cyan-500/20' : 'bg-cyan-50 border-cyan-200' },
+          { label: 'Revenue ventas', val: `$${(totalVentas/1000).toFixed(1)}k`, sub: 'acumulado del período', color: darkMode ? 'text-emerald-400' : 'text-emerald-700', bg: darkMode ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-emerald-50 border-emerald-200' },
+          { label: 'Margen bruto est.', val: `${margenGlobal.toFixed(1)}%`, sub: `$${((totalVentas - totalFilmInversion)/1000).toFixed(1)}k utilidad bruta`, color: margenGlobal > 30 ? (darkMode ? 'text-emerald-400' : 'text-emerald-700') : 'text-amber-400', bg: margenGlobal > 30 ? (darkMode ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-emerald-50 border-emerald-200') : (darkMode ? 'bg-amber-500/10 border-amber-500/20' : 'bg-amber-50 border-amber-200') },
+        ].map((k, i) => (
+          <div key={i} className={cn('p-5 rounded-xl border', k.bg)}>
+            <p className={cn('text-[9px] font-bold uppercase tracking-wider mb-2', darkMode ? 'text-gray-500' : 'text-gray-500')}>{k.label}</p>
+            <p className={cn('text-3xl font-black leading-none', k.color)}>{k.val}</p>
+            <p className={cn('text-[9px] mt-1', darkMode ? 'text-gray-600' : 'text-gray-400')}>{k.sub}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-12 gap-5">
+
+        {/* ── Match por medida ── */}
+        <div className={cn('col-span-8 rounded-xl border overflow-hidden', darkMode ? 'bg-[#16161A] border-white/8' : 'bg-white border-gray-200 shadow-sm')}>
+          <div className={cn('px-5 py-4 border-b', darkMode ? 'border-white/8 bg-white/3' : 'border-gray-100 bg-gray-50')}>
+            <p className={cn('text-xs font-black', darkMode ? 'text-white' : 'text-gray-900')}>Compras vs Ventas por medida</p>
+            <p className={cn('text-[9px] mt-0.5', darkMode ? 'text-gray-500' : 'text-gray-400')}>Rotación = cajas vendidas / cajas compradas · Balance = sobrante o faltante</p>
+          </div>
+          <table className="w-full text-xs">
+            <thead className={cn('text-[8px] font-bold uppercase tracking-wider', darkMode ? 'text-gray-600 bg-white/2' : 'text-gray-400 bg-gray-50')}>
+              <tr className={cn('border-b', darkMode ? 'border-white/6' : 'border-gray-100')}>
+                <th className="px-5 py-2.5 text-left">Medida</th>
+                <th className="px-4 py-2.5 text-right">Comprado</th>
+                <th className="px-4 py-2.5 text-right">Vendido</th>
+                <th className="px-4 py-2.5 text-center">Rotación</th>
+                <th className="px-4 py-2.5 text-right">Costo/cj</th>
+                <th className="px-4 py-2.5 text-right">Inversión</th>
+                <th className="px-4 py-2.5 text-center">Balance</th>
+              </tr>
+            </thead>
+            <tbody className={cn('divide-y', darkMode ? 'divide-white/4' : 'divide-gray-50')}>
+              {sizeRows.map((row, i) => (
+                <tr key={i} className={cn('transition-colors', darkMode ? 'hover:bg-white/3' : 'hover:bg-gray-50/60')}>
+                  <td className="px-5 py-3.5">
+                    <div className="flex items-center gap-2">
+                      <span className={cn('font-black text-xs px-2 py-0.5 rounded', darkMode ? 'bg-white/8 text-gray-200' : 'bg-gray-100 text-gray-700')}>{row.size}</span>
+                      <span className={cn('text-[8px]', darkMode ? 'text-gray-600' : 'text-gray-400')}>→ {row.salesSize}</span>
+                    </div>
+                  </td>
+                  <td className={cn('px-4 py-3.5 text-right font-black', darkMode ? 'text-blue-400' : 'text-blue-600')}>{row.comprado.toLocaleString()}</td>
+                  <td className={cn('px-4 py-3.5 text-right font-black', darkMode ? 'text-red-400' : 'text-red-600')}>{row.vendido.toLocaleString()}</td>
+                  <td className="px-4 py-3.5">
+                    <div className="flex items-center gap-2 justify-center">
+                      <div className={cn('h-1.5 w-20 rounded-full overflow-hidden', darkMode ? 'bg-white/8' : 'bg-gray-200')}>
+                        <div className={cn('h-full rounded-full', row.rotacion >= 80 ? 'bg-emerald-500' : row.rotacion >= 50 ? 'bg-amber-500' : 'bg-red-400')} style={{ width: `${Math.min(100, row.rotacion)}%` }} />
+                      </div>
+                      <span className={cn('text-[9px] font-black w-8 text-right', row.rotacion >= 80 ? 'text-emerald-400' : row.rotacion >= 50 ? 'text-amber-400' : 'text-red-400')}>{row.rotacion}%</span>
+                    </div>
+                  </td>
+                  <td className={cn('px-4 py-3.5 text-right text-[10px] font-mono', darkMode ? 'text-gray-500' : 'text-gray-500')}>${row.costoUni.toFixed(2)}</td>
+                  <td className={cn('px-4 py-3.5 text-right font-bold text-[10px]', darkMode ? 'text-gray-400' : 'text-gray-600')}>${(row.costo/1000).toFixed(1)}k</td>
+                  <td className="px-4 py-3.5 text-center">
+                    <span className={cn('text-[9px] font-black px-2 py-0.5 rounded-full',
+                      row.balance < -100 ? (darkMode ? 'bg-red-500/15 text-red-400' : 'bg-red-50 text-red-600') :
+                      row.balance < 0 ? (darkMode ? 'bg-amber-500/15 text-amber-400' : 'bg-amber-50 text-amber-600') :
+                      (darkMode ? 'bg-emerald-500/15 text-emerald-400' : 'bg-emerald-50 text-emerald-600')
+                    )}>{row.balance >= 0 ? `+${row.balance}` : row.balance} cj</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {/* ── Columna derecha ── */}
+        <div className="col-span-4 flex flex-col gap-4">
+
+          {/* Por tipo */}
+          <div className={cn('rounded-xl border p-5', darkMode ? 'bg-[#16161A] border-white/8' : 'bg-white border-gray-200 shadow-sm')}>
+            <p className={cn('text-[10px] font-bold uppercase tracking-wider mb-4', darkMode ? 'text-gray-500' : 'text-gray-400')}>Inversión por tipo de película</p>
+            <div className="flex flex-col gap-4">
+              {Object.entries(byType).sort((a,b) => b[1].costo - a[1].costo).map(([type, data]: any) => {
+                const pct = totalFilmInversion > 0 ? (data.costo / totalFilmInversion * 100) : 0;
+                const color = typeColors[type] || '#64748b';
+                return (
+                  <div key={type}>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-[11px] font-black" style={{ color }}>{type}</span>
+                      <div className="text-right">
+                        <span className={cn('text-xs font-black', darkMode ? 'text-gray-200' : 'text-gray-800')}>{data.qty.toLocaleString()} cj</span>
+                        <span className={cn('text-[9px] ml-2 font-bold', darkMode ? 'text-gray-500' : 'text-gray-500')}>${(data.costo/1000).toFixed(1)}k</span>
+                      </div>
+                    </div>
+                    <div className={cn('h-2.5 rounded-full overflow-hidden', darkMode ? 'bg-white/8' : 'bg-gray-100')}>
+                      <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: color }} />
+                    </div>
+                    <p className={cn('text-[8px] mt-0.5 text-right', darkMode ? 'text-gray-700' : 'text-gray-400')}>{pct.toFixed(1)}% de la inversión en película</p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Órdenes — film only */}
+          <div className={cn('rounded-xl border overflow-hidden', darkMode ? 'bg-[#16161A] border-white/8' : 'bg-white border-gray-200 shadow-sm')}>
+            <div className={cn('px-4 py-2.5 border-b', darkMode ? 'border-white/8 bg-white/3' : 'border-gray-100 bg-gray-50')}>
+              <p className={cn('text-[10px] font-bold uppercase tracking-wider', darkMode ? 'text-gray-500' : 'text-gray-400')}>
+                Órdenes de película ({filmOrders.length})
+              </p>
+            </div>
+            {filmOrders.map((o: any, i: number) => {
+              const filmOnly = o.items.filter((it: any) => it.cat.startsWith('film'));
+              const filmCosto = filmOnly.reduce((s: number, it: any) => s + it.costo_total, 0);
+              const filmQty = filmOnly.reduce((s: number, it: any) => s + it.qty, 0);
+              return (
+                <div key={i} className={cn('px-4 py-3 border-b last:border-0 transition-colors', darkMode ? 'border-white/5 hover:bg-white/3' : 'border-gray-50 hover:bg-gray-50/60')}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <p className={cn('text-[10px] font-black', darkMode ? 'text-gray-200' : 'text-gray-800')}>{o.orden}</p>
+                      <p className={cn('text-[8px] mt-0.5', darkMode ? 'text-gray-600' : 'text-gray-400')}>{o.fecha} · {filmQty} cj película</p>
+                      <div className="flex gap-1 mt-1.5 flex-wrap">
+                        {filmOnly.map((it: any, j: number) => (
+                          <span key={j} className={cn('text-[7px] font-bold px-1 py-0.5 rounded',
+                            it.cat === 'film_diht' ? (darkMode ? 'bg-red-500/15 text-red-400' : 'bg-red-50 text-red-600') :
+                            it.cat === 'film_dihl' ? (darkMode ? 'bg-blue-500/15 text-blue-400' : 'bg-blue-50 text-blue-600') :
+                            (darkMode ? 'bg-purple-500/15 text-purple-400' : 'bg-purple-50 text-purple-600')
+                          )}>{it.size || it.cat.replace('film_','').toUpperCase()} {it.qty}cj</span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className={cn('text-[10px] font-black', darkMode ? 'text-blue-400' : 'text-blue-600')}>${(filmCosto/1000).toFixed(1)}k</p>
+                      <p className={cn('text-[8px]', darkMode ? 'text-gray-600' : 'text-gray-400')}>FOB: ${(o.fob/1000).toFixed(1)}k</p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 
 function App() {
   const { appUser, role, logout } = useAuth();
@@ -961,10 +1215,8 @@ function App() {
     return saved === 'dark';
   });
   // Zoom automático: la app está diseñada para 1440px de ancho
-  // En móvil (< 768px) se desactiva el zoom para que fluya con scroll nativo
-  const isMobile = () => window.innerWidth < 768;
+  // En pantallas más pequeñas se escala proporcionalmente
   const calcZoom = () => {
-    if (isMobile()) return 1;
     const designWidth = 1440;
     const minZoom = 0.55;
     const maxZoom = 1.5;
@@ -1564,6 +1816,22 @@ function App() {
     return (y >= 2026 ? 2026 : y >= 2025 ? 2025 : 2024) as 2024 | 2025 | 2026;
   });
   const [imagerYear, setImagerYear] = useState<number>(() => new Date().getFullYear());
+  const [imagerSort, setImagerSort] = useState<Record<string, 'name'|'date'>>({});
+  const [imagerMonthModal, setImagerMonthModal] = useState<{
+    prodLabel: string; month: string; year: number; clients: { clientName: string; serial: string; location: string; installDate: string }[];
+  } | null>(null);
+  const [topClientsLimit, setTopClientsLimit] = useState<5|10|'all'>(5);
+  const [showTopClientsModal, setShowTopClientsModal] = useState(false);
+  const [clientPreviewModal, setClientPreviewModal] = useState<{ client: Client; rank: number; m2: number; cajas: number } | null>(null);
+  const [pickerYear, setPickerYear] = useState(() => new Date().getFullYear());
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [showPrinterStatsModal, setShowPrinterStatsModal] = useState(false);
+  const [showNCReport, setShowNCReport] = useState(false);
+  const [ncReportStart, setNcReportStart] = useState('');
+  const [ncReportEnd, setNcReportEnd] = useState('');
+  const [dashboardView, setDashboardView] = useState<'ventas'|'compras'>('ventas');
+  const [imager2024Tab, setImager2024Tab] = useState<'pending'|'installed'|'growth'>('pending');
+  const [intelHelpModal, setIntelHelpModal] = useState<string|null>(null);
   const [stockFilmData, setStockFilmData] = useState<Record<string, typeof STOCK_FILM_DEFAULT_2025>>(() => {
     try {
       // ── Version-based migration: if data was saved before v2, reset it ──
@@ -1836,6 +2104,148 @@ function App() {
 
   // ── TRIMAX HISTORICAL DATA 2024 — previously sold product (now discontinued) ──
   // Source: Sales report image provided by user · Used for combined m² metrics only
+  const IMAGER_2024: Array<{nombre:string;total_m2:number;m2_8x10:number;m2_10x12:number;m2_11x14:number;m2_14x17:number;califica:number;printers:number;small_tray:number;large_tray:number;feeder:number}> = [
+    {nombre:"GOMEZ VERA JOSE ANTONIO",total_m2:190.56,m2_8x10:0.0,m2_10x12:38.32,m2_11x14:0.0,m2_14x17:152.24,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
+    {nombre:"ADAMANTIUM",total_m2:38.22,m2_8x10:38.22,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+    {nombre:"ANDERSON MICHAEL MEDRANDA ALCIVAR",total_m2:433.16,m2_8x10:433.16,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+    {nombre:"ASUNELEC S.A.",total_m2:249.52,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:97.28,m2_14x17:152.24,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+    {nombre:"BALSECA CABERA DIANA ADRIANA",total_m2:203.2,m2_8x10:50.96,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:152.24,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
+    {nombre:"BOLANOS RODRIGUEZ GERMAN MARCELO",total_m2:114.66,m2_8x10:114.66,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+    {nombre:"BORJA ZAMBRANO JAZMIN BEATRIZ",total_m2:515.97,m2_8x10:515.97,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:5,small_tray:5,large_tray:0,feeder:0},
+    {nombre:"C Y M IMAGENES MEDICINA Y SALUD SA CMSALUD SA",total_m2:2626.24,m2_8x10:1936.48,m2_10x12:689.76,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:10,small_tray:10,large_tray:0,feeder:0},
+    {nombre:"CENTRO CLINICO QUIRURGICO AMBULATORIO HOSPITAL DEL DIA COTOCOLLAO",total_m2:761.36,m2_8x10:38.22,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:723.14,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+    {nombre:"CENTRO CLINICO QUIRURGICO AMBULATORIO HOSPITAL DEL DIA SANGOLQUI",total_m2:4605.69,m2_8x10:0.0,m2_10x12:1465.74,m2_11x14:0.0,m2_14x17:3139.95,califica:1,printers:3,small_tray:1,large_tray:1,feeder:1},
+    {nombre:"CENTRO CLINICO QUIRURGICO AMBULATORIO HOSPITAL DEL DIA ZAMORA",total_m2:152.4,m2_8x10:38.22,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:114.18,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+    {nombre:"CENTRO DE ESPECIALIDADES COLON ECCM S.A.",total_m2:6.37,m2_8x10:6.37,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:2,small_tray:2,large_tray:1,feeder:1},
+    {nombre:"CENTRO ESPECIALIZADO EN DIAGNOSTICO POR IMAGEN Y",total_m2:558.64,m2_8x10:101.92,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:456.72,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
+    {nombre:"CLINICA DEL SOL CIA LTDA",total_m2:76.25,m2_8x10:0.0,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:57.09,califica:0,printers:1,small_tray:0,large_tray:1,feeder:0},
+    {nombre:"CLINICA MODERNA. BABAHOYO",total_m2:19.03,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:19.03,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+    {nombre:"CLISAISA CLINICA SANTA INES SA",total_m2:755.13,m2_8x10:0.0,m2_10x12:507.74,m2_11x14:0.0,m2_14x17:247.39,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+    {nombre:"CLUB DE LEONES QUITO CENTRAL",total_m2:1191.78,m2_8x10:0.0,m2_10x12:354.46,m2_11x14:0.0,m2_14x17:837.32,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+    {nombre:"COMPANIA FONAR3D IMAGE DENTAL CIA LTDA",total_m2:136.98,m2_8x10:127.4,m2_10x12:9.58,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+    {nombre:"CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.",total_m2:2814.8,m2_8x10:216.58,m2_10x12:1494.48,m2_11x14:0.0,m2_14x17:1103.74,califica:1,printers:4,small_tray:4,large_tray:4,feeder:4},
+    {nombre:"CRISTIAN OMAR CAMACHO CHADAN",total_m2:44.59,m2_8x10:44.59,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+    {nombre:"DAVID GABRIEL GARCIA ALVARADO",total_m2:101.92,m2_8x10:101.92,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+    {nombre:"DEFINE S.A.S.",total_m2:50.96,m2_8x10:50.96,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+    {nombre:"DIAGNOSTICO AGUDO Y MEDICOS ESPECIALISTA",total_m2:209.49,m2_8x10:38.22,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:171.27,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+    {nombre:"DIAGNOSTICO MEDICO POR IMAGENES SAS CEDIM",total_m2:57.22,m2_8x10:0.0,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:38.06,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+    {nombre:"DIRAD DIAGNOSTICO RADIOLOGICO CIA LTDA",total_m2:1857.66,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:753.92,m2_14x17:1103.74,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
+    {nombre:"DR ANDRES EUCLIDES MONTALVAN AYALA",total_m2:124.76,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:48.64,m2_14x17:76.12,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+    {nombre:"DR CARLOS SANTANA RODRIGUEZ",total_m2:12.74,m2_8x10:12.74,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+    {nombre:"DR EDGAR SEBASTIAN EPINOZA MUNOZ",total_m2:218.33,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:85.12,m2_14x17:133.21,califica:1,printers:0,small_tray:0,large_tray:0,feeder:0},
+    {nombre:"DR EDGAR SEBASTIAN ESPINOZA MUNOZ",total_m2:374.28,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:145.92,m2_14x17:228.36,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+    {nombre:"DR FELIPE MOROCHO PACHECO",total_m2:114.44,m2_8x10:0.0,m2_10x12:38.32,m2_11x14:0.0,m2_14x17:76.12,califica:0,printers:1,small_tray:1,large_tray:1,feeder:1},
+    {nombre:"DR FELIPE RODORIGUEZ MAYA",total_m2:340.48,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:340.48,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+    {nombre:"DR FELIPE RODRIGUEZ",total_m2:431.92,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:279.68,m2_14x17:152.24,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+    {nombre:"DR FERNANDO AGUILERA",total_m2:458.64,m2_8x10:458.64,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:2,small_tray:2,large_tray:0,feeder:0},
+    {nombre:"DR HUGO GUAMAN",total_m2:140.44,m2_8x10:25.48,m2_10x12:114.96,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:2,large_tray:0,feeder:1},
+    {nombre:"DR HUGO VINICIO PALACIOS",total_m2:19.11,m2_8x10:19.11,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+    {nombre:"DR JHONNY JACOME PONCE",total_m2:428.37,m2_8x10:0.0,m2_10x12:28.74,m2_11x14:0.0,m2_14x17:399.63,califica:1,printers:1,small_tray:0,large_tray:1,feeder:0},
+    {nombre:"DR JORGE ORDONEZ",total_m2:43.48,m2_8x10:0.0,m2_10x12:19.16,m2_11x14:24.32,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+    {nombre:"DR JOSE MANUEL HUNG ARROYO",total_m2:152.88,m2_8x10:152.88,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+    {nombre:"DR KEVIN WILFRIDO VERSOZA CASTRO",total_m2:95.41,m2_8x10:0.0,m2_10x12:38.32,m2_11x14:0.0,m2_14x17:57.09,califica:0,printers:1,small_tray:1,large_tray:1,feeder:1},
+    {nombre:"DR LEONARDO MORETA",total_m2:76.64,m2_8x10:0.0,m2_10x12:76.64,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+    {nombre:"DR OSCAR VINICIO VACA SANCHEZ",total_m2:1707.44,m2_8x10:0.0,m2_10x12:459.84,m2_11x14:486.4,m2_14x17:761.2,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
+    {nombre:"DR PASCUAL LOOR FIENCO",total_m2:28.61,m2_8x10:0.0,m2_10x12:9.58,m2_11x14:0.0,m2_14x17:19.03,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+    {nombre:"DR PEDRO DELGADO ORTIZ",total_m2:102.12,m2_8x10:25.48,m2_10x12:76.64,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:2,large_tray:0,feeder:1},
+    {nombre:"DR. JOSE MULLO",total_m2:63.7,m2_8x10:63.7,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+    {nombre:"DRA ALEXANDRA MONARD",total_m2:79.7,m2_8x10:50.96,m2_10x12:28.74,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:1,feeder:1},
+    {nombre:"DRA FERNANDA ANDRADE METROMEC",total_m2:9.58,m2_8x10:0.0,m2_10x12:9.58,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+    {nombre:"DRA HILDA DEL CARMEN CORREA JIMENEZ",total_m2:599.3,m2_8x10:101.92,m2_10x12:383.2,m2_11x14:0.0,m2_14x17:114.18,califica:1,printers:4,small_tray:4,large_tray:4,feeder:4},
+    {nombre:"DRA HILDA SALAZAR SANCHEZ",total_m2:38.32,m2_8x10:0.0,m2_10x12:38.32,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+    {nombre:"DRA MARIA TERESA RAMIREZ",total_m2:928.28,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:243.2,m2_14x17:685.08,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+    {nombre:"DRA SILVIA ALEXANDRA CULLACAY BUNAY",total_m2:233.78,m2_8x10:25.48,m2_10x12:0.0,m2_11x14:170.24,m2_14x17:38.06,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
+    {nombre:"DRA. GUARIN MOREIRA CLARA VICTORIA",total_m2:9.58,m2_8x10:0.0,m2_10x12:9.58,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+    {nombre:"ECOGRAMED CIA LTDA",total_m2:340.48,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:340.48,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+    {nombre:"ECOSCAN",total_m2:219.69,m2_8x10:0.0,m2_10x12:124.54,m2_11x14:0.0,m2_14x17:95.15,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+    {nombre:"ECUAIMAGEN",total_m2:76.64,m2_8x10:0.0,m2_10x12:76.64,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+    {nombre:"ECUATORIANA DE ESPECIALIDADES Y TECNOLOGIA MEDICA ECUATECMED",total_m2:57.48,m2_8x10:0.0,m2_10x12:57.48,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+    {nombre:"EXTOM C.L.",total_m2:380.6,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:380.6,califica:1,printers:2,small_tray:0,large_tray:2,feeder:0},
+    {nombre:"FABIAN CLOTARIO BORJA ZAMBRANO",total_m2:197.47,m2_8x10:197.47,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+    {nombre:"FREDDY HIDALGO",total_m2:146.43,m2_8x10:127.4,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:19.03,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+    {nombre:"FULLCARE MEDICAL S.A.",total_m2:286.1,m2_8x10:0.0,m2_10x12:95.8,m2_11x14:0.0,m2_14x17:190.3,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+    {nombre:"FUNARMAF",total_m2:31.85,m2_8x10:31.85,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+    {nombre:"HOSPITAL BASICO ALAUSI",total_m2:266.94,m2_8x10:0.0,m2_10x12:76.64,m2_11x14:0.0,m2_14x17:190.3,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+    {nombre:"HOSPITAL BASICO EDGAR ARCOS",total_m2:108.05,m2_8x10:50.96,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:57.09,califica:0,printers:1,small_tray:1,large_tray:1,feeder:1},
+    {nombre:"HOSPITAL DE ESPECIALIDADES CARLOS ANDRADE MARIN",total_m2:254.0,m2_8x10:63.7,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:190.3,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
+    {nombre:"HOSPITAL PROVINCIAL GENERAL  PABLO",total_m2:5892.23,m2_8x10:0.0,m2_10x12:1762.72,m2_11x14:0.0,m2_14x17:4129.51,califica:1,printers:3,small_tray:3,large_tray:3,feeder:3},
+    {nombre:"HUGO ORLANDO TAPI CARDENA",total_m2:127.6,m2_8x10:50.96,m2_10x12:76.64,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:2,large_tray:0,feeder:1},
+    {nombre:"IDENT SAS",total_m2:101.92,m2_8x10:101.92,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+    {nombre:"IMAGENES DIAGNOSTICAS CRUZ ROCA SANANGO CROCSAN S.A.S",total_m2:172.05,m2_8x10:0.0,m2_10x12:114.96,m2_11x14:0.0,m2_14x17:57.09,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+    {nombre:"IMAGENES Y PRISMA SA",total_m2:361.96,m2_8x10:0.0,m2_10x12:57.48,m2_11x14:0.0,m2_14x17:304.48,califica:1,printers:2,small_tray:2,large_tray:1,feeder:1},
+    {nombre:"INDRA.S.A.",total_m2:43.35,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:24.32,m2_14x17:19.03,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+    {nombre:"ING WALTER ALDAS",total_m2:209.68,m2_8x10:178.36,m2_10x12:19.16,m2_11x14:12.16,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+    {nombre:"INSTITUTO DE DIAGNOSTICO",total_m2:1192.57,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:145.92,m2_14x17:1046.65,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+    {nombre:"JAAR ASOCIADOS SAS",total_m2:152.88,m2_8x10:152.88,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+    {nombre:"JAIME GEOVANNY LARREA TELLO",total_m2:38.32,m2_8x10:0.0,m2_10x12:38.32,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+    {nombre:"JIMENEZ CASTILLO SANDRA DEL CISNE",total_m2:95.47,m2_8x10:76.44,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:19.03,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+    {nombre:"JOSE ARIAS MUNIOZ",total_m2:19.16,m2_8x10:0.0,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+    {nombre:"JULIO HUMBERTO RUIZ FLORES",total_m2:248.43,m2_8x10:248.43,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+    {nombre:"KLEVER EDUARDO ECHEVERRIA MARQUEZ",total_m2:143.18,m2_8x10:0.0,m2_10x12:67.06,m2_11x14:0.0,m2_14x17:76.12,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+    {nombre:"LABMETA S.A.",total_m2:28.74,m2_8x10:0.0,m2_10x12:28.74,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+    {nombre:"LCDO JOHNNY GUSTAVO OVALLE GALARZA",total_m2:19.03,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:19.03,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+    {nombre:"LEIDY ANABEL PEREZ MACIAS",total_m2:47.9,m2_8x10:0.0,m2_10x12:47.9,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+    {nombre:"LM RADIOLOGOS CL",total_m2:286.1,m2_8x10:0.0,m2_10x12:95.8,m2_11x14:0.0,m2_14x17:190.3,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
+    {nombre:"LORFAVE SA S.",total_m2:38.32,m2_8x10:0.0,m2_10x12:38.32,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+    {nombre:"LUIS ALBERTO SANCHEZ OVIEDO",total_m2:19.16,m2_8x10:0.0,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+    {nombre:"MAGDALENA VERNAZA MEJIA",total_m2:146.5,m2_8x10:0.0,m2_10x12:9.58,m2_11x14:60.8,m2_14x17:76.12,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+    {nombre:"MARCELO ALEJANDRO MONTANO BENITEZ",total_m2:6.37,m2_8x10:6.37,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+    {nombre:"MARIANA YOCONDA CANTOS RIVERA",total_m2:200.14,m2_8x10:0.0,m2_10x12:47.9,m2_11x14:0.0,m2_14x17:152.24,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+    {nombre:"MEDIMAGENES CIA LTDA",total_m2:524.3,m2_8x10:0.0,m2_10x12:143.7,m2_11x14:0.0,m2_14x17:380.6,califica:1,printers:3,small_tray:3,large_tray:3,feeder:3},
+    {nombre:"MICKELY DAYANA ROMERO CHAMORRO",total_m2:63.7,m2_8x10:63.7,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+    {nombre:"MILTON TRUJILLO",total_m2:19.11,m2_8x10:19.11,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+    {nombre:"MONARD PROANIO MARIA ALEXANDRA",total_m2:79.7,m2_8x10:50.96,m2_10x12:28.74,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+    {nombre:"MULTI-IMAGEN SAS",total_m2:695.83,m2_8x10:0.0,m2_10x12:182.02,m2_11x14:0.0,m2_14x17:513.81,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
+    {nombre:"MUNOZ AREVALO  JAVIER ARMANDO",total_m2:19.16,m2_8x10:0.0,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+    {nombre:"NORMA ORBEA HERRERA",total_m2:311.09,m2_8x10:63.7,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:247.39,califica:1,printers:3,small_tray:3,large_tray:3,feeder:3},
+    {nombre:"NUEVAIMAGENTC CIA LTDA",total_m2:286.36,m2_8x10:0.0,m2_10x12:134.12,m2_11x14:0.0,m2_14x17:152.24,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+    {nombre:"OFFICEGOLDEN S.A.",total_m2:305.13,m2_8x10:0.0,m2_10x12:95.8,m2_11x14:0.0,m2_14x17:209.33,califica:1,printers:7,small_tray:7,large_tray:7,feeder:7},
+    {nombre:"OLIVO FLORES JOSE EDUARDO",total_m2:19.03,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:19.03,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+    {nombre:"ORDEN CAPUCHINA EN EL ECUADOR",total_m2:190.3,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:190.3,califica:0,printers:1,small_tray:0,large_tray:1,feeder:0},
+    {nombre:"ORIMEC INTERNO",total_m2:12.16,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:12.16,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+    {nombre:"ORIONGROUP S.A.",total_m2:363.09,m2_8x10:363.09,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:3,small_tray:3,large_tray:0,feeder:0},
+    {nombre:"PATRICIA DEL ROSARIO ROJAS QUEZADA",total_m2:19.16,m2_8x10:0.0,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+    {nombre:"PATRICIA YAJAIRA ERAZO TORRES",total_m2:57.38,m2_8x10:38.22,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+    {nombre:"PAZOS GONZALES MERCEDES COLIS",total_m2:95.28,m2_8x10:0.0,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:76.12,califica:0,printers:1,small_tray:1,large_tray:1,feeder:1},
+    {nombre:"QUIZHPI BRAVO MARCO VINICIO",total_m2:102.07,m2_8x10:44.59,m2_10x12:57.48,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:1,feeder:1},
+    {nombre:"RADIOMED",total_m2:92.65,m2_8x10:31.85,m2_10x12:0.0,m2_11x14:60.8,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+    {nombre:"RADXIMAGEN SAS",total_m2:564.03,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:12.16,m2_14x17:551.87,califica:1,printers:1,small_tray:0,large_tray:1,feeder:0},
+    {nombre:"RESONADOR CLINICA SAN PABLO CIA LTDA",total_m2:209.33,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:209.33,califica:1,printers:1,small_tray:0,large_tray:1,feeder:0},
+    {nombre:"RICARDO VASQUEZ",total_m2:12.74,m2_8x10:12.74,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+    {nombre:"RINCON ALVAREZ EDILMARIS DE LOS ANGELES",total_m2:1063.79,m2_8x10:815.36,m2_10x12:153.28,m2_11x14:0.0,m2_14x17:95.15,califica:1,printers:5,small_tray:5,large_tray:2,feeder:2},
+    {nombre:"RONALD DAVID CONTRERAS POTES",total_m2:9.58,m2_8x10:0.0,m2_10x12:9.58,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+    {nombre:"RUTHY CIA. LTDA.",total_m2:228.36,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:228.36,califica:0,printers:1,small_tray:0,large_tray:1,feeder:0},
+    {nombre:"SARMIENTO SALTOS MARIA ALEJANDRA",total_m2:190.46,m2_8x10:38.22,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:152.24,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+    {nombre:"SCAN-3D S.A.S.",total_m2:101.92,m2_8x10:101.92,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+    {nombre:"SCAN3DIGITAL S.A.S.",total_m2:60.54,m2_8x10:50.96,m2_10x12:9.58,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+    {nombre:"SERVICIOS Y VENTAS MOGROVEJO RODRIGUEZ SERVEMOR CIA LTDA",total_m2:329.35,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:158.08,m2_14x17:171.27,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+    {nombre:"SMIMAGENES SAS",total_m2:120.63,m2_8x10:25.48,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:95.15,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+    {nombre:"SOCIEDAD CIVIL CTRO DE IMAGENES QUEVEDO CIQ",total_m2:942.83,m2_8x10:0.0,m2_10x12:124.54,m2_11x14:0.0,m2_14x17:818.29,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
+    {nombre:"TAILY LUISANA MONTOYA BERSOZA",total_m2:31.77,m2_8x10:12.74,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:19.03,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+    {nombre:"TAYANA SA",total_m2:81.41,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:24.32,m2_14x17:57.09,califica:0,printers:2,small_tray:2,large_tray:2,feeder:2},
+    {nombre:"TEC MED CRISTOBAL REYES TIGSE",total_m2:179.85,m2_8x10:76.44,m2_10x12:47.9,m2_11x14:36.48,m2_14x17:19.03,califica:0,printers:3,small_tray:3,large_tray:1,feeder:1},
+    {nombre:"TERESA CORDOVA",total_m2:121.03,m2_8x10:121.03,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+    {nombre:"TMD EDWIN ESPANA",total_m2:343.32,m2_8x10:0.0,m2_10x12:114.96,m2_11x14:0.0,m2_14x17:228.36,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
+    {nombre:"TOMOIMAGEN",total_m2:38.06,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:38.06,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+    {nombre:"UDIP S.A.",total_m2:485.98,m2_8x10:0.0,m2_10x12:105.38,m2_11x14:0.0,m2_14x17:380.6,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+    {nombre:"ULLOA AGUILERA LUIS FELIPE",total_m2:1349.85,m2_8x10:433.16,m2_10x12:479.0,m2_11x14:0.0,m2_14x17:437.69,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
+    {nombre:"ULTRADIAGNOSTIC",total_m2:31.9,m2_8x10:12.74,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+    {nombre:"UNIDAD DE DIAGNOSTICOS E IMAGENES S.A. UNIMAGENLOOR",total_m2:69.96,m2_8x10:12.74,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:38.06,califica:0,printers:1,small_tray:1,large_tray:1,feeder:1},
+    {nombre:"UNIMOVILRAY CIA LTDA",total_m2:114.44,m2_8x10:0.0,m2_10x12:38.32,m2_11x14:0.0,m2_14x17:76.12,califica:0,printers:1,small_tray:1,large_tray:1,feeder:1},
+    {nombre:"UNIVERSIDAD CATOLICA DE CUENCA",total_m2:562.23,m2_8x10:0.0,m2_10x12:124.54,m2_11x14:0.0,m2_14x17:437.69,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+    {nombre:"USAIMPORT S.A.S.",total_m2:28.74,m2_8x10:0.0,m2_10x12:28.74,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+    {nombre:"VANESSA ALEXANDER SOSA ARROBA",total_m2:63.8,m2_8x10:25.48,m2_10x12:38.32,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+    {nombre:"VERA MURILLO EXITA JANET",total_m2:19.16,m2_8x10:0.0,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+    {nombre:"X RAY SOLUTIONS DENTALMEDIC",total_m2:101.92,m2_8x10:101.92,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+    {nombre:"ZAMBRANO ORDONEZ JOSE PAUL",total_m2:295.5,m2_8x10:19.11,m2_10x12:67.06,m2_11x14:0.0,m2_14x17:209.33,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
+    {nombre:"CLINICA SAN GREGORIO ASUNELEC",total_m2:0.0,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:1,printers:1,small_tray:1,large_tray:1,feeder:0},
+    {nombre:"SAAB CORP SAS",total_m2:0.0,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:1,printers:1,small_tray:1,large_tray:1,feeder:0},
+    {nombre:"CEDIMAGEN",total_m2:0.0,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:1,printers:1,small_tray:1,large_tray:1,feeder:0},
+    {nombre:"RX IMAGENT",total_m2:0.0,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:1,printers:1,small_tray:1,large_tray:1,feeder:0},
+    {nombre:"ANITA QUINTANA",total_m2:0.0,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:1,printers:1,small_tray:1,large_tray:1,feeder:0},
+  ];
+
+
   const TRIMAX_2024 = {
     totalBoxes: 3893,
     totalM2: 44879,
@@ -3250,13 +3660,18 @@ ${rows.map(r=>{
         finalRecord = editingRecord as ConsumptionRecord;
       } else {
         const nextId = Math.max(0, ...allConsumos.map(r => r.id)) + 1;
-        finalRecord = {
-          ...editingRecord,
-          id: nextId
-        } as ConsumptionRecord;
+        finalRecord = { ...editingRecord, id: nextId } as ConsumptionRecord;
       }
+
+      // NC devolución → auto-mark as return
+      if ((finalRecord as any).nc_type === 'devolucion') {
+        (finalRecord as any).is_return = true;
+      }
+
+      // Sanitize undefined fields before Firestore
+      const sanitized = Object.fromEntries(Object.entries(finalRecord).filter(([_, v]) => v !== undefined));
       
-      await setDoc(doc(db, "consumos", finalRecord.id.toString()), finalRecord);
+      await setDoc(doc(db, "consumos", finalRecord.id.toString()), sanitized);
       setIsModalOpen(false);
       setEditingRecord(null);
       showToast(editingRecord.id ? 'Registro actualizado' : 'Registro guardado', 'success');
@@ -3382,9 +3797,26 @@ ${rows.map(r=>{
       filteredConsumos = filteredConsumos.filter(r => new Date(r.order_date) <= new Date(dashboardEndDate));
     }
 
+    // Apply film type filter (GLOBAL / DI-HT / DI-HL / DI-ML)
+    if (globalFilmFilter !== 'all') {
+      filteredConsumos = filteredConsumos.filter(r => {
+        const ft = r.film_type || 'DIHT';
+        return ft === globalFilmFilter;
+      });
+    }
+
     const totalConsumption = filteredConsumos.reduce((acc, curr) => acc + effectiveQty(curr), 0);
     const totalRevenue = filteredConsumos.reduce((acc, curr) => acc + (effectiveQty(curr) * (curr.unit_cost || 0)), 0);
-    const totalClients = allClients.length;
+    // Clients with activity in the filtered period
+    // Note: film filter excluded — client count always based on dates only
+    const dateFilteredConsumos = allConsumos.filter(r => {
+      if (dashboardStartDate && new Date(r.order_date) < new Date(dashboardStartDate)) return false;
+      if (dashboardEndDate && new Date(r.order_date) > new Date(dashboardEndDate)) return false;
+      return true;
+    });
+    const activeClientIds = new Set(dateFilteredConsumos.map(r => r.client_id));
+    const hasDateFilter = !!(dashboardStartDate || dashboardEndDate);
+    const totalClients = hasDateFilter ? activeClientIds.size : allClients.length;
 
     // ── m² calculations ──
     const totalM2 = parseFloat(filteredConsumos.reduce((acc, curr) => acc + getTotalM2(effectiveQty(curr), curr.size, curr.film_type), 0).toFixed(2));
@@ -3414,14 +3846,17 @@ ${rows.map(r=>{
       salespersonDist[salesperson].revenue += qty * (r.unit_cost || 0);
     });
 
-    const topClients = Object.entries(clientDistM2)
+    const allClientsSorted = Object.entries(clientDistM2)
       .map(([id, m2]) => ({
+        id: parseInt(id),
         name: allClients.find(c => c.id === parseInt(id))?.name || 'Desconocido',
+        province: allClients.find(c => c.id === parseInt(id))?.province || '—',
+        salesperson: allClients.find(c => c.id === parseInt(id))?.salesperson || '—',
         value: clientDist[parseInt(id)] || 0,
         m2
       }))
-      .sort((a, b) => b.m2 - a.m2)
-      .slice(0, 5);
+      .sort((a, b) => b.m2 - a.m2);
+    const topClients = allClientsSorted.slice(0, 5);
 
     const sizeData = Object.entries(sizeDistM2)
       .map(([name, m2]) => ({ name, value: sizeDist[name] || 0, m2 }))
@@ -3445,11 +3880,12 @@ ${rows.map(r=>{
       totalClients,
       totalM2,
       topClients,
+      allClientsSorted,
       sizeData,
       topSizeByM2,
       salespersonData
     };
-  }, [allConsumos, allClients, dashboardStartDate, dashboardEndDate, TRIMAX_2024]);
+  }, [allConsumos, allClients, dashboardStartDate, dashboardEndDate, globalFilmFilter, TRIMAX_2024]);
 
   // ── DAY BRIEF — datos del banner de bienvenida ────────────────────────────
   const dayBrief = useMemo(() => {
@@ -3757,6 +4193,7 @@ ${rows.map(r=>{
       });
       if (dashboardStartDate) periodConsumos = periodConsumos.filter(r => new Date(r.order_date) >= new Date(dashboardStartDate));
       if (dashboardEndDate) periodConsumos = periodConsumos.filter(r => new Date(r.order_date) <= new Date(dashboardEndDate));
+      if (globalFilmFilter !== 'all') periodConsumos = periodConsumos.filter(r => (r.film_type || 'DIHT') === globalFilmFilter);
       const quantity = periodConsumos.reduce((s, r) => s + effectiveQty(r), 0);
       const periodM2 = parseFloat(periodConsumos.reduce((s, r) => s + getTotalM2(effectiveQty(r), r.size, r.film_type), 0).toFixed(2));
       // Total revenue respecting dashboard date filter
@@ -3779,7 +4216,7 @@ ${rows.map(r=>{
 
       return { name: spName, quantity, periodM2, totalM2sp, revenue, goal, thisMonth, thisMonthM2, lastMonth, monthlyRevenue, monthlyAvg, monthlyAvgM2, history, progressPct, growthVsLastMonth };
     }).filter(Boolean).sort((a, b) => (b!.quantity) - (a!.quantity)) as any[];
-  }, [salespersonGoals, allConsumos, allClients, dashboardStartDate, dashboardEndDate]);
+  }, [salespersonGoals, allConsumos, allClients, dashboardStartDate, dashboardEndDate, globalFilmFilter]);
 
   // ── INTELLIGENCE: Client Health Score ────────────────────────────────────
   const clientHealthScores = useMemo(() => {
@@ -4082,7 +4519,7 @@ ${rows.map(r=>{
     const serialCounts: Record<string, { count: number, clients: string[] }> = {};
     const clientsWithoutPrinters: Client[] = [];
     const typeDistribution: Record<string, number> = {};
-    const clientPrinterStats: { clientName: string, printerCount: number, consumption: number }[] = [];
+    const clientPrinterStats: { clientId: number, clientName: string, printerCount: number, consumption: number, m2: number }[] = [];
 
     let filteredConsumos = filteredConsumosForView;
     if (dashboardStartDate) {
@@ -4115,11 +4552,15 @@ ${rows.map(r=>{
         });
       }
 
-      const consumption = filteredConsumos.filter(r => r.client_id === client.id).reduce((acc, curr) => acc + effectiveQty(curr), 0);
+      const clientConsumos = filteredConsumos.filter(r => r.client_id === client.id);
+      const consumption = clientConsumos.reduce((acc, curr) => acc + effectiveQty(curr), 0);
+      const m2 = clientConsumos.reduce((acc, curr) => acc + getTotalM2(effectiveQty(curr), curr.size, curr.film_type), 0);
       clientPrinterStats.push({
+        clientId: client.id,
         clientName: client.name,
         printerCount: pCount,
-        consumption
+        consumption,
+        m2: parseFloat(m2.toFixed(1))
       });
     });
 
@@ -4520,18 +4961,14 @@ ${rows.map(r=>{
     }
   };
 
-  const isMobileView = window.innerWidth < 768;
   return (
-    <div className={isMobileView ? "w-full min-h-screen bg-transparent" : "w-screen h-screen overflow-hidden bg-transparent"}>
+    <div className="w-screen h-screen overflow-hidden bg-transparent">
       <div 
         className={cn(
-          "flex flex-col text-sm transition-all duration-300",
-          isMobileView ? "overflow-x-hidden overflow-y-auto" : "overflow-hidden",
+          "flex flex-col text-sm overflow-hidden transition-all duration-300",
           darkMode ? "bg-[#0F0F11] text-white" : "bg-[#F4F5F7] text-[#111827]"
         )}
-        style={isMobileView ? {
-          fontFamily: "'DM Sans', 'Inter', system-ui, sans-serif"
-        } : { 
+        style={{ 
           transform: `scale(${zoomLevel})`,
           transformOrigin: 'top left',
           width: `${100 / zoomLevel}vw`,
@@ -4568,13 +5005,13 @@ ${rows.map(r=>{
       )}
       {/* Header Corporativo Orimec */}
       <header className={cn(
-        "border-b px-3 md:px-6 py-2 md:py-3 flex items-center justify-between z-10 shrink-0 transition-colors duration-300 overflow-hidden",
+        "border-b px-6 py-3 flex items-center justify-between z-10 shrink-0 transition-colors duration-300",
         darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/80 shadow-sm"
       )}>
-        <div className="flex items-center gap-2 md:gap-4 min-w-0 flex-1">
-          <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-6">
+          <div className="flex items-center gap-3">
             {/* Icon badge */}
-            <OrimecLogo size={32} />
+            <OrimecLogo size={36} />
             {/* Wordmark — only show on wider screens */}
             <div className="hidden lg:block">
               <h1 className="text-base font-black tracking-tight leading-none">
@@ -4588,12 +5025,12 @@ ${rows.map(r=>{
           </div>
 
           <div className={cn(
-            "hidden xl:block h-6 w-px",
+            "h-6 w-px",
             darkMode ? "bg-white/10" : "bg-gray-200"
           )} />
 
           <nav className={cn(
-            "flex items-center gap-0.5 md:gap-1 p-1 rounded-xl transition-colors duration-300 overflow-x-auto scrollbar-hide flex-1 min-w-0",
+            "flex items-center gap-1 p-1 rounded-xl transition-colors duration-300",
             darkMode ? "bg-white/5" : "bg-gray-100/80"
           )}>
             {[
@@ -4608,7 +5045,7 @@ ${rows.map(r=>{
                 key={id}
                 onClick={() => setView(id as any)}
                 className={cn(
-                  "px-2.5 md:px-3.5 py-1.5 rounded-lg font-semibold text-xs flex items-center gap-1.5 transition-all whitespace-nowrap",
+                  "px-3.5 py-1.5 rounded-lg font-semibold text-xs flex items-center gap-1.5 transition-all",
                   view === id
                     ? (darkMode
                         ? "bg-[#ED1C24] text-white shadow-sm shadow-red-500/20"
@@ -4619,19 +5056,19 @@ ${rows.map(r=>{
                 )}
               >
                 <Icon className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">{label}</span>
+                {label}
               </button>
             ))}
           </nav>
         </div>
 
-        <div className="flex items-center gap-1.5 md:gap-2 shrink-0">
+        <div className="flex items-center gap-2.5">
           {/* User chip */}
           <div className={cn(
-            "hidden sm:flex items-center gap-2 px-2 md:px-3 py-1.5 rounded-xl border text-xs font-semibold",
+            "flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-semibold",
             darkMode ? "bg-white/5 border-white/8 text-gray-400" : "bg-gray-100 border-gray-200 text-gray-500"
           )}>
-            <span className="hidden lg:inline max-w-[80px] truncate">{appUser?.nombre}</span>
+            <span className="max-w-[80px] truncate">{appUser?.nombre}</span>
             <span className={cn(
               "px-1.5 py-0.5 rounded-md text-[9px] font-bold",
               appUser?.role === 'admin' ? 'bg-[#ED1C24]/15 text-[#ED1C24]' :
@@ -4663,7 +5100,7 @@ ${rows.map(r=>{
                 setZoomLevel(calcZoom());
               }}
               className={cn(
-                "hidden lg:flex items-center gap-1 px-2 py-1.5 rounded-lg text-[10px] font-black border transition-all",
+                "flex items-center gap-1 px-2 py-1.5 rounded-lg text-[10px] font-black border transition-all",
                 darkMode ? "bg-white/5 border-white/10 text-gray-500 hover:bg-white/8 hover:text-gray-300" : "bg-gray-100 border-gray-200 text-gray-400 hover:bg-gray-200 hover:text-gray-600"
               )}
               title="Restablecer zoom automático"
@@ -4677,7 +5114,7 @@ ${rows.map(r=>{
             <button
               onClick={() => setShowAuditLog(true)}
               className={cn(
-                "hidden md:flex relative p-2 rounded-xl transition-all duration-300",
+                "relative p-2 rounded-xl transition-all duration-300",
                 darkMode ? "bg-white/5 text-gray-500 hover:bg-white/8 hover:text-gray-300 border border-white/6" : "bg-gray-100 text-gray-500 hover:bg-gray-200 border border-transparent"
               )}
               title="Historial de auditoría"
@@ -4706,7 +5143,7 @@ ${rows.map(r=>{
             <button
               onClick={() => setGlobalSearchOpen(true)}
               className={cn(
-                "hidden lg:flex items-center gap-2 pl-3 pr-3 py-2 rounded-xl w-48 xl:w-64 text-xs font-medium transition-all text-left",
+                "flex items-center gap-2 pl-3 pr-3 py-2 rounded-xl w-64 text-xs font-medium transition-all text-left",
                 darkMode
                   ? "bg-white/5 text-gray-500 hover:bg-white/8 hover:text-gray-400 border border-white/6"
                   : "bg-gray-100 text-gray-400 hover:bg-gray-200/70 border border-transparent"
@@ -4725,7 +5162,7 @@ ${rows.map(r=>{
             <button
               onClick={handleExportExcel}
               className={cn(
-                "hidden md:flex px-2 py-2 rounded-xl text-xs font-semibold items-center gap-1.5 transition-all",
+                "px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all",
                 darkMode
                   ? "bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/10"
                   : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200/60"
@@ -4733,7 +5170,19 @@ ${rows.map(r=>{
               title="Exportar a Excel"
             >
               <Download className="w-3.5 h-3.5" />
-              <span className="hidden lg:inline">Exportar</span>
+              Exportar
+            </button>
+          )}
+          {(role === 'admin' || role === 'financiero') && (
+            <button
+              onClick={() => setShowNCReport(true)}
+              className={cn("px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all",
+                darkMode ? "bg-purple-500/10 text-purple-400 hover:bg-purple-500/20 border border-purple-500/10" : "bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200/60"
+              )}
+              title="Reporte de Notas de Crédito"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              Notas de Crédito
             </button>
           )}
 
@@ -4741,7 +5190,7 @@ ${rows.map(r=>{
             <button
               onClick={handleOpenCsvImport}
               className={cn(
-                "hidden md:flex px-2 py-2 rounded-xl text-xs font-semibold items-center gap-1.5 transition-all",
+                "px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all",
                 darkMode
                   ? "bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 border border-blue-500/10"
                   : "bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200/60"
@@ -4749,22 +5198,22 @@ ${rows.map(r=>{
               title="Importar CSV"
             >
               <Upload className="w-3.5 h-3.5" />
-              <span className="hidden lg:inline">Importar CSV</span>
+              Importar CSV
             </button>
           )}
 
           {(role === 'admin' || role === 'financiero') && (
             <button
               onClick={handleOpenNewClient}
-              className="hidden md:flex bg-[#ED1C24] text-white px-3 py-2 rounded-xl text-xs font-bold items-center gap-1.5 hover:bg-[#D11920] shadow-md shadow-red-500/20 transition-all"
+              className="bg-[#ED1C24] text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 hover:bg-[#D11920] shadow-md shadow-red-500/20 transition-all"
             >
-              <Plus className="w-3.5 h-3.5" /><span className="hidden lg:inline"> Nuevo Cliente</span>
+              <Plus className="w-3.5 h-3.5" /> Nuevo Cliente
             </button>
           )}
         </div>
       </header>
 
-      <main className="flex-1 grid grid-cols-12 gap-3 md:gap-6 p-3 md:p-6 overflow-y-auto custom-scrollbar" style={{alignContent: "start"}}>
+      <main className="flex-1 grid grid-cols-12 gap-6 p-6 min-h-0">
         {view === 'usuarios' && role === 'admin' && (
           <div className="col-span-12 h-full overflow-hidden">
             <UsersPanel darkMode={darkMode} />
@@ -4773,7 +5222,7 @@ ${rows.map(r=>{
         {view === 'clients' && (
           <>
             {/* Sidebar: Centros Médicos */}
-            <div className={cn("col-span-12 md:col-span-4 flex flex-col", selectedClient ? "hidden md:flex" : "flex", "md:min-h-0")}>
+            <div className="col-span-4 flex flex-col min-h-0">
               <div className={cn(
                 "flex items-center justify-between px-1 mb-3 shrink-0"
               )}>
@@ -4788,30 +5237,6 @@ ${rows.map(r=>{
                     darkMode ? "bg-white/10 text-gray-300" : "bg-gray-200 text-gray-600"
                   )}>{filteredClients.length}</span>
                 </h2>
-              </div>
-              {/* Search bar — always visible in mobile clients sidebar */}
-              <div className="relative mb-3 shrink-0">
-                <Search className={cn("absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 pointer-events-none", darkMode ? "text-gray-500" : "text-gray-400")} />
-                <input
-                  type="text"
-                  placeholder="Buscar cliente..."
-                  value={searchTerm}
-                  onChange={e => setSearchTerm(e.target.value)}
-                  className={cn(
-                    "w-full pl-9 pr-9 py-2.5 rounded-xl text-sm outline-none border transition-all",
-                    darkMode
-                      ? "bg-white/8 border-white/12 text-white placeholder:text-gray-500 focus:border-white/25 focus:bg-white/12"
-                      : "bg-white border-gray-200 text-gray-800 placeholder:text-gray-400 focus:border-[#ED1C24]/30 shadow-sm"
-                  )}
-                />
-                {searchTerm && (
-                  <button
-                    onClick={() => setSearchTerm('')}
-                    className={cn("absolute right-3 top-1/2 -translate-y-1/2 p-0.5 rounded-full", darkMode ? "text-gray-500 hover:text-gray-300" : "text-gray-400 hover:text-gray-600")}
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                )}
               </div>
               <div className="flex-1 overflow-y-auto space-y-2 pr-1 pb-8 custom-scrollbar">
               {loading ? (
@@ -4879,28 +5304,12 @@ ${rows.map(r=>{
             </div>
 
             {/* Dashboard de Análisis */}
-            <div className={cn(
-              "md:col-span-8 md:flex flex-col pb-8",
-              selectedClient
-                ? "fixed md:relative inset-0 md:inset-auto z-50 md:z-auto col-span-12 flex overflow-y-auto p-3 md:p-0"
-                : "hidden md:flex col-span-12",
-              darkMode ? "bg-[#0F0F11]" : "bg-[#F4F5F7]"
-            )}>
+            <div className="col-span-8 flex flex-col min-h-0 overflow-y-auto pr-2 pb-8 custom-scrollbar">
               {selectedClient ? (
                 <div className="flex flex-col gap-5">
-                  {/* Back button — mobile only */}
-                  <button
-                    onClick={() => setSelectedClient(null)}
-                    className={cn(
-                      "md:hidden flex items-center gap-2 text-sm font-bold px-4 py-2.5 rounded-xl w-fit transition-all mb-1 border",
-                      darkMode ? "bg-white/8 border-white/10 text-gray-200 hover:bg-white/15" : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50 shadow-sm"
-                    )}
-                  >
-                    <ChevronRight className="w-4 h-4 rotate-180" /> Volver a clientes
-                  </button>
                   {/* Client Card */}
                   <div className={cn(
-                    "rounded-2xl p-5 md:p-7 border relative overflow-hidden transition-colors duration-300",
+                    "rounded-2xl p-7 border relative overflow-hidden transition-colors duration-300",
                     darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
                   )}>
                     <div className={cn(
@@ -5049,7 +5458,7 @@ ${rows.map(r=>{
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <div className="grid grid-cols-4 gap-4">
                         <div className={cn(
                           "rounded-xl p-4 border",
                           darkMode ? "bg-white/4 border-white/6" : "bg-gray-50 border-gray-100"
@@ -5170,7 +5579,7 @@ ${rows.map(r=>{
                               const isDisabled = role === 'vendedor' || (!isEditingPrinters && isExistingPrinter);
                               
                               return (
-                                <div key={printer.id} className="grid grid-cols-6 md:grid-cols-12 gap-3 md:gap-4 items-end">
+                                <div key={printer.id} className="grid grid-cols-12 gap-4 items-end">
                                   <div className="col-span-2">
                                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Tipo Impresora</label>
                                     <input 
@@ -5445,7 +5854,7 @@ ${rows.map(r=>{
                   </div>
 
                   {/* Charts Section */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-2 gap-5">
                     <div className={cn(
                       "rounded-xl p-6 border transition-colors duration-300",
                       darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
@@ -5717,16 +6126,36 @@ ${rows.map(r=>{
         )}
 
         {view === 'dashboard' && (
-          <div className="col-span-12 w-full flex flex-col gap-6 pb-8">
+          <div className="col-span-12 flex flex-col gap-6 min-h-0 overflow-y-auto pr-2 pb-8 custom-scrollbar">
 
-
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div>
-                  <h2 className="text-xl font-black tracking-tight">Dashboard de Análisis</h2>
+                  <h2 className="text-xl font-black tracking-tight">
+                    {dashboardView === 'ventas' ? 'Dashboard de Ventas' : 'Dashboard de Compras'}
+                  </h2>
                   <p className={cn("text-[10px] font-medium uppercase tracking-wider mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>
-                    Métricas globales · FUJIFILM DI-HT · DI-HL
+                    {dashboardView === 'ventas' ? 'Métricas globales · FUJIFILM DI-HT · DI-HL' : 'Importaciones · Inversión · Márgenes · Rotación'}
                   </p>
+                </div>
+                {/* Dashboard toggle */}
+                <div className={cn("flex items-center gap-0.5 p-0.5 rounded-xl ml-2", darkMode ? "bg-white/5" : "bg-gray-100")}>
+                  <button onClick={() => setDashboardView('ventas')}
+                    className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black transition-all",
+                      dashboardView === 'ventas'
+                        ? (darkMode ? "bg-[#ED1C24] text-white shadow-sm" : "bg-white text-[#ED1C24] shadow-sm border border-red-100")
+                        : (darkMode ? "text-gray-500 hover:text-gray-300" : "text-gray-400 hover:text-gray-600")
+                    )}>
+                    <TrendingUp className="w-3 h-3" /> Análisis Ventas
+                  </button>
+                  <button onClick={() => setDashboardView('compras')}
+                    className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black transition-all",
+                      dashboardView === 'compras'
+                        ? (darkMode ? "bg-[#1A3A5C] text-white shadow-sm" : "bg-white text-[#1A3A5C] shadow-sm border border-blue-100")
+                        : (darkMode ? "text-gray-500 hover:text-gray-300" : "text-gray-400 hover:text-gray-600")
+                    )}>
+                    <Package className="w-3 h-3" /> Análisis Compras
+                  </button>
                 </div>
                 {!loading && (
                   <button
@@ -5747,46 +6176,159 @@ ${rows.map(r=>{
                   </button>
                 )}
               </div>
-              <div className="flex items-center gap-3">
-                <div className="flex items-center gap-1.5">
-                  <label className={cn("hidden sm:block text-[9px] font-bold uppercase tracking-widest", darkMode ? "text-gray-600" : "text-gray-400")}>Desde:</label>
-                  <input
-                    type="date"
-                    value={dashboardStartDate}
-                    onChange={e => setDashStart(e.target.value)}
-                    className={cn(
-                      "px-3 py-1.5 rounded-lg border-none focus:ring-2 focus:ring-[#ED1C24]/20 outline-none font-medium text-xs",
-                      darkMode ? "bg-white/8 text-white" : "bg-white text-gray-800 shadow-sm border border-gray-200"
-                    )}
-                  />
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <label className={cn("hidden sm:block text-[9px] font-bold uppercase tracking-widest", darkMode ? "text-gray-600" : "text-gray-400")}>Hasta:</label>
-                  <input
-                    type="date"
-                    value={dashboardEndDate}
-                    onChange={e => setDashEnd(e.target.value)}
-                    className={cn(
-                      "px-3 py-1.5 rounded-lg border-none focus:ring-2 focus:ring-[#ED1C24]/20 outline-none font-medium text-xs",
-                      darkMode ? "bg-white/8 text-white" : "bg-white text-gray-800 shadow-sm border border-gray-200"
-                    )}
-                  />
-                </div>
-                {(dashboardStartDate || dashboardEndDate) && (
+              <div className="flex items-center gap-2">
+                {/* Month quick-picker */}
+                <div className="relative">
                   <button
-                    onClick={() => { setDashStart(''); setDashEnd(''); sessionStorage.removeItem('dash_start'); sessionStorage.removeItem('dash_end'); }}
+                    onClick={() => setPickerOpen(o => !o)}
                     className={cn(
-                      "p-1.5 rounded-lg transition-colors",
-                      darkMode ? "bg-white/5 hover:bg-white/10 text-gray-400" : "bg-white hover:bg-gray-50 text-gray-500 shadow-sm border border-gray-200"
-                    )}
-                    title="Limpiar filtros"
-                  >
-                    <X className="w-3.5 h-3.5" />
+                      "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold border transition-all",
+                      dashboardStartDate
+                        ? (darkMode ? "bg-[#ED1C24]/15 border-[#ED1C24]/30 text-[#ED1C24]" : "bg-red-50 border-red-200 text-red-600")
+                        : (darkMode ? "bg-white/5 border-white/10 text-gray-400" : "bg-white border-gray-200 text-gray-500 shadow-sm")
+                    )}>
+                    <Calendar className="w-3 h-3" />
+                    {dashboardStartDate
+                      ? (() => { const d = new Date(dashboardStartDate + 'T12:00:00'); return d.toLocaleDateString('es-EC', { month: 'short', year: '2-digit' }).toUpperCase(); })()
+                      : 'Período'}
                   </button>
+                  {/* Click-controlled dropdown */}
+                  {pickerOpen && (
+                    <>
+                      {/* Backdrop to close on outside click */}
+                      <div className="fixed inset-0 z-40" onClick={() => setPickerOpen(false)} />
+                      <div className={cn(
+                        "absolute top-full right-0 mt-1 z-50 w-72 rounded-2xl shadow-2xl border overflow-hidden",
+                        darkMode ? "bg-[#16161A] border-white/12" : "bg-white border-gray-200"
+                      )}>
+                        {/* Quick month buttons */}
+                        <div className={cn("px-4 py-3 border-b", darkMode ? "border-white/8 bg-white/2" : "border-gray-100 bg-gray-50")}>
+                          <p className={cn("text-[8px] font-black uppercase tracking-wider mb-2", darkMode ? "text-gray-600" : "text-gray-400")}>Mes rápido</p>
+                          {/* Year nav */}
+                          <div className={cn("flex items-center rounded-lg mb-2 overflow-hidden border", darkMode ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-100")}>
+                            <button onClick={() => setPickerYear(y => y - 1)}
+                              className={cn("px-3 py-1.5 text-sm font-black transition-colors", darkMode ? "text-gray-400 hover:bg-white/10 hover:text-white" : "text-gray-400 hover:bg-gray-200 hover:text-gray-700")}>‹</button>
+                            <span className={cn("flex-1 text-center text-[11px] font-black", darkMode ? "text-white" : "text-gray-800")}>{pickerYear}</span>
+                            <button onClick={() => setPickerYear(y => y + 1)}
+                              className={cn("px-3 py-1.5 text-sm font-black transition-colors", darkMode ? "text-gray-400 hover:bg-white/10 hover:text-white" : "text-gray-400 hover:bg-gray-200 hover:text-gray-700")}>›</button>
+                          </div>
+                          {/* Month grid */}
+                          <div className="grid grid-cols-4 gap-1">
+                            {Array.from({length: 12}, (_, mi) => {
+                              const now = new Date();
+                              const d = new Date(pickerYear, mi, 1);
+                              const lastDay = new Date(pickerYear, mi + 1, 0).getDate();
+                              const startStr = `${pickerYear}-${String(mi+1).padStart(2,'0')}-01`;
+                              const endStr = `${pickerYear}-${String(mi+1).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`;
+                              const isActive = dashboardStartDate === startStr && dashboardEndDate === endStr;
+                              const isCurrentMonth = mi === now.getMonth() && pickerYear === now.getFullYear();
+                              return (
+                                <button key={mi}
+                                  onClick={() => { setDashStart(startStr); setDashEnd(endStr); setPickerOpen(false); }}
+                                  className={cn("py-1.5 rounded-lg text-[9px] font-black transition-all",
+                                    isActive ? "bg-[#ED1C24] text-white" :
+                                    isCurrentMonth ? (darkMode ? "bg-white/15 text-white" : "bg-gray-300 text-gray-800") :
+                                    (darkMode ? "text-gray-500 hover:bg-white/8 hover:text-gray-300" : "text-gray-400 hover:bg-gray-100 hover:text-gray-700")
+                                  )}>
+                                  {d.toLocaleDateString('es-EC',{month:'short'}).toUpperCase().slice(0,3)}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          {/* Year complete buttons */}
+                          <div className="flex items-center gap-1 mt-2">
+                            {[pickerYear - 1, pickerYear].map(yr => {
+                              const startStr = `${yr}-01-01`;
+                              const endStr = `${yr}-12-31`;
+                              const isActive = dashboardStartDate === startStr && dashboardEndDate === endStr;
+                              return (
+                                <button key={yr}
+                                  onClick={() => { setDashStart(startStr); setDashEnd(endStr); setPickerOpen(false); }}
+                                  className={cn("flex-1 py-1 rounded-lg text-[9px] font-black transition-all",
+                                    isActive ? "bg-[#ED1C24] text-white" :
+                                    (darkMode ? "bg-white/5 text-gray-500 hover:bg-white/10 hover:text-gray-300" : "bg-gray-100 text-gray-400 hover:bg-gray-200 hover:text-gray-700")
+                                  )}
+                                >{yr} completo</button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                        {/* Manual date inputs */}
+                        <div className="px-4 py-3 space-y-2">
+                          <p className={cn("text-[8px] font-black uppercase tracking-wider", darkMode ? "text-gray-600" : "text-gray-400")}>Rango personalizado</p>
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1">
+                              <label className={cn("text-[8px] font-bold block mb-1", darkMode ? "text-gray-600" : "text-gray-400")}>Desde</label>
+                              <input type="date" value={dashboardStartDate}
+                                onChange={e => {
+                                  const v = e.target.value;
+                                  if (!v) { setDashStart(''); return; }
+                                  const parts = v.split('-');
+                                  if (parts.length === 3) {
+                                    const lastDay = new Date(parseInt(parts[0]), parseInt(parts[1]), 0).getDate();
+                                    const day = Math.min(parseInt(parts[2]), lastDay);
+                                    setDashStart(`${parts[0]}-${parts[1]}-${String(day).padStart(2,'0')}`);
+                                  } else setDashStart(v);
+                                }}
+                                style={darkMode ? { colorScheme: 'dark' } : {}}
+                                className={cn("w-full px-2 py-1.5 rounded-lg text-[10px] outline-none border focus:ring-1 focus:ring-[#ED1C24]/30",
+                                  darkMode ? "bg-white/8 text-white border-white/10" : "bg-gray-50 text-gray-800 border-gray-200"
+                                )}
+                              />
+                            </div>
+                            <span className={cn("text-[10px] mt-4", darkMode ? "text-gray-600" : "text-gray-400")}>→</span>
+                            <div className="flex-1">
+                              <label className={cn("text-[8px] font-bold block mb-1", darkMode ? "text-gray-600" : "text-gray-400")}>Hasta</label>
+                              <input type="date" value={dashboardEndDate}
+                                onChange={e => {
+                                  const v = e.target.value;
+                                  if (!v) { setDashEnd(''); return; }
+                                  const parts = v.split('-');
+                                  if (parts.length === 3) {
+                                    const lastDay = new Date(parseInt(parts[0]), parseInt(parts[1]), 0).getDate();
+                                    const day = Math.min(parseInt(parts[2]), lastDay);
+                                    setDashEnd(`${parts[0]}-${parts[1]}-${String(day).padStart(2,'0')}`);
+                                  } else setDashEnd(v);
+                                }}
+                                style={darkMode ? { colorScheme: 'dark' } : {}}
+                                className={cn("w-full px-2 py-1.5 rounded-lg text-[10px] outline-none border focus:ring-1 focus:ring-[#ED1C24]/30",
+                                  darkMode ? "bg-white/8 text-white border-white/10" : "bg-gray-50 text-gray-800 border-gray-200"
+                                )}
+                              />
+                            </div>
+                          </div>
+                          {(dashboardStartDate || dashboardEndDate) && (
+                            <button
+                              onClick={() => { setDashStart(''); setDashEnd(''); sessionStorage.removeItem('dash_start'); sessionStorage.removeItem('dash_end'); setPickerOpen(false); }}
+                              className={cn("w-full py-1.5 rounded-lg text-[9px] font-bold transition-colors",
+                                darkMode ? "bg-white/5 text-gray-500 hover:bg-white/10 hover:text-gray-300" : "bg-gray-100 text-gray-400 hover:bg-gray-200 hover:text-gray-600"
+                              )}>
+                              Limpiar filtro
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+                {/* Active filter indicator */}
+                {(dashboardStartDate || dashboardEndDate) && (
+                  <div className={cn("flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-bold",
+                    darkMode ? "bg-white/5 text-gray-400" : "bg-gray-100 text-gray-500"
+                  )}>
+                    <span>{dashboardStartDate || '…'}</span>
+                    <span className="text-[8px]">→</span>
+                    <span>{dashboardEndDate || '…'}</span>
+                    <button onClick={() => { setDashStart(''); setDashEnd(''); sessionStorage.removeItem('dash_start'); sessionStorage.removeItem('dash_end'); }}
+                      className={cn("ml-1 rounded transition-colors", darkMode ? "hover:text-red-400" : "hover:text-red-500")}>
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
                 )}
               </div>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 md:gap-4">
+              <div className={dashboardView === 'compras' ? 'hidden' : undefined}>
+              <div className="grid grid-cols-5 gap-4">
               {loading ? (
                 Array.from({ length: 5 }).map((_, i) => (
                   <React.Fragment key={i}><SkeletonDashboardCard darkMode={darkMode} /></React.Fragment>
@@ -5798,26 +6340,20 @@ ${rows.map(r=>{
                 darkMode ? "bg-[#ED1C24]/10 border-[#ED1C24]/30" : "bg-red-50 border-red-200 shadow-sm"
               )}>
                 <div className="absolute top-0 right-0 w-20 h-20 opacity-5"><BarChart3 className="w-full h-full" /></div>
-                <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-2", darkMode ? "text-red-400" : "text-red-500")}>m² Totales Vendidos</p>
+                <div className="flex items-center justify-between mb-2">
+                  <p className={cn("text-[9px] font-bold uppercase tracking-wider", darkMode ? "text-red-400" : "text-red-500")}>m² Totales Vendidos</p>
+                  <span className={cn("text-[8px] font-black px-2 py-0.5 rounded-full",
+                    globalFilmFilter === 'all' ? (darkMode ? "bg-white/10 text-gray-400" : "bg-gray-100 text-gray-500") :
+                    globalFilmFilter === 'DIHT' ? "bg-[#ED1C24]/20 text-[#ED1C24]" :
+                    globalFilmFilter === 'DIHL' ? "bg-blue-500/20 text-blue-400" :
+                    "bg-purple-500/20 text-purple-400"
+                  )}>
+                    {globalFilmFilter === 'all' ? 'GLOBAL' : globalFilmFilter === 'DIHT' ? 'DI-HT' : globalFilmFilter === 'DIHL' ? 'DI-HL' : 'DI-ML'}
+                  </span>
+                </div>
                 <p className="text-3xl font-black leading-none text-[#ED1C24]">{globalMetrics.totalM2.toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                 <p className={cn("text-[10px] mt-1 font-semibold", darkMode ? "text-red-400/60" : "text-red-400")}>metros cuadrados</p>
                 <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{globalMetrics.totalConsumption} cajas</p>
-              </div>
-              {/* m²/mes promedio */}
-              <div className={cn(
-                "p-5 rounded-xl border transition-colors duration-300",
-                darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
-              )}>
-                <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-2", darkMode ? "text-gray-600" : "text-gray-400")}>m² · Medida Top</p>
-                <p className={cn("text-3xl font-black leading-none uppercase", darkMode ? "text-cyan-400" : "text-cyan-600")}>
-                  {globalMetrics.topSizeByM2}
-                </p>
-                <p className={cn("text-[10px] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>mayor superficie</p>
-                {globalMetrics.sizeData[0]?.m2 > 0 && (
-                  <p className={cn("text-[9px] mt-0.5 font-semibold", darkMode ? "text-cyan-500" : "text-cyan-600")}>
-                    {globalMetrics.sizeData[0].m2.toLocaleString('es-EC', { minimumFractionDigits: 2 })} m²
-                  </p>
-                )}
               </div>
               <div className={cn(
                 "p-5 rounded-xl border transition-colors duration-300",
@@ -5838,7 +6374,9 @@ ${rows.map(r=>{
               )}>
                 <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-2", darkMode ? "text-gray-600" : "text-gray-400")}>Centros Médicos</p>
                 <p className={cn("text-3xl font-black leading-none", darkMode ? "text-white" : "text-gray-900")}>{globalMetrics.totalClients}</p>
-                <p className={cn("text-[10px] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>activos</p>
+                <p className={cn("text-[10px] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>
+                  {(dashboardStartDate || dashboardEndDate) ? 'con compras en período' : 'registrados'}
+                </p>
                 {globalMetrics.totalClients > 0 && globalMetrics.totalM2 > 0 && (
                   <p className={cn("text-[9px] mt-0.5 font-semibold", darkMode ? "text-gray-500" : "text-gray-400")}>
                     {(globalMetrics.totalM2 / globalMetrics.totalClients).toFixed(1)} m²/cliente
@@ -5857,12 +6395,12 @@ ${rows.map(r=>{
             </div>
 
             {loading ? (
-              <div className="grid grid-cols-12 gap-4 md:gap-5">
-                <div className={cn("col-span-12 md:col-span-8 p-4 md:p-6 rounded-xl border", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+              <div className="grid grid-cols-12 gap-5">
+                <div className={cn("col-span-8 p-6 rounded-xl border", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
                   <SkeletonBlock darkMode={darkMode} className="h-3 w-48 mb-6" />
                   <SkeletonBlock darkMode={darkMode} className="h-64 w-full" />
                 </div>
-                <div className={cn("col-span-12 md:col-span-4 p-4 md:p-6 rounded-xl border", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                <div className={cn("col-span-4 p-6 rounded-xl border", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
                   <SkeletonBlock darkMode={darkMode} className="h-3 w-32 mb-6" />
                   <div className="space-y-3">
                     {Array.from({ length: 5 }).map((_,i) => <React.Fragment key={i}><SkeletonBlock darkMode={darkMode} className="h-8 w-full" /></React.Fragment>)}
@@ -5870,20 +6408,20 @@ ${rows.map(r=>{
                 </div>
               </div>
             ) : (
-            <div className="grid grid-cols-12 gap-4 md:gap-5">
+            <div className="grid grid-cols-12 gap-5">
               <div className={cn(
-                "col-span-12 md:col-span-8 p-4 md:p-6 rounded-xl border transition-colors duration-300",
+                "col-span-8 p-6 rounded-xl border transition-colors duration-300",
                 darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
               )}>
-                <div className="flex flex-wrap items-center justify-between gap-2 mb-5">
+                <div className="flex items-center justify-between mb-6">
                   <h3 className={cn("text-[10px] font-bold uppercase tracking-wider flex items-center gap-2", darkMode ? "text-gray-500" : "text-gray-400")}>
                     <BarChart3 className="w-3.5 h-3.5 text-[#ED1C24]" /> Distribución Global por Medida — m²
                   </h3>
                   <div className={cn("flex items-center gap-1 p-1 rounded-xl", darkMode ? "bg-white/5" : "bg-gray-100")}>
                     {([['all','Global'], ['DIHT','DI-HT'], ['DIHL','DI-HL']] as const).map(([val, label]) => (
-                      <button key={val} onClick={() => setSizeChartFilter(val)}
+                      <button key={val} onClick={() => { setSizeChartFilter(val); setGlobalFilmFilter(val === 'all' ? 'all' : val as any); }}
                         className={cn("px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all",
-                          sizeChartFilter === val
+                          globalFilmFilter === val || (val === 'all' && globalFilmFilter === 'all')
                             ? val === 'DIHL' ? "bg-blue-500/20 text-blue-400 ring-1 ring-blue-500/30"
                             : val === 'DIHT' ? "bg-[#ED1C24]/15 text-[#ED1C24] ring-1 ring-[#ED1C24]/30"
                             : (darkMode ? "bg-white/12 text-white" : "bg-gray-800 text-white")
@@ -5892,12 +6430,12 @@ ${rows.map(r=>{
                     ))}
                   </div>
                 </div>
-                <div className="h-48 md:h-72">
+                <div className="h-72">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={(() => {
-                      const filtered = sizeChartFilter === 'all' ? allConsumos
-                        : sizeChartFilter === 'DIHT' ? allConsumos.filter(r => !r.film_type || r.film_type === 'DIHT')
-                        : allConsumos.filter(r => r.film_type === 'DIHL');
+                      const filtered = globalFilmFilter === 'all' ? allConsumos
+                        : globalFilmFilter === 'DIHT' ? allConsumos.filter(r => !r.film_type || r.film_type === 'DIHT')
+                        : allConsumos.filter(r => r.film_type === globalFilmFilter);
                       const dated = filtered.filter(r => {
                         const d = new Date(r.order_date);
                         if (dashboardStartDate && d < new Date(dashboardStartDate)) return false;
@@ -5930,7 +6468,7 @@ ${rows.map(r=>{
                       <Bar dataKey="m2" name="m2" radius={[6, 6, 0, 0]} barSize={50}>
                         {[0,1,2,3].map((index) => (
                           <Cell key={`cell-${index}`} fill={
-                            sizeChartFilter === 'DIHL'
+                            globalFilmFilter === 'DIHL'
                               ? (index % 2 === 0 ? '#3B82F6' : '#1D4ED8')
                               : (index % 2 === 0 ? '#ED1C24' : (darkMode ? '#2a2a2e' : '#E5E7EB'))
                           } />
@@ -5942,35 +6480,61 @@ ${rows.map(r=>{
               </div>
 
               <div className={cn(
-                "col-span-12 md:col-span-4 p-4 md:p-6 rounded-xl border transition-colors duration-300",
+                "col-span-4 p-6 rounded-xl border transition-colors duration-300",
                 darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
               )}>
-                <h3 className={cn("text-[10px] font-bold uppercase tracking-wider mb-5 flex items-center gap-2", darkMode ? "text-gray-500" : "text-gray-400")}>
-                  <TrendingUp className="w-3.5 h-3.5 text-[#ED1C24]" /> Top 5 Clientes — m²
-                </h3>
-                <div className="space-y-4">
-                  {globalMetrics.topClients.map((client, idx) => (
-                    <div key={idx} className="flex items-center gap-3">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className={cn("text-[10px] font-bold uppercase tracking-wider flex items-center gap-2", darkMode ? "text-gray-500" : "text-gray-400")}>
+                    <TrendingUp className="w-3.5 h-3.5 text-[#ED1C24]" />
+                    Top {topClientsLimit === 'all' ? 5 : topClientsLimit} Clientes — m²
+                  </h3>
+                  <div className="flex items-center gap-1.5">
+                    {/* Top 5 / Top 10 toggle inline */}
+                    <div className={cn("flex items-center gap-0.5 p-0.5 rounded-lg", darkMode ? "bg-white/5" : "bg-gray-100")}>
+                      {([5, 10] as const).map(n => (
+                        <button key={n}
+                          onClick={() => setTopClientsLimit(n)}
+                          className={cn("px-2.5 py-1 rounded-md text-[9px] font-black transition-all",
+                            topClientsLimit === n
+                              ? (darkMode ? "bg-white/15 text-white" : "bg-white text-gray-800 shadow-sm")
+                              : (darkMode ? "text-gray-600 hover:text-gray-400" : "text-gray-400 hover:text-gray-600")
+                          )}>Top {n}</button>
+                      ))}
+                    </div>
+                    {/* Only Todos opens modal */}
+                    <button
+                      onClick={() => { setTopClientsLimit('all'); setShowTopClientsModal(true); }}
+                      className={cn("flex items-center gap-1 px-2.5 py-1 rounded-lg text-[9px] font-black border transition-all",
+                        darkMode ? "bg-white/5 border-white/10 text-gray-400 hover:bg-white/10 hover:text-gray-200" : "bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100"
+                      )}
+                    >
+                      <Users className="w-3 h-3" /> Todos
+                    </button>
+                  </div>
+                </div>
+                {/* List — expands from 5 to 10 in place */}
+                <div className="space-y-2.5">
+                  {((globalMetrics as any).allClientsSorted?.slice(0, topClientsLimit === 'all' ? 5 : topClientsLimit) || globalMetrics.topClients).map((client: any, idx: number) => (
+                    <div key={idx}
+                      className={cn("flex items-center gap-3 p-2 rounded-xl cursor-pointer transition-colors",
+                        darkMode ? "hover:bg-white/4" : "hover:bg-gray-50"
+                      )}
+                      onClick={() => {
+                        const c = allClients.find(x => x.id === client.id);
+                        if (c) setClientPreviewModal({ client: c, rank: idx + 1, m2: client.m2, cajas: client.value });
+                      }}
+                    >
                       <div className={cn(
                         "w-6 h-6 rounded-lg flex items-center justify-center font-black text-[10px] shrink-0",
-                        idx === 0
-                          ? "bg-[#ED1C24] text-white"
-                          : (darkMode ? "bg-white/8 text-gray-400" : "bg-gray-100 text-gray-500")
-                      )}>
-                        {idx + 1}
-                      </div>
+                        idx === 0 ? "bg-[#ED1C24] text-white" : idx === 1 ? (darkMode ? "bg-white/15 text-gray-200" : "bg-gray-200 text-gray-600") : idx === 2 ? (darkMode ? "bg-white/8 text-gray-400" : "bg-gray-100 text-gray-500") : (darkMode ? "bg-white/5 text-gray-600" : "bg-gray-50 text-gray-400")
+                      )}>{idx + 1}</div>
                       <div className="flex-1 min-w-0">
-                        <p className="font-semibold text-xs truncate">{client.name}</p>
-                        <div className={cn(
-                          "mt-1 h-0.5 rounded-full overflow-hidden",
-                          darkMode ? "bg-white/8" : "bg-gray-100"
-                        )}>
-                          <div
-                            className="h-full bg-[#ED1C24] rounded-full"
-                            style={{ width: `${(client.m2 / globalMetrics.topClients[0].m2) * 100}%` }}
-                          />
+                        <p className={cn("font-semibold text-xs truncate", darkMode ? "text-gray-200" : "text-gray-800")}>{client.name}</p>
+                        <div className={cn("mt-1 h-0.5 rounded-full overflow-hidden", darkMode ? "bg-white/8" : "bg-gray-100")}>
+                          <div className="h-full bg-[#ED1C24] rounded-full"
+                            style={{ width: `${(globalMetrics as any).allClientsSorted?.[0]?.m2 > 0 ? (client.m2 / (globalMetrics as any).allClientsSorted[0].m2) * 100 : 0}%` }} />
                         </div>
-                        <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{client.value} cajas</p>
+                        <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{client.value} cj</p>
                       </div>
                       <div className="text-right shrink-0">
                         <p className={cn("font-black text-sm", darkMode ? "text-cyan-400" : "text-cyan-600")}>{client.m2.toFixed(1)}</p>
@@ -5983,10 +6547,10 @@ ${rows.map(r=>{
               
               {/* Estadísticas por Vendedor */}
               <div className={cn(
-                "col-span-12 p-4 md:p-6 rounded-xl border transition-colors duration-300",
+                "col-span-12 p-6 rounded-xl border transition-colors duration-300",
                 darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
               )}>
-                <div className="flex flex-wrap items-center justify-between gap-2 mb-5">
+                <div className="flex items-center justify-between mb-5">
                   <h3 className={cn("text-[10px] font-bold uppercase tracking-wider flex items-center gap-2", darkMode ? "text-gray-500" : "text-gray-400")}>
                     <Users className="w-3.5 h-3.5 text-[#ED1C24]" /> Estadísticas por Vendedor
                   </h3>
@@ -6207,14 +6771,14 @@ ${rows.map(r=>{
 
               {/* Métricas de Impresoras */}
               <div className={cn(
-                "col-span-12 p-4 md:p-6 rounded-xl border transition-colors duration-300",
+                "col-span-12 p-6 rounded-xl border transition-colors duration-300",
                 darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
               )}>
                 <h3 className={cn("text-[10px] font-bold uppercase tracking-wider mb-5 flex items-center gap-2", darkMode ? "text-gray-500" : "text-gray-400")}>
                   <Printer className="w-3.5 h-3.5 text-[#ED1C24]" /> Análisis de Impresoras Instaladas
                 </h3>
                 
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-6">
+                <div className="grid grid-cols-4 gap-4 mb-6">
                   <div className={cn(
                     "p-4 rounded-xl border transition-colors duration-300",
                     darkMode ? "bg-white/4 border-white/6" : "bg-gray-50 border-gray-100"
@@ -6270,7 +6834,7 @@ ${rows.map(r=>{
 
                 <div className="grid grid-cols-12 gap-6">
                   {/* Tipos de Impresora */}
-                  <div className="col-span-12 md:col-span-4">
+                  <div className="col-span-4">
                     <h4 className={cn("text-[9px] font-bold uppercase tracking-wider mb-3", darkMode ? "text-gray-600" : "text-gray-400")}>Distribución por Tipo</h4>
                     <div className="space-y-2">
                       {printerMetrics.typeData.map((type, idx) => (
@@ -6301,7 +6865,7 @@ ${rows.map(r=>{
                   </div>
 
                   {/* Seriales Duplicados */}
-                  <div className="col-span-12 md:col-span-8">
+                  <div className="col-span-8">
                     <div className="flex items-center justify-between mb-4">
                       <h4 className="text-[10px] font-bold text-gray-400 uppercase">Seriales Duplicados</h4>
                       {printerMetrics.repeatedSerials.length > 0 && (
@@ -6348,44 +6912,59 @@ ${rows.map(r=>{
                   </div>
                 </div>
 
-                <div className="grid grid-cols-12 gap-6 mt-8">
+                <div className="grid grid-cols-12 gap-8 mt-8">
                   {/* Relación Consumo vs Impresoras */}
-                  <div className="col-span-12 md:col-span-8">
-                    <h4 className="text-[10px] font-bold text-gray-400 uppercase mb-4">Relación Consumo vs Impresoras (Top 10)</h4>
+                  <div className="col-span-8">
+                    <div className="flex items-center justify-between mb-4">
+                      <h4 className="text-[10px] font-bold text-gray-400 uppercase">Relación Consumo vs Impresoras (Top 10)</h4>
+                      <button
+                        onClick={() => setShowPrinterStatsModal(true)}
+                        className={cn("flex items-center gap-1 px-2.5 py-1 rounded-lg text-[9px] font-black border transition-all",
+                          darkMode ? "bg-white/5 border-white/10 text-gray-400 hover:bg-white/10 hover:text-gray-200" : "bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100"
+                        )}
+                      >
+                        <Users className="w-3 h-3" /> Todos ({printerMetrics.clientPrinterStats.filter(s => s.consumption > 0).length})
+                      </button>
+                    </div>
                     <div className="overflow-x-auto">
                       <table className="w-full text-left">
-                        <thead className={cn(
-                          "text-[10px] font-bold uppercase transition-colors duration-300",
-                          darkMode ? "bg-white/5 text-gray-500" : "bg-gray-50 text-gray-400"
-                        )}>
+                        <thead className={cn("text-[9px] font-bold uppercase transition-colors duration-300", darkMode ? "bg-white/5 text-gray-500" : "bg-gray-50 text-gray-400")}>
                           <tr>
-                            <th className="px-4 py-3">Cliente</th>
-                            <th className="px-4 py-3 text-center">Impresoras</th>
-                            <th className="px-4 py-3 text-center">Consumo (Cajas)</th>
-                            <th className="px-4 py-3 text-right">Promedio / Impresora</th>
+                            <th className="px-4 py-2.5">#</th>
+                            <th className="px-4 py-2.5">Cliente</th>
+                            <th className="px-4 py-2.5 text-center">Impr.</th>
+                            <th className="px-4 py-2.5 text-right">Cajas</th>
+                            <th className="px-4 py-2.5 text-right">m²</th>
+                            <th className="px-4 py-2.5 text-right">cj/impr.</th>
+                            <th className="px-4 py-2.5 text-right">m²/impr.</th>
                           </tr>
                         </thead>
-                        <tbody className={cn(
-                          "divide-y transition-colors duration-300",
-                          darkMode ? "divide-white/5" : "divide-gray-100"
-                        )}>
-                          {printerMetrics.clientPrinterStats.slice(0, 10).map((stat, idx) => (
-                            <tr key={idx} className={darkMode ? "hover:bg-white/5" : "hover:bg-gray-50"}>
-                              <td className="px-4 py-3 font-bold text-xs truncate max-w-[200px]">{stat.clientName}</td>
-                              <td className="px-4 py-3 text-center font-black">{stat.printerCount}</td>
-                              <td className="px-4 py-3 text-center font-black text-[#ED1C24]">{stat.consumption}</td>
-                              <td className="px-4 py-3 text-right font-bold text-gray-500">
-                                {stat.printerCount > 0 ? (stat.consumption / stat.printerCount).toFixed(1) : '0'}
-                              </td>
-                            </tr>
-                          ))}
+                        <tbody className={cn("divide-y transition-colors duration-300", darkMode ? "divide-white/5" : "divide-gray-100")}>
+                          {printerMetrics.clientPrinterStats.filter(s => s.consumption > 0).slice(0, 10).map((stat, idx) => {
+                            const cjPerPrinter = stat.printerCount > 0 ? (stat.consumption / stat.printerCount).toFixed(1) : '—';
+                            const m2PerPrinter = stat.printerCount > 0 ? (stat.m2 / stat.printerCount).toFixed(1) : '—';
+                            return (
+                              <tr key={idx}
+                                className={cn("cursor-pointer transition-colors", darkMode ? "hover:bg-white/4" : "hover:bg-gray-50")}
+                                onClick={() => { const c = allClients.find(x => x.id === stat.clientId); if (c) { setSelectedClient(c); setView('clients'); } }}
+                              >
+                                <td className={cn("px-4 py-2.5 font-black text-[10px]", idx < 3 ? "text-[#ED1C24]" : (darkMode ? "text-gray-700" : "text-gray-300"))}>{idx+1}</td>
+                                <td className="px-4 py-2.5 font-semibold text-xs truncate max-w-[180px]">{stat.clientName}</td>
+                                <td className="px-4 py-2.5 text-center font-black">{stat.printerCount}</td>
+                                <td className={cn("px-4 py-2.5 text-right font-black", darkMode ? "text-red-400" : "text-red-600")}>{stat.consumption}</td>
+                                <td className={cn("px-4 py-2.5 text-right font-black", darkMode ? "text-cyan-400" : "text-cyan-600")}>{stat.m2.toFixed(1)}</td>
+                                <td className={cn("px-4 py-2.5 text-right text-[10px] font-bold", stat.printerCount === 0 ? (darkMode ? "text-gray-700" : "text-gray-300") : (darkMode ? "text-gray-400" : "text-gray-600"))}>{cjPerPrinter}</td>
+                                <td className={cn("px-4 py-2.5 text-right text-[10px] font-bold", stat.printerCount === 0 ? (darkMode ? "text-gray-700" : "text-gray-300") : (darkMode ? "text-gray-500" : "text-gray-500"))}>{m2PerPrinter}</td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
                   </div>
 
                   {/* Clientes sin impresora */}
-                  <div className="col-span-12 md:col-span-4">
+                  <div className="col-span-4">
                     <h4 className="text-[10px] font-bold text-gray-400 uppercase mb-4">Clientes sin Impresora Registrada</h4>
                     <div className="space-y-2 max-h-[300px] overflow-y-auto custom-scrollbar pr-2">
                       {printerMetrics.clientsWithoutPrinters.map((client, idx) => (
@@ -6493,14 +7072,22 @@ ${rows.map(r=>{
                 </div>
               </div>
             )}
+
+            </div>
+            {/* ── PURCHASES DASHBOARD ── */}
+            {dashboardView === 'compras' && (
+              <PurchasesDashboardView
+                darkMode={darkMode}
+                globalMetrics={globalMetrics}
+              />
+            )}
           </div>
         )}
-
         {view === 'inventory' && (
-          <div className="col-span-12 w-full flex flex-col gap-6 pb-8">
+          <div className="col-span-12 flex flex-col gap-6 min-h-0 overflow-y-auto pr-2 pb-8 custom-scrollbar">
 
             {/* Header */}
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-xl font-black tracking-tight flex items-center gap-2">
                   <Package className="w-5 h-5 text-[#ED1C24]" /> Control de Inventario
@@ -6509,12 +7096,12 @@ ${rows.map(r=>{
                   Stock real · Entradas · Lotes · Mínimos
                 </p>
               </div>
-              <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center gap-3">
                 {/* Film type filter removed from inventory header — each tab manages its own filter */}
                 <div className={cn("flex items-center gap-1 p-1 rounded-xl", darkMode ? "bg-white/5" : "bg-gray-100")}>
                   {([['overview','Stock Tiempo'], ['movements','Movimientos'], ['stock-film','Stock Film']] as const).map(([tab, label]) => (
                     <button key={tab} onClick={() => setInventoryTab(tab)}
-                      className={cn("px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap",
+                      className={cn("px-3 py-1.5 rounded-lg text-xs font-semibold transition-all",
                         inventoryTab === tab
                           ? tab === 'stock-film'
                             ? "bg-cyan-500 text-white shadow-sm"
@@ -6525,9 +7112,9 @@ ${rows.map(r=>{
                 </div>
                 <button
                   onClick={() => { setNewStockEntry({ date: new Date().toISOString().split('T')[0], film_type: (globalFilmFilter === 'DIHL' ? 'DIHL' : globalFilmFilter === 'DIML' ? 'DIML' : 'DIHT') as 'DIHT'|'DIHL'|'DIML' }); setIsStockEntryModalOpen(true); }}
-                  className="bg-[#ED1C24] text-white px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 hover:bg-[#D11920] shadow-md shadow-red-500/20 transition-all whitespace-nowrap"
+                  className="bg-[#ED1C24] text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 hover:bg-[#D11920] shadow-md shadow-red-500/20 transition-all"
                 >
-                  <Plus className="w-3.5 h-3.5" /><span className="hidden sm:inline"> Nueva Entrada</span>
+                  <Plus className="w-3.5 h-3.5" /> Nueva Entrada
                 </button>
               </div>
             </div>
@@ -6554,7 +7141,7 @@ ${rows.map(r=>{
                           </button>
                         )}
                       </div>
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <div className="grid grid-cols-4 gap-3">
                         {SIZES.map(size => (
                           <div key={size} className={cn("rounded-xl p-3 border", darkMode ? "bg-white/4 border-white/8" : "bg-gray-50 border-gray-100")}>
                             <span className={cn("text-[10px] font-black uppercase px-2 py-0.5 rounded mb-3 inline-block", darkMode ? "bg-white/10 text-white" : "bg-gray-800 text-white")}>{size}</span>
@@ -6591,7 +7178,7 @@ ${rows.map(r=>{
                 })()}
 
                 {/* Stock cards per size */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
+                <div className="grid grid-cols-4 gap-5">
                   {stockSummary.map(item => (
                     <div key={item.size} className={cn("rounded-xl p-5 border relative overflow-hidden transition-all",
                       item.status === 'critical' ? (darkMode ? "bg-red-500/10 border-red-500/30" : "bg-red-50 border-red-200") :
@@ -6610,7 +7197,7 @@ ${rows.map(r=>{
                         )}
                       </div>
 
-                      <p className="text-3xl sm:text-4xl font-black leading-none">{item.current}</p>
+                      <p className="text-4xl font-black leading-none">{item.current}</p>
                       <p className={cn("text-[10px] mt-1 font-medium", darkMode ? "text-gray-500" : "text-gray-400")}>cajas disponibles</p>
                       {(() => {
                         // Show m² for both DIHT and DIHL if filter is 'all', or just for the active filter
@@ -6997,7 +7584,7 @@ ${rows.map(r=>{
                       return { month, totalIn, totalOut, totalBalance, totalInM2: parseFloat(totalInM2.toFixed(1)), totalOutM2: parseFloat(totalOutM2.toFixed(1)), totalBalanceM2: parseFloat(totalBalanceM2.toFixed(1)) };
                     });
                     return (
-                      <div className="grid grid-cols-6 md:grid-cols-12 gap-1 md:gap-2 mb-2">
+                      <div className="grid grid-cols-12 gap-2 mb-2">
                         {totals.map((t, i) => (
                           <div key={i} className={cn("rounded-lg p-2.5 border text-center", darkMode ? "bg-white/4 border-white/8" : "bg-gray-50 border-gray-100")}>
                             <p className={cn("text-[9px] font-black uppercase mb-1.5", darkMode ? "text-gray-500" : "text-gray-400")}>{t.month}</p>
@@ -7702,7 +8289,7 @@ ${rows.map(r=>{
 
         {/* ══════════════ VIEW: IMAGER ══════════════ */}
         {view === 'imager' && (
-          <div className="col-span-12 w-full flex flex-col gap-6 pb-8">
+          <div className="col-span-12 flex flex-col gap-6 min-h-0 overflow-y-auto pr-2 pb-8 custom-scrollbar">
 
             {/* Header */}
             <div className="flex items-center justify-between flex-wrap gap-3">
@@ -7749,7 +8336,7 @@ ${rows.map(r=>{
               const totalInstaladas = IMAGER_PRODUCTS.filter(p => p.category === 'Impresora Principal')
                 .reduce((s, p) => s + (imagerFromClients[p.key]?.installs?.length || 0), 0);
               return (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="grid grid-cols-4 gap-3">
                   {[
                     { label: 'Unidades en bodega', value: totalUnits, sub: `${printers.length} impresoras · ${accessories.length} accesorios`, color: darkMode ? 'text-cyan-400' : 'text-cyan-600' },
                     { label: 'Instaladas en clientes', value: totalInstaladas, sub: 'Impresoras registradas activas', color: darkMode ? 'text-emerald-400' : 'text-emerald-600' },
@@ -7768,7 +8355,7 @@ ${rows.map(r=>{
 
             {/* Year selector + product cards */}
             {/* Year selector */}
-            <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center justify-between">
               <h3 className={cn("text-[10px] font-black uppercase tracking-widest flex items-center gap-2", darkMode ? "text-gray-500" : "text-gray-400")}>
                 <Layers className="w-3.5 h-3.5" /> Detalle mensual por producto
               </h3>
@@ -7928,16 +8515,29 @@ ${rows.map(r=>{
                                         : (darkMode ? "bg-red-500/15 text-red-500/70" : "bg-red-100 text-red-400")
                                     )}>{totalAutoOut > 0 ? 'auto · clientes' : 'manual'}</span>
                                   </td>
-                                  {balances.map((b, i) => (
+                                  {balances.map((b, i) => {
+                                    // Get clients installed in this month
+                                    const MONTH_KEYS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+                                    const monthKey = MONTH_KEYS[i];
+                                    const clientsThisMonth = (imagerFromClients[prod.key]?.installs || []).filter(inst => {
+                                      if (!inst.installDate) return false;
+                                      const d = new Date(inst.installDate);
+                                      return d.getFullYear() === imagerYear && MONTH_KEYS[d.getMonth()] === monthKey;
+                                    });
+                                    return (
                                     <td key={i} className="px-2 py-1.5 text-center">
                                       {b.autoOut > 0 ? (
-                                        // Auto value from client install dates
-                                        <div className="flex flex-col items-center gap-0.5">
+                                        <button
+                                          onClick={() => setImagerMonthModal({ prodLabel: prod.label, month: monthKey, year: imagerYear, clients: clientsThisMonth })}
+                                          className={cn("flex flex-col items-center gap-0.5 w-full transition-all rounded-lg px-1 py-1",
+                                            darkMode ? "hover:bg-red-500/15" : "hover:bg-red-50"
+                                          )}
+                                          title={`Ver ${clientsThisMonth.length} cliente${clientsThisMonth.length !== 1 ? 's' : ''} instalados`}
+                                        >
                                           <span className={cn("font-black text-sm", darkMode ? "text-red-400" : "text-red-600")}>{b.autoOut}</span>
                                           <span className={cn("text-[7px] font-bold", darkMode ? "text-emerald-500/60" : "text-emerald-600/60")}>instaladas</span>
-                                        </div>
+                                        </button>
                                       ) : (
-                                        // Manual fallback input
                                         <input
                                           type="number" min={0}
                                           value={b.outUnits && b.autoOut === 0 ? b.outUnits : ''}
@@ -7951,7 +8551,8 @@ ${rows.map(r=>{
                                         />
                                       )}
                                     </td>
-                                  ))}
+                                    );
+                                  })}
                                   <td className={cn("px-4 py-2 text-center font-black", darkMode ? "text-red-400" : "text-red-500")}>{totalOut}</td>
                                 </tr>
                                 {/* Balance row */}
@@ -8009,20 +8610,24 @@ ${rows.map(r=>{
                           {/* ── Instaladas en clientes ── */}
                           {(() => {
                             const allInstaladas = (imagerFromClients[prod.key]?.installs || []);
-                            // Solo mostrar las del año seleccionado
                             const instaladas = allInstaladas.filter(inst => {
                               if (!inst.installDate) return false;
                               return new Date(inst.installDate).getFullYear() === imagerYear;
                             });
                             const sinFecha = allInstaladas.filter(inst => !inst.installDate);
+                            const sortBy = imagerSort[prod.key] || 'date';
+                            const sorted = [...instaladas].sort((a, b) =>
+                              sortBy === 'name'
+                                ? a.clientName.localeCompare(b.clientName)
+                                : (a.installDate || '').localeCompare(b.installDate || '')
+                            );
                             return (
                               <div className={cn("border-t", darkMode ? "border-white/6" : "border-gray-100")}>
-                                <div className={cn("px-5 py-2.5 flex items-center gap-3", darkMode ? "bg-white/2" : "bg-gray-50/60")}>
-                                  <Users className={cn("w-3.5 h-3.5", darkMode ? "text-gray-500" : "text-gray-400")} />
+                                <div className={cn("px-5 py-2.5 flex items-center gap-3 flex-wrap", darkMode ? "bg-white/2" : "bg-gray-50/60")}>
+                                  <Users className={cn("w-3.5 h-3.5 shrink-0", darkMode ? "text-gray-500" : "text-gray-400")} />
                                   <span className={cn("text-[9px] font-black uppercase tracking-wider", darkMode ? "text-gray-500" : "text-gray-400")}>
                                     Instaladas en clientes
                                   </span>
-                                  {/* Total acumulado */}
                                   <span className={cn("text-[9px] font-black px-2 py-0.5 rounded-full",
                                     allInstaladas.length > 0
                                       ? (darkMode ? "bg-white/10 text-gray-400" : "bg-gray-100 text-gray-500")
@@ -8030,7 +8635,6 @@ ${rows.map(r=>{
                                   )}>
                                     {allInstaladas.length} total acumulado
                                   </span>
-                                  {/* Badge año seleccionado */}
                                   <span className={cn("text-[9px] font-black px-2 py-0.5 rounded-full",
                                     instaladas.length > 0
                                       ? (darkMode ? "bg-cyan-500/20 text-cyan-400" : "bg-cyan-50 text-cyan-600")
@@ -8040,16 +8644,42 @@ ${rows.map(r=>{
                                   </span>
                                   {sinFecha.length > 0 && (
                                     <span className={cn("text-[9px] italic", darkMode ? "text-gray-700" : "text-gray-300")}>
-                                      · {sinFecha.length} sin fecha registrada
+                                      · {sinFecha.length} sin fecha
                                     </span>
+                                  )}
+                                  {/* Sort controls */}
+                                  {instaladas.length > 1 && (
+                                    <div className={cn("flex items-center gap-1 ml-auto p-0.5 rounded-lg", darkMode ? "bg-white/5" : "bg-gray-200/60")}>
+                                      <button
+                                        onClick={() => setImagerSort(prev => ({ ...prev, [prod.key]: 'date' }))}
+                                        className={cn("px-2 py-1 rounded-md text-[8px] font-black transition-all",
+                                          sortBy === 'date'
+                                            ? (darkMode ? "bg-white/15 text-white" : "bg-white text-gray-800 shadow-sm")
+                                            : (darkMode ? "text-gray-600 hover:text-gray-400" : "text-gray-400 hover:text-gray-600")
+                                        )}
+                                      >
+                                        Por fecha
+                                      </button>
+                                      <button
+                                        onClick={() => setImagerSort(prev => ({ ...prev, [prod.key]: 'name' }))}
+                                        className={cn("px-2 py-1 rounded-md text-[8px] font-black transition-all",
+                                          sortBy === 'name'
+                                            ? (darkMode ? "bg-white/15 text-white" : "bg-white text-gray-800 shadow-sm")
+                                            : (darkMode ? "text-gray-600 hover:text-gray-400" : "text-gray-400 hover:text-gray-600")
+                                        )}
+                                      >
+                                        A-Z
+                                      </button>
+                                    </div>
                                   )}
                                 </div>
 
-                                {instaladas.length > 0 ? (
+                                {sorted.length > 0 ? (
                                   <div className="overflow-x-auto">
                                     <table className="w-full text-xs">
                                       <thead className={cn("text-[8px] font-bold uppercase tracking-wider", darkMode ? "text-gray-700 bg-white/2" : "text-gray-400 bg-gray-50/40")}>
                                         <tr>
+                                          <th className="px-5 py-2 text-left">#</th>
                                           <th className="px-5 py-2 text-left">Cliente</th>
                                           <th className="px-4 py-2 text-left">Serial</th>
                                           <th className="px-4 py-2 text-left">Sucursal</th>
@@ -8057,7 +8687,7 @@ ${rows.map(r=>{
                                         </tr>
                                       </thead>
                                       <tbody className={cn("divide-y", darkMode ? "divide-white/4" : "divide-gray-50")}>
-                                        {instaladas.map((inst, idx) => (
+                                        {sorted.map((inst, idx) => (
                                           <tr key={idx}
                                             className={cn("transition-colors cursor-pointer",
                                               darkMode ? "hover:bg-white/4" : "hover:bg-gray-50"
@@ -8067,6 +8697,7 @@ ${rows.map(r=>{
                                               if (client) { setSelectedClient(client); setView('clients'); }
                                             }}
                                           >
+                                            <td className={cn("px-5 py-2.5 font-black text-[10px]", darkMode ? "text-gray-700" : "text-gray-300")}>{idx + 1}</td>
                                             <td className="px-5 py-2.5">
                                               <span className={cn("font-semibold truncate max-w-[200px] block", darkMode ? "text-gray-300" : "text-gray-700")}>
                                                 {inst.clientName}
@@ -8078,7 +8709,7 @@ ${rows.map(r=>{
                                             <td className={cn("px-4 py-2.5 text-[10px]", darkMode ? "text-gray-600" : "text-gray-400")}>
                                               {inst.location || '—'}
                                             </td>
-                                            <td className={cn("px-4 py-2.5 text-[10px]", darkMode ? "text-gray-600" : "text-gray-400")}>
+                                            <td className={cn("px-4 py-2.5 text-[10px] font-mono", darkMode ? "text-gray-600" : "text-gray-400")}>
                                               {inst.installDate || '—'}
                                             </td>
                                           </tr>
@@ -8158,7 +8789,7 @@ ${rows.map(r=>{
         )}
 
         {view === 'intelligence' && (
-          <div className="col-span-12 w-full" style={{display:"flex", flexDirection:"column", gap:"1.5rem", paddingBottom:"2rem"}}>
+          <div className="col-span-12 flex flex-col gap-6 min-h-0 overflow-y-auto pr-2 pb-8 custom-scrollbar">
 
             {/* Header */}
             <div className="flex items-center justify-between flex-wrap gap-3">
@@ -8198,7 +8829,7 @@ ${rows.map(r=>{
             </div>
 
             {/* Tab nav */}
-            <div className={cn("flex items-center gap-1 p-1 rounded-xl overflow-x-auto scrollbar-hide", darkMode ? "bg-white/5" : "bg-gray-100")}>
+            <div className={cn("flex items-center gap-1 p-1 rounded-xl", darkMode ? "bg-white/5" : "bg-gray-100")}>
               {([
                 ['projection',    'Proyección',    Target     ],
                 ['comparativo',   'Comparativo',   BarChart3  ],
@@ -8224,6 +8855,16 @@ ${rows.map(r=>{
                   <span>{label}</span>
                 </button>
               ))}
+              {/* Help button — always visible, explains current tab */}
+              <button
+                onClick={() => setIntelHelpModal(intelligenceTab)}
+                className={cn("ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black transition-all whitespace-nowrap border",
+                  darkMode ? "bg-blue-500/10 border-blue-500/20 text-blue-400 hover:bg-blue-500/20" : "bg-blue-50 border-blue-100 text-blue-600 hover:bg-blue-100"
+                )}
+                title="Ver explicación de este módulo"
+              >
+                <span>📖</span> Explicación
+              </button>
             </div>
 
 
@@ -8316,9 +8957,9 @@ ${rows.map(r=>{
               };
 
               return (
-                <div className="space-y-5 overflow-y-auto pb-8 custom-scrollbar">
+                <div className="space-y-5">
                   {/* Header KPIs — one card per year */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-start">
+                  <div className="grid grid-cols-3 gap-4">
                     {YEARS.map(y => {
                       const gt = grandTotal(y);
                       const prev = y > 2024 ? grandTotal(y - 1) : null;
@@ -8326,20 +8967,20 @@ ${rows.map(r=>{
                       const isCurrentYearCard = y === 2026 && isCurrentYear2026;
                       return (
                         <div key={y} className={cn("rounded-xl border p-5", YEAR_BG[y])}>
-                          <div className="flex flex-wrap items-center justify-between gap-1 mb-3">
+                          <div className="flex items-center justify-between mb-3">
                             <span className={cn("text-xs font-black", YEAR_COLORS[y])}>{y}</span>
-                            <div className="flex items-center gap-1.5 flex-wrap">
+                            <div className="flex items-center gap-2">
                               {isCurrentYearCard && (
                                 <div className={cn("flex rounded-xl overflow-hidden border", darkMode ? "border-white/15" : "border-gray-200")}>
                                   <button onClick={() => setComparativo2026Mode('real')}
-                                    className={cn("px-2.5 py-1 text-[10px] font-black transition-colors",
+                                    className={cn("px-3.5 py-1.5 text-[11px] font-black transition-colors",
                                       comparativo2026Mode === 'real'
                                         ? (darkMode ? "bg-emerald-500/30 text-emerald-300" : "bg-emerald-500 text-white")
                                         : (darkMode ? "bg-white/5 text-gray-500 hover:text-gray-300" : "bg-white text-gray-400 hover:text-gray-600"))}>
                                     Real
                                   </button>
                                   <button onClick={() => setComparativo2026Mode('proyectado')}
-                                    className={cn("px-2.5 py-1 text-[10px] font-black transition-colors border-l",
+                                    className={cn("px-3.5 py-1.5 text-[11px] font-black transition-colors border-l",
                                       darkMode ? "border-white/15" : "border-gray-200",
                                       comparativo2026Mode === 'proyectado'
                                         ? (darkMode ? "bg-emerald-500/30 text-emerald-300" : "bg-emerald-500 text-white")
@@ -8379,10 +9020,10 @@ ${rows.map(r=>{
                   {/* Per film type breakdown */}
                   {FT_ALL.map(ft => (
                     <div key={ft} className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
-                      <div className={cn("px-4 py-3 border-b flex items-center gap-2 flex-wrap", ft === 'DIHL' ? (darkMode ? "bg-blue-500/5 border-blue-500/15" : "bg-blue-50 border-blue-100") : (darkMode ? "bg-[#ED1C24]/5 border-[#ED1C24]/15" : "bg-red-50 border-red-100"))}>
+                      <div className={cn("px-6 py-3 border-b flex items-center gap-3", ft === 'DIHL' ? (darkMode ? "bg-blue-500/5 border-blue-500/15" : "bg-blue-50 border-blue-100") : (darkMode ? "bg-[#ED1C24]/5 border-[#ED1C24]/15" : "bg-red-50 border-red-100"))}>
                         <span className={cn("text-[9px] font-black px-2.5 py-1 rounded-lg", ft === 'DIHL' ? "bg-blue-500/20 text-blue-400" : "bg-[#ED1C24]/15 text-[#ED1C24]")}>{ft === 'DIHT' ? 'DI-HT' : 'DI-HL'}</span>
                         <span className={cn("text-[10px] font-bold", darkMode ? "text-gray-400" : "text-gray-600")}>Comparativo anual por medida</span>
-                        <div className="ml-auto flex items-center gap-3 flex-wrap justify-end">
+                        <div className="ml-auto flex items-center gap-6">
                           {YEARS.map(y => {
                             const total = SIZES_FJ.reduce((s, sz) => {
                               const src = y === 2026 ? get2026(ft, sz) : fujiByYearSizeType[y][ft][sz];
@@ -8398,19 +9039,19 @@ ${rows.map(r=>{
                         </div>
                       </div>
                       <div className="overflow-x-auto">
-                        <table className="w-full text-xs min-w-[500px]">
+                        <table className="w-full text-xs min-w-[700px]">
                           <thead className={cn("text-[9px] font-bold uppercase tracking-wider", darkMode ? "text-gray-600 bg-white/2" : "text-gray-400 bg-gray-50/60")}>
                             <tr>
-                              <th className={cn("px-3 py-2.5 text-left sticky left-0", darkMode ? "bg-[#16161A]" : "bg-white")}>Medida</th>
+                              <th className={cn("px-5 py-2.5 text-left sticky left-0", darkMode ? "bg-[#16161A]" : "bg-white")}>Medida</th>
                               {YEARS.map(y => (
-                                <th key={y} colSpan={2} className={cn("px-2 py-2.5 text-center border-l", darkMode ? "border-white/6" : "border-gray-100", YEAR_COLORS[y])}>
+                                <th key={y} colSpan={2} className={cn("px-4 py-2.5 text-center border-l", darkMode ? "border-white/6" : "border-gray-100", YEAR_COLORS[y])}>
                                   {y}{y === 2026 && isCurrentYear2026 ? (comparativo2026Mode === 'real' ? ' (real)' : ' (proy.)') : ''}
                                 </th>
                               ))}
                               <th className={cn("px-4 py-2.5 text-center border-l", darkMode ? "border-white/6 text-gray-600" : "border-gray-100 text-gray-400")}>Crecimiento</th>
                             </tr>
                             <tr className={cn("text-[8px]", darkMode ? "text-gray-700 bg-white/1" : "text-gray-300 bg-gray-50/30")}>
-                              <th className={cn("px-3 pb-1.5 sticky left-0", darkMode ? "bg-[#16161A]" : "bg-white")} />
+                              <th className={cn("px-5 pb-1.5 sticky left-0", darkMode ? "bg-[#16161A]" : "bg-white")} />
                               {YEARS.map(y => (
                                 <>
                                   <th key={`${y}-cj`} className={cn("px-3 pb-1.5 text-center border-l", darkMode ? "border-white/6" : "border-gray-100")}>Cajas</th>
@@ -8507,7 +9148,7 @@ ${rows.map(r=>{
                         <span className={cn("text-[10px] font-bold", darkMode ? "text-gray-400" : "text-gray-600")}>Trimax — Histórico (ya no se vende)</span>
                         <span className={cn("ml-auto text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>Solo 2024 · referencia histórica</span>
                       </div>
-                      <div className="p-5 grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      <div className="p-5 grid grid-cols-4 gap-3">
                         {Object.entries(TRIMAX_2024.bySize).map(([sz, data]) => (
                           <div key={sz} className={cn("rounded-xl p-3.5 border", darkMode ? "bg-white/3 border-white/6" : "bg-gray-50 border-gray-100")}>
                             <span className={cn("text-[10px] font-black px-2 py-0.5 rounded inline-block mb-2", darkMode ? "bg-white/10 text-white" : "bg-gray-800 text-white")}>{sz}</span>
@@ -8516,7 +9157,7 @@ ${rows.map(r=>{
                             <p className={cn("text-[9px] mt-1", darkMode ? "text-gray-700" : "text-gray-300")}>{data.m2PerBox} m²/cj</p>
                           </div>
                         ))}
-                        <div className={cn("col-span-6 md:col-span-4 rounded-xl p-3 border text-center", darkMode ? "bg-orange-500/5 border-orange-500/15" : "bg-orange-50 border-orange-100")}>
+                        <div className={cn("col-span-4 rounded-xl p-3 border text-center", darkMode ? "bg-orange-500/5 border-orange-500/15" : "bg-orange-50 border-orange-100")}>
                           <span className="text-orange-400 font-black text-lg">{TRIMAX_2024.totalM2.toLocaleString('es-EC', { maximumFractionDigits: 0 })} m²</span>
                           <span className={cn("text-[10px] ml-2", darkMode ? "text-gray-500" : "text-gray-400")}>total TXE 2024 · {TRIMAX_2024.totalBoxes.toLocaleString()} cajas · mercado que migró a Fujifilm</span>
                         </div>
@@ -8707,7 +9348,7 @@ ${rows.map(r=>{
             {intelligenceTab === 'seasonality' && (
               <div className="space-y-5">
                 {/* Summary badges */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="grid grid-cols-3 gap-4">
                   <div className={cn("rounded-xl p-5 border", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
                     <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-2", darkMode ? "text-gray-600" : "text-gray-400")}>Mes pico del año</p>
                     <p className="text-2xl font-black text-[#ED1C24]">
@@ -8771,7 +9412,7 @@ ${rows.map(r=>{
                 </div>
 
                 {/* Per-size breakdown */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="grid grid-cols-4 gap-4">
                   {seasonalityData.SIZES.map(size => {
                     const sizeData = seasonalityData.chartData.map((m: any) => ({ label: m.label, qty: m[size] || 0, topClient: m[`${size}_topClient`] || '—', topQty: m[`${size}_topQty`] || 0 }));
                     const peakIdx = sizeData.reduce((best: number, m: any, i: number) => m.qty > sizeData[best].qty ? i : best, 0);
@@ -8834,7 +9475,7 @@ ${rows.map(r=>{
                           </BarChart>
                         </ResponsiveContainer>
                         {isExpanded && (
-                          <div className="mt-4 grid grid-cols-6 gap-1 overflow-x-auto">
+                          <div className="mt-4 grid grid-cols-12 gap-2">
                             {sizeData.map((m: any, i: number) => (
                               <div key={i} className={cn("text-center p-2 rounded-lg", i === peakIdx ? (darkMode ? "bg-[#ED1C24]/15 border border-[#ED1C24]/30" : "bg-red-50 border border-red-200") : (darkMode ? "bg-white/3" : "bg-gray-50"))}>
                                 <p className={cn("text-[9px] font-bold uppercase", i === peakIdx ? "text-[#ED1C24]" : (darkMode ? "text-gray-500" : "text-gray-400"))}>{m.label}</p>
@@ -8851,82 +9492,384 @@ ${rows.map(r=>{
             )}
 
             {/* ══ TAB: GROWTH POTENTIAL ══ */}
-            {intelligenceTab === 'potential' && (
-              <div className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
-                <div className={cn("px-6 py-4 border-b", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
-                  <h3 className={cn("text-[10px] font-bold uppercase tracking-wider flex items-center gap-2", darkMode ? "text-gray-400" : "text-gray-600")}>
-                    Clientes con Potencial de Crecimiento — tienen impresora pero compran menos de lo esperado
-                  </h3>
-                  <p className={cn("text-[9px] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>Benchmarck: ~2 cajas/impresora/mes. Oportunidad de captura = diferencia entre lo esperado y lo actual.</p>
-                </div>
-                <div className="overflow-x-auto max-h-[560px] overflow-y-auto custom-scrollbar">
-                  <table className="w-full text-left text-xs">
-                    <thead className={cn("text-[9px] font-bold uppercase tracking-wider sticky top-0", darkMode ? "text-gray-600 bg-[#16161A]" : "text-gray-400 bg-white")}>
-                      <tr>
-                        <th className="px-5 py-2.5">Cliente</th>
-                        <th className="px-5 py-2.5 text-center">Impresoras</th>
-                        <th className="px-5 py-2.5 text-center">m²/mes actual</th>
-                        <th className="px-5 py-2.5 text-center">m²/mes esperado</th>
-                        <th className="px-5 py-2.5 text-center">Captura %</th>
-                        <th className="px-5 py-2.5 text-center">Oportunidad</th>
-                        <th className="px-5 py-2.5 text-center">Acción</th>
-                      </tr>
-                    </thead>
-                    <tbody className={cn("divide-y", darkMode ? "divide-white/4" : "divide-gray-50")}>
-                      {growthPotentialClients.map((item: any, i: number) => (
-                        <tr key={i} className={cn("transition-colors", darkMode ? "hover:bg-white/3" : "hover:bg-gray-50/60")}>
-                          <td className="px-5 py-3">
-                            <p className="font-semibold truncate max-w-[200px]">{item.client.name}</p>
-                            <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{item.client.province} · {item.client.salesperson||'—'}</p>
-                          </td>
-                          <td className="px-5 py-3 text-center font-black">{item.printerCount}</td>
-                          <td className="px-5 py-3 text-center">
-                            <span className={cn("font-black", darkMode ? "text-cyan-400" : "text-cyan-600")}>
-                              {(item.avgMonthly * (getM2PerBox((() => {
-                                const cs = filteredConsumosForView.filter((r: ConsumptionRecord) => r.client_id === item.client.id);
-                                const sd = {} as Record<string,number>;
-                                cs.forEach((r: ConsumptionRecord) => { sd[r.size] = (sd[r.size]||0) + r.quantity; });
-                                return Object.entries(sd).sort((a,b)=>b[1]-a[1])[0]?.[0] || '14x17';
-                              })(), globalFilmFilter === 'DIHL' ? 'DIHL' : 'DIHT'))).toFixed(1)} m²
-                            </span>
-                            <span className={cn("text-[9px] block", darkMode ? "text-gray-600" : "text-gray-400")}>{item.avgMonthly} cj</span>
-                          </td>
-                          <td className="px-5 py-3 text-center">
-                            <span className={cn("font-semibold", darkMode ? "text-gray-400" : "text-gray-600")}>
-                              {(item.expectedMonthly * 9.03).toFixed(1)} m²
-                            </span>
-                            <span className={cn("text-[9px] block", darkMode ? "text-gray-600" : "text-gray-400")}>{item.expectedMonthly} cj</span>
-                          </td>
-                          <td className="px-5 py-3 text-center">
-                            <div className="flex items-center gap-2 justify-center">
-                              <div className={cn("h-1.5 w-14 rounded-full overflow-hidden", darkMode ? "bg-white/8" : "bg-gray-200")}>
-                                <div className="h-full rounded-full bg-amber-400" style={{ width: `${item.captureRate}%` }} />
-                              </div>
-                              <span className="font-black text-amber-400">{item.captureRate}%</span>
-                            </div>
-                          </td>
-                          <td className="px-5 py-3 text-center">
-                            <span className="font-black text-emerald-400">+{item.untappedBoxes.toFixed(1)} cj/mes</span>
-                          </td>
-                          <td className="px-5 py-3 text-center">
-                            <button onClick={() => { setSelectedClient(item.client); setView('clients'); }}
-                              className={cn("text-[9px] font-bold px-2.5 py-1 rounded-lg inline-flex items-center gap-1 bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 transition-colors")}>
-                              <ArrowRight className="w-3 h-3" /> Visitar
-                            </button>
-                          </td>
-                        </tr>
+            {intelligenceTab === 'potential' && (() => {
+              // ── Cross IMAGER_2024 with current clients ──
+              const normalize = (s: string) => s.toUpperCase().trim().replace(/\s+/g,' ');
+              const enriched = IMAGER_2024.map(row => {
+                const client = allClients.find(c => normalize(c.name) === normalize(row.nombre));
+                const currentPrinters = client?.printers?.length || 0;
+                const consumos2025 = client ? allConsumos.filter(r => r.client_id === client.id && new Date(r.order_date).getFullYear() >= 2025) : [];
+                const m2_2025 = consumos2025.reduce((s,r) => s + getTotalM2(effectiveQty(r), r.size, r.film_type), 0);
+                return { ...row, client, currentPrinters, m2_2025 };
+              });
+
+              // Sección 1: Calificaban (califica=1) — ¿ya tienen impresora?
+              const pending = enriched.filter(r => r.califica === 1).sort((a,b) => b.total_m2 - a.total_m2);
+              const pendingYes = pending.filter(r => r.currentPrinters > 0);
+              const pendingNo  = pending.filter(r => r.currentPrinters === 0);
+
+              // Sección 2: Instaladas — consumo 2024 vs recomendación
+              const installed = enriched.filter(r => r.printers > 0 && r.currentPrinters > 0).sort((a,b) => b.total_m2 - a.total_m2);
+
+              // Sección 3: No calificaban (califica=0) pero crecieron en 2025
+              const growth = enriched.filter(r => r.califica === 0 && r.m2_2025 > 100).sort((a,b) => b.m2_2025 - a.m2_2025);
+
+              const tabs = [
+                { key: 'pending', label: 'Pendientes de impresora', count: pendingNo.length, color: 'text-red-400', bg: 'bg-red-500/15', desc: `${pendingNo.length} clientes que califican pero no tienen impresora aún` },
+                { key: 'installed', label: 'Instaladas 2024', count: pendingYes.length, color: 'text-emerald-400', bg: 'bg-emerald-500/15', desc: `${pendingYes.length} clientes que ya cuentan con impresora` },
+                { key: 'growth', label: 'Nuevas oportunidades', count: growth.length, color: 'text-amber-400', bg: 'bg-amber-500/15', desc: `${growth.length} clientes que crecieron en 2025` },
+              ] as const;
+
+              return (
+                <div className="space-y-4">
+                  {/* Header card */}
+                  <div className={cn("rounded-xl border p-5", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                    <div className="flex items-start justify-between gap-4 flex-wrap">
+                      <div>
+                        <h3 className={cn("text-sm font-black", darkMode ? "text-white" : "text-gray-900")}>Análisis de Impresoras — Base 2024</h3>
+                        <p className={cn("text-[10px] mt-1", darkMode ? "text-gray-500" : "text-gray-400")}>
+                          Cruce entre el consumo 2024 y el estado actual de instalaciones. Fuente: planilla impresora_V_VENTA.
+                        </p>
+                      </div>
+                      <div className="flex gap-3 flex-wrap">
+                        {[
+                          { label: 'Califican', val: pending.length, color: darkMode ? 'text-red-400' : 'text-red-600' },
+                          { label: 'Ya instaladas', val: pendingYes.length, color: darkMode ? 'text-emerald-400' : 'text-emerald-600' },
+                          { label: 'Pendientes', val: pendingNo.length, color: darkMode ? 'text-amber-400' : 'text-amber-600' },
+                          { label: 'Nuevas oport.', val: growth.length, color: darkMode ? 'text-cyan-400' : 'text-cyan-600' },
+                        ].map((k,i) => (
+                          <div key={i} className={cn("px-4 py-2.5 rounded-xl border text-center min-w-[80px]", darkMode ? "bg-white/4 border-white/8" : "bg-gray-50 border-gray-100")}>
+                            <p className={cn("text-xl font-black leading-none", k.color)}>{k.val}</p>
+                            <p className={cn("text-[8px] font-bold uppercase tracking-wider mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>{k.label}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    {/* Tab selector */}
+                    <div className={cn("flex gap-1 mt-4 p-1 rounded-xl", darkMode ? "bg-white/5" : "bg-gray-100")}>
+                      {tabs.map(t => (
+                        <button key={t.key} onClick={() => setImager2024Tab(t.key as any)}
+                          className={cn("flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-[10px] font-black transition-all",
+                            imager2024Tab === t.key
+                              ? (darkMode ? "bg-[#16161A] text-white shadow-sm" : "bg-white text-gray-900 shadow-sm")
+                              : (darkMode ? "text-gray-600 hover:text-gray-400" : "text-gray-400 hover:text-gray-600")
+                          )}>
+                          <span className={cn("px-1.5 py-0.5 rounded-full text-[8px] font-black", imager2024Tab === t.key ? t.bg + ' ' + t.color : (darkMode ? "bg-white/5 text-gray-600" : "bg-gray-100 text-gray-400"))}>{t.count}</span>
+                          <span className="hidden sm:inline">{t.label}</span>
+                        </button>
                       ))}
-                      {growthPotentialClients.length === 0 && (
-                        <tr><td colSpan={7} className={cn("px-5 py-10 text-center text-xs", darkMode ? "text-gray-600" : "text-gray-400")}>
-                          <Trophy className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                          No hay clientes con potencial de crecimiento identificado aún.
-                        </td></tr>
-                      )}
-                    </tbody>
-                  </table>
+                    </div>
+                  </div>
+
+                  {/* ── SECCIÓN 1: Pendientes ── */}
+                  {imager2024Tab === 'pending' && (
+                    <div className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                      <div className={cn("px-5 py-3 border-b", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+                        <p className={cn("text-xs font-black", darkMode ? "text-white" : "text-gray-900")}>
+                          Clientes que califican para impresora pero aún no tienen instalada
+                        </p>
+                        <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-500" : "text-gray-400")}>
+                          Basado en consumo 2024 ≥ umbral de colocación. Ordenados por m² 2024.
+                        </p>
+                      </div>
+                      <div className="overflow-x-auto max-h-[500px] overflow-y-auto custom-scrollbar">
+                        <table className="w-full text-xs">
+                          <thead className={cn("text-[8px] font-bold uppercase tracking-wider sticky top-0", darkMode ? "text-gray-600 bg-[#16161A]" : "text-gray-400 bg-white")}>
+                            <tr className={cn("border-b", darkMode ? "border-white/6" : "border-gray-100")}>
+                              <th className="px-5 py-2.5 text-left">#</th>
+                              <th className="px-5 py-2.5 text-left">Cliente</th>
+                              <th className="px-4 py-2.5 text-right">m² 2024</th>
+                              <th className="px-4 py-2.5 text-center">Medidas</th>
+                              <th className="px-4 py-2.5 text-center">Impresoras rec.</th>
+                              <th className="px-4 py-2.5 text-center">Configuración</th>
+                              <th className="px-4 py-2.5 text-center">Estado</th>
+                              <th className="px-4 py-2.5 text-center">m² 2025</th>
+                            </tr>
+                          </thead>
+                          <tbody className={cn("divide-y", darkMode ? "divide-white/4" : "divide-gray-50")}>
+                            {pendingNo.map((row, i) => (
+                              <tr key={i} className={cn("transition-colors cursor-pointer", darkMode ? "hover:bg-white/4" : "hover:bg-gray-50")}
+                                onClick={() => row.client && setSelectedClient(row.client)}>
+                                <td className={cn("px-5 py-3 font-black text-[10px]", i<3 ? "text-red-400" : (darkMode ? "text-gray-700" : "text-gray-300"))}>{i+1}</td>
+                                <td className="px-5 py-3">
+                                  <p className={cn("font-semibold truncate max-w-[180px]", darkMode ? "text-gray-200" : "text-gray-800")}>{row.nombre}</p>
+                                  <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{row.client?.province || '—'} · {row.client?.salesperson || '—'}</p>
+                                </td>
+                                <td className={cn("px-4 py-3 text-right font-black", darkMode ? "text-cyan-400" : "text-cyan-600")}>{row.total_m2.toFixed(1)}</td>
+                                <td className="px-4 py-3 text-center">
+                                  <div className="flex gap-1 justify-center flex-wrap">
+                                    {row.m2_8x10 > 0 && <span className={cn("text-[8px] font-bold px-1.5 py-0.5 rounded", darkMode ? "bg-white/8 text-gray-300" : "bg-gray-100 text-gray-600")}>8x10</span>}
+                                    {row.m2_10x12 > 0 && <span className={cn("text-[8px] font-bold px-1.5 py-0.5 rounded", darkMode ? "bg-white/8 text-gray-300" : "bg-gray-100 text-gray-600")}>10x12</span>}
+                                    {row.m2_11x14 > 0 && <span className={cn("text-[8px] font-bold px-1.5 py-0.5 rounded", darkMode ? "bg-white/8 text-gray-300" : "bg-gray-100 text-gray-600")}>11x14</span>}
+                                    {row.m2_14x17 > 0 && <span className={cn("text-[8px] font-bold px-1.5 py-0.5 rounded", darkMode ? "bg-white/8 text-gray-300" : "bg-gray-100 text-gray-600")}>14x17</span>}
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3 text-center">
+                                  <span className={cn("font-black text-sm", darkMode ? "text-red-400" : "text-red-600")}>{row.printers}</span>
+                                </td>
+                                <td className="px-4 py-3 text-center">
+                                  <div className="flex gap-1 justify-center flex-wrap">
+                                    {row.small_tray > 0 && <span className={cn("text-[8px] px-1.5 py-0.5 rounded font-bold", darkMode ? "bg-blue-500/15 text-blue-400" : "bg-blue-50 text-blue-600")}>S×{row.small_tray}</span>}
+                                    {row.large_tray > 0 && <span className={cn("text-[8px] px-1.5 py-0.5 rounded font-bold", darkMode ? "bg-purple-500/15 text-purple-400" : "bg-purple-50 text-purple-600")}>L×{row.large_tray}</span>}
+                                    {row.feeder > 0 && <span className={cn("text-[8px] px-1.5 py-0.5 rounded font-bold", darkMode ? "bg-amber-500/15 text-amber-400" : "bg-amber-50 text-amber-600")}>F×{row.feeder}</span>}
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3 text-center">
+                                  {row.client ? (
+                                    <span className={cn("text-[8px] font-black px-2 py-0.5 rounded-full bg-red-500/15 text-red-400")}>Sin impresora</span>
+                                  ) : (
+                                    <span className={cn("text-[8px] font-black px-2 py-0.5 rounded-full", darkMode ? "bg-white/8 text-gray-600" : "bg-gray-100 text-gray-400")}>Sin registro</span>
+                                  )}
+                                </td>
+                                <td className={cn("px-4 py-3 text-center font-semibold text-[10px]", row.m2_2025 > row.total_m2 ? (darkMode ? "text-emerald-400" : "text-emerald-600") : (darkMode ? "text-gray-500" : "text-gray-400"))}>
+                                  {row.m2_2025 > 0 ? `${row.m2_2025.toFixed(1)}` : '—'}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ── SECCIÓN 2: Instaladas ── */}
+                  {imager2024Tab === 'installed' && (
+                    <div className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                      <div className={cn("px-5 py-3 border-b", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+                        <p className={cn("text-xs font-black", darkMode ? "text-white" : "text-gray-900")}>
+                          Clientes que calificaron y ya tienen impresora instalada
+                        </p>
+                        <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-500" : "text-gray-400")}>
+                          Comparando impresoras recomendadas vs instaladas actualmente.
+                        </p>
+                      </div>
+                      <div className="overflow-x-auto max-h-[500px] overflow-y-auto custom-scrollbar">
+                        <table className="w-full text-xs">
+                          <thead className={cn("text-[8px] font-bold uppercase tracking-wider sticky top-0", darkMode ? "text-gray-600 bg-[#16161A]" : "text-gray-400 bg-white")}>
+                            <tr className={cn("border-b", darkMode ? "border-white/6" : "border-gray-100")}>
+                              <th className="px-5 py-2.5 text-left">#</th>
+                              <th className="px-5 py-2.5 text-left">Cliente</th>
+                              <th className="px-4 py-2.5 text-right">m² 2024</th>
+                              <th className="px-4 py-2.5 text-center">Rec.</th>
+                              <th className="px-4 py-2.5 text-center">Actual</th>
+                              <th className="px-4 py-2.5 text-center">Diferencia</th>
+                              <th className="px-4 py-2.5 text-right">m² {new Date().getFullYear()} vs 2024</th>
+                            </tr>
+                          </thead>
+                          <tbody className={cn("divide-y", darkMode ? "divide-white/4" : "divide-gray-50")}>
+                            {pendingYes.map((row, i) => {
+                              const diff = row.currentPrinters - row.printers;
+                              const currentYear = new Date().getFullYear();
+                              const trend = row.total_m2 > 0 ? ((row.m2_2025 - row.total_m2) / row.total_m2 * 100) : 0;
+                              const isGrowing = row.m2_2025 > row.total_m2;
+                              const isEqual = Math.abs(trend) < 5;
+                              return (
+                                <tr key={i} className={cn("transition-colors cursor-pointer", darkMode ? "hover:bg-white/4" : "hover:bg-gray-50")}
+                                  onClick={() => row.client && setSelectedClient(row.client)}>
+                                  <td className={cn("px-5 py-3 font-black text-[10px]", darkMode ? "text-gray-700" : "text-gray-300")}>{i+1}</td>
+                                  <td className="px-5 py-3">
+                                    <p className={cn("font-semibold truncate max-w-[180px]", darkMode ? "text-gray-200" : "text-gray-800")}>{row.nombre}</p>
+                                    <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{row.client?.province || '—'}</p>
+                                  </td>
+                                  <td className={cn("px-4 py-3 text-right font-black", darkMode ? "text-cyan-400" : "text-cyan-600")}>{row.total_m2.toFixed(1)}</td>
+                                  <td className="px-4 py-3 text-center font-black text-amber-400">{row.printers}</td>
+                                  <td className="px-4 py-3 text-center font-black text-emerald-400">{row.currentPrinters}</td>
+                                  <td className="px-4 py-3 text-center">
+                                    <span className={cn("text-[9px] font-black px-2 py-0.5 rounded-full",
+                                      diff === 0 ? (darkMode ? "bg-emerald-500/15 text-emerald-400" : "bg-emerald-50 text-emerald-600") :
+                                      diff > 0 ? (darkMode ? "bg-cyan-500/15 text-cyan-400" : "bg-cyan-50 text-cyan-600") :
+                                      (darkMode ? "bg-red-500/15 text-red-400" : "bg-red-50 text-red-600")
+                                    )}>
+                                      {diff === 0 ? '✓ Exacto' : diff > 0 ? `+${diff} extra` : `${diff} faltan`}
+                                    </span>
+                                  </td>
+                                  {/* m² año actual vs 2024 — visual comparison */}
+                                  <td className="px-4 py-3">
+                                    {row.m2_2025 > 0 ? (
+                                      <div className="flex flex-col items-end gap-1 min-w-[120px]">
+                                        {/* Numbers */}
+                                        <div className="flex items-baseline gap-1.5">
+                                          <span className={cn("text-sm font-black",
+                                            isGrowing ? (darkMode ? "text-emerald-400" : "text-emerald-600") :
+                                            isEqual   ? (darkMode ? "text-gray-300"   : "text-gray-700") :
+                                                        (darkMode ? "text-red-400"     : "text-red-600")
+                                          )}>{row.m2_2025.toFixed(1)}</span>
+                                          <span className={cn("text-[8px] font-bold px-1.5 py-0.5 rounded-full",
+                                            isGrowing ? (darkMode ? "bg-emerald-500/15 text-emerald-400" : "bg-emerald-50 text-emerald-600") :
+                                            isEqual   ? (darkMode ? "bg-white/8 text-gray-500"           : "bg-gray-100 text-gray-500") :
+                                                        (darkMode ? "bg-red-500/15 text-red-400"          : "bg-red-50 text-red-600")
+                                          )}>
+                                            {isGrowing ? '▲' : isEqual ? '─' : '▼'} {Math.abs(trend).toFixed(0)}%
+                                          </span>
+                                        </div>
+                                        {/* Mini dual bar */}
+                                        <div className="flex items-center gap-1 w-full justify-end">
+                                          <span className={cn("text-[7px] font-bold", darkMode ? "text-gray-700" : "text-gray-300")}>2024</span>
+                                          <div className={cn("h-1 rounded-full overflow-hidden", darkMode ? "bg-white/8" : "bg-gray-200")} style={{width:'60px'}}>
+                                            <div className={cn("h-full rounded-full", darkMode ? "bg-white/20" : "bg-gray-300")}
+                                              style={{width:`${Math.min(100, (row.total_m2 / Math.max(row.total_m2, row.m2_2025)) * 100)}%`}} />
+                                          </div>
+                                          <div className={cn("h-1 rounded-full overflow-hidden", darkMode ? "bg-white/8" : "bg-gray-200")} style={{width:'60px'}}>
+                                            <div className={cn("h-full rounded-full", isGrowing ? "bg-emerald-500" : isEqual ? "bg-gray-400" : "bg-red-400")}
+                                              style={{width:`${Math.min(100, (row.m2_2025 / Math.max(row.total_m2, row.m2_2025)) * 100)}%`}} />
+                                          </div>
+                                          <span className={cn("text-[7px] font-bold", darkMode ? "text-gray-600" : "text-gray-400")}>{currentYear}</span>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <span className={cn("text-[9px] text-right block", darkMode ? "text-gray-700" : "text-gray-300")}>Sin datos {currentYear}</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ── SECCIÓN 3: Nuevas oportunidades ── */}
+                  {imager2024Tab === 'growth' && (
+                    <div className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                      <div className={cn("px-5 py-3 border-b", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+                        <p className={cn("text-xs font-black", darkMode ? "text-white" : "text-gray-900")}>
+                          Clientes que no calificaban en 2024 pero han crecido en 2025
+                        </p>
+                        <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-500" : "text-gray-400")}>
+                          En 2024 no alcanzaban el umbral, pero su consumo en 2025 sugiere que ahora podrían justificar una impresora.
+                        </p>
+                      </div>
+                      <div className="overflow-x-auto max-h-[500px] overflow-y-auto custom-scrollbar">
+                        <table className="w-full text-xs">
+                          <thead className={cn("text-[8px] font-bold uppercase tracking-wider sticky top-0", darkMode ? "text-gray-600 bg-[#16161A]" : "text-gray-400 bg-white")}>
+                            <tr className={cn("border-b", darkMode ? "border-white/6" : "border-gray-100")}>
+                              <th className="px-5 py-2.5 text-left">#</th>
+                              <th className="px-5 py-2.5 text-left">Cliente</th>
+                              <th className="px-4 py-2.5 text-right">m² 2024</th>
+                              <th className="px-4 py-2.5 text-right">m² 2025</th>
+                              <th className="px-4 py-2.5 text-center">Crecimiento</th>
+                              <th className="px-4 py-2.5 text-center">Impresoras hoy</th>
+                            </tr>
+                          </thead>
+                          <tbody className={cn("divide-y", darkMode ? "divide-white/4" : "divide-gray-50")}>
+                            {growth.map((row, i) => {
+                              const pct = row.total_m2 > 0 ? ((row.m2_2025 - row.total_m2) / row.total_m2 * 100) : 0;
+                              return (
+                                <tr key={i} className={cn("transition-colors cursor-pointer", darkMode ? "hover:bg-white/4" : "hover:bg-gray-50")}
+                                  onClick={() => row.client && setSelectedClient(row.client)}>
+                                  <td className={cn("px-5 py-3 font-black text-[10px]", i<3 ? "text-amber-400" : (darkMode ? "text-gray-700" : "text-gray-300"))}>{i+1}</td>
+                                  <td className="px-5 py-3">
+                                    <p className={cn("font-semibold truncate max-w-[200px]", darkMode ? "text-gray-200" : "text-gray-800")}>{row.nombre}</p>
+                                    <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{row.client?.province || '—'} · {row.client?.salesperson || '—'}</p>
+                                  </td>
+                                  <td className={cn("px-4 py-3 text-right", darkMode ? "text-gray-500" : "text-gray-400")}>{row.total_m2.toFixed(1)}</td>
+                                  <td className={cn("px-4 py-3 text-right font-black", darkMode ? "text-amber-400" : "text-amber-600")}>{row.m2_2025.toFixed(1)}</td>
+                                  <td className="px-4 py-3 text-center">
+                                    <span className={cn("text-[9px] font-black px-2 py-0.5 rounded-full",
+                                      pct > 50 ? (darkMode ? "bg-emerald-500/15 text-emerald-400" : "bg-emerald-50 text-emerald-600") :
+                                      pct > 0  ? (darkMode ? "bg-amber-500/15 text-amber-400" : "bg-amber-50 text-amber-600") :
+                                      (darkMode ? "bg-red-500/15 text-red-400" : "bg-red-50 text-red-600")
+                                    )}>
+                                      {pct >= 0 ? '+' : ''}{pct.toFixed(0)}%
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3 text-center">
+                                    {row.currentPrinters > 0
+                                      ? <span className={cn("text-[9px] font-black px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400")}>{row.currentPrinters} instalada{row.currentPrinters!==1?'s':''}</span>
+                                      : <span className={cn("text-[9px] font-black px-2 py-0.5 rounded-full bg-red-500/15 text-red-400")}>Sin impresora</span>
+                                    }
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                            {growth.length === 0 && (
+                              <tr><td colSpan={6} className={cn("px-5 py-10 text-center text-xs", darkMode ? "text-gray-600" : "text-gray-400")}>
+                                No hay clientes con crecimiento significativo identificado aún.
+                              </td></tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Existing growth potential section */}
+                  <div className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                    <div className={cn("px-6 py-4 border-b", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+                      <h3 className={cn("text-[10px] font-bold uppercase tracking-wider flex items-center gap-2", darkMode ? "text-gray-400" : "text-gray-600")}>
+                        Clientes con Potencial de Crecimiento — tienen impresora pero compran menos de lo esperado
+                      </h3>
+                      <p className={cn("text-[9px] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>Benchmarck: ~2 cajas/impresora/mes. Oportunidad de captura = diferencia entre lo esperado y lo actual.</p>
+                    </div>
+                    <div className="overflow-x-auto max-h-[400px] overflow-y-auto custom-scrollbar">
+                      <table className="w-full text-left text-xs">
+                        <thead className={cn("text-[9px] font-bold uppercase tracking-wider sticky top-0", darkMode ? "text-gray-600 bg-[#16161A]" : "text-gray-400 bg-white")}>
+                          <tr>
+                            <th className="px-5 py-2.5">Cliente</th>
+                            <th className="px-5 py-2.5 text-center">Impresoras</th>
+                            <th className="px-5 py-2.5 text-center">m²/mes actual</th>
+                            <th className="px-5 py-2.5 text-center">m²/mes esperado</th>
+                            <th className="px-5 py-2.5 text-center">Captura %</th>
+                            <th className="px-5 py-2.5 text-center">Oportunidad</th>
+                            <th className="px-5 py-2.5 text-center">Acción</th>
+                          </tr>
+                        </thead>
+                        <tbody className={cn("divide-y", darkMode ? "divide-white/4" : "divide-gray-50")}>
+                          {growthPotentialClients.map((item: any, i: number) => (
+                            <tr key={i} className={cn("transition-colors", darkMode ? "hover:bg-white/3" : "hover:bg-gray-50/60")}>
+                              <td className="px-5 py-3">
+                                <p className="font-semibold truncate max-w-[200px]">{item.client.name}</p>
+                                <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{item.client.province} · {item.client.salesperson||'—'}</p>
+                              </td>
+                              <td className="px-5 py-3 text-center font-black">{item.printerCount}</td>
+                              <td className="px-5 py-3 text-center">
+                                <span className={cn("font-black", darkMode ? "text-cyan-400" : "text-cyan-600")}>
+                                  {(item.avgMonthly * (getM2PerBox((() => {
+                                    const cs = filteredConsumosForView.filter((r: ConsumptionRecord) => r.client_id === item.client.id);
+                                    const sd = {} as Record<string,number>;
+                                    cs.forEach((r: ConsumptionRecord) => { sd[r.size] = (sd[r.size]||0) + r.quantity; });
+                                    return Object.entries(sd).sort((a,b)=>b[1]-a[1])[0]?.[0] || '14x17';
+                                  })(), globalFilmFilter === 'DIHL' ? 'DIHL' : 'DIHT'))).toFixed(1)} m²
+                                </span>
+                                <span className={cn("text-[9px] block", darkMode ? "text-gray-600" : "text-gray-400")}>{item.avgMonthly} cj</span>
+                              </td>
+                              <td className="px-5 py-3 text-center">
+                                <span className={cn("font-semibold", darkMode ? "text-gray-400" : "text-gray-600")}>{(item.expectedMonthly * 9.03).toFixed(1)} m²</span>
+                                <span className={cn("text-[9px] block", darkMode ? "text-gray-600" : "text-gray-400")}>{item.expectedMonthly} cj</span>
+                              </td>
+                              <td className="px-5 py-3 text-center">
+                                <div className="flex items-center gap-2 justify-center">
+                                  <div className={cn("h-1.5 w-14 rounded-full overflow-hidden", darkMode ? "bg-white/8" : "bg-gray-200")}>
+                                    <div className="h-full rounded-full bg-amber-400" style={{ width: `${item.captureRate}%` }} />
+                                  </div>
+                                  <span className="font-black text-amber-400">{item.captureRate}%</span>
+                                </div>
+                              </td>
+                              <td className="px-5 py-3 text-center">
+                                <span className="font-black text-emerald-400">+{item.untappedBoxes.toFixed(1)} cj/mes</span>
+                              </td>
+                              <td className="px-5 py-3 text-center">
+                                <button onClick={() => { setSelectedClient(item.client); setView('clients'); }}
+                                  className="text-[9px] font-bold px-2.5 py-1 rounded-lg inline-flex items-center gap-1 bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 transition-colors">
+                                  <ArrowRight className="w-3 h-3" /> Visitar
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                          {growthPotentialClients.length === 0 && (
+                            <tr><td colSpan={7} className={cn("px-5 py-10 text-center text-xs", darkMode ? "text-gray-600" : "text-gray-400")}>
+                              <Trophy className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                              No hay clientes con potencial de crecimiento identificado aún.
+                            </td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* ══ TAB: PROVINCES ══ */}
             {intelligenceTab === 'provinces' && (
@@ -9110,7 +10053,7 @@ ${rows.map(r=>{
             )}
 
             {intelligenceTab === 'projection' && (
-              <div className="space-y-5 pb-4">
+              <div className="space-y-5">
                 {/* Header summary */}
                 <div className={cn("rounded-xl border p-5 flex items-center gap-6 flex-wrap", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
                   <div className="text-center px-5 border-r border-white/8">
@@ -9252,9 +10195,9 @@ ${rows.map(r=>{
                   };
 
                   return (
-                    <div className={cn("rounded-xl border", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+                    <div className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
                       {/* Header */}
-                      <div className={cn("px-6 py-4 border-b flex items-center gap-3 flex-wrap rounded-t-xl", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+                      <div className={cn("px-6 py-4 border-b flex items-center gap-3 flex-wrap", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
                         <Boxes className="w-4 h-4 text-[#ED1C24] shrink-0" />
                         <div>
                           <h3 className={cn("text-[10px] font-bold uppercase tracking-wider", darkMode ? "text-gray-300" : "text-gray-700")}>
@@ -9284,10 +10227,10 @@ ${rows.map(r=>{
                           En Tránsito
                         </button>
                         {/* Period selector */}
-                        <div className={cn("flex items-center gap-1 p-1 rounded-xl overflow-x-auto scrollbar-hide", darkMode ? "bg-white/5" : "bg-gray-100")}>
+                        <div className={cn("flex items-center gap-1 p-1 rounded-xl ml-auto", darkMode ? "bg-white/5" : "bg-gray-100")}>
                           {([1, 3, 6, 12] as const).map(p => (
                             <button key={p} onClick={() => setProjectionPeriod(p)}
-                              className={cn("px-2 sm:px-3 py-1 rounded-lg text-[10px] font-black transition-all whitespace-nowrap",
+                              className={cn("px-3 py-1 rounded-lg text-[10px] font-black transition-all",
                                 projectionPeriod === p
                                   ? "bg-[#ED1C24] text-white shadow-sm"
                                   : (darkMode ? "text-gray-500 hover:text-gray-300 hover:bg-white/5" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200")
@@ -9350,7 +10293,7 @@ ${rows.map(r=>{
                             </div>
 
                             {/* Size cards — wider, clearer */}
-                            <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div className="p-4 grid grid-cols-2 gap-4">
                               {products.map(p => {
                                 if (!p) return null;
                                 const { size, fuji, m2box, currentStock, totalWithTransit, realTransit, avgMonthly, demandPeriod, demandM2, safetyStock, coverageCurrent, coverageWithTransit, coverageFujiCurrent, coverageFujiHistoric, toOrder, toOrderM2, status, topClients } = p;
@@ -9386,7 +10329,7 @@ ${rows.map(r=>{
 
                                     <div className="p-5">
                                       {/* TWO MAIN COLUMNS: demanda | a pedir */}
-                                      <div className="grid grid-cols-2 gap-3 mb-4">
+                                      <div className="grid grid-cols-2 gap-4 mb-4">
                                         {/* Demanda */}
                                         <div className={cn("rounded-xl p-3.5", darkMode ? "bg-white/5" : "bg-white/80 border border-black/6")}>
                                           <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-2", darkMode ? "text-gray-500" : "text-gray-400")}>Demanda · {periodSuffix}</p>
@@ -9420,7 +10363,7 @@ ${rows.map(r=>{
                                       </div>
 
                                       {/* Stats row */}
-                                      <div className={cn("grid grid-cols-3 sm:grid-cols-4 gap-2 text-[9px] pt-3 border-t", darkMode ? "border-white/8" : "border-black/6")}>
+                                      <div className={cn("grid grid-cols-4 gap-2 text-[9px] pt-3 border-t", darkMode ? "border-white/8" : "border-black/6")}>
                                         <div>
                                           <p className={darkMode ? "text-gray-600" : "text-gray-400"}>Stock bodega</p>
                                           <p className={cn("font-black text-xs", darkMode ? "text-cyan-400" : "text-cyan-600")}>{currentStock} cj</p>
@@ -9993,7 +10936,7 @@ ${rows.map(r=>{
                         <X className="w-3.5 h-3.5" />
                       </button>
                     </div>
-                    <div className="grid grid-cols-3 gap-1.5 mt-3">
+                    <div className="grid grid-cols-3 gap-2 mt-3">
                       {[
                         { v: totalBoxes, label: 'cajas', color: 'text-red-400' },
                         { v: `${totalM2.toFixed(1)}`, label: 'm²', color: darkMode ? 'text-cyan-400' : 'text-cyan-600' },
@@ -10026,16 +10969,32 @@ ${rows.map(r=>{
                           return (
                             <tr key={ri} className={cn("transition-colors", darkMode ? "hover:bg-white/3" : "hover:bg-gray-50/60")}>
                               <td className={cn("px-4 py-2.5", darkMode ? "text-gray-400" : "text-gray-600")}>{r.order_date}</td>
-                              <td className={cn("px-4 py-2.5 font-mono text-[10px] max-w-[120px] truncate", darkMode ? "text-gray-500" : "text-gray-400")}>{r.invoice_number || '—'}</td>
+                              <td className={cn("px-4 py-2.5 font-mono text-[10px] max-w-[120px]", darkMode ? "text-gray-500" : "text-gray-400")}>
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="truncate">{r.invoice_number || '—'}</span>
+                                  {r.nc_number && (
+                                    <span className={cn("text-[8px] font-black px-1.5 py-0.5 rounded w-fit",
+                                      r.nc_type === 'anulacion'
+                                        ? (darkMode ? "bg-purple-500/15 text-purple-400" : "bg-purple-100 text-purple-700")
+                                        : (darkMode ? "bg-orange-500/15 text-orange-400" : "bg-orange-100 text-orange-700")
+                                    )}>
+                                      🧾 {r.nc_number}
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
                               <td className="px-4 py-2.5 text-center">
                                 <div className="flex flex-col items-center gap-0.5">
-                                  <span className={cn("font-black", r.is_return ? "text-amber-400" : "text-red-400")}>{r.is_return ? `-${r.quantity}` : r.quantity}</span>
+                                  <span className={cn("font-black", r.is_return ? "text-amber-400" : r.nc_type === 'anulacion' ? (darkMode ? "text-purple-400" : "text-purple-600") : "text-red-400")}>
+                                    {r.is_return ? `-${r.quantity}` : r.quantity}
+                                  </span>
                                   {r.adapted_to && (
                                     <span className={cn("text-[8px] font-black px-1.5 py-0.5 rounded-md whitespace-nowrap",
                                       darkMode ? "bg-amber-500/15 text-amber-400" : "bg-amber-100 text-amber-700"
-                                    )}>
-                                      ✂️ {r.quantity * (r.adapted_ratio || 2)} cj {r.adapted_to}
-                                    </span>
+                                    )}>✂️ {r.quantity * (r.adapted_ratio || 2)} cj {r.adapted_to}</span>
+                                  )}
+                                  {r.nc_type === 'anulacion' && (
+                                    <span className={cn("text-[8px] font-bold", darkMode ? "text-purple-500/70" : "text-purple-500")}>NC anulación</span>
                                   )}
                                 </div>
                               </td>
@@ -10342,7 +11301,7 @@ ${rows.map(r=>{
                       </button>
                     </div>
                     {/* KPIs */}
-                    <div className="grid grid-cols-3 gap-1.5 mt-3">
+                    <div className="grid grid-cols-3 gap-2 mt-3">
                       <div className={cn("rounded-lg p-2 text-center", darkMode ? "bg-white/5" : "bg-white border border-gray-100")}>
                         <p className="font-black text-base text-red-400 leading-none">{totalBoxes}</p>
                         <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>cajas</p>
@@ -10489,7 +11448,7 @@ ${rows.map(r=>{
                     </div>
                   </div>
                 )}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Fecha de Pedido</label>
                     <input 
@@ -10517,7 +11476,7 @@ ${rows.map(r=>{
                     />
                   </div>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="grid grid-cols-3 gap-4">
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">
                       Cantidad (Cajas)
@@ -10568,7 +11527,7 @@ ${rows.map(r=>{
                   </div>
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Tipo de Película</label>
-                    <div className="grid grid-cols-3 gap-1">
+                    <div className="grid grid-cols-3 gap-1.5">
                       {(['DIHT', 'DIHL', 'DIML'] as const).map(ft => (
                         <button
                           key={ft}
@@ -10591,7 +11550,7 @@ ${rows.map(r=>{
                     </div>
                   </div>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Lote</label>
                     <input 
@@ -10620,7 +11579,7 @@ ${rows.map(r=>{
                     />
                   </div>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Costo Unitario ($)</label>
                     <input 
@@ -10722,6 +11681,132 @@ ${rows.map(r=>{
                 </div>
               )}
 
+              {/* ── NOTA DE CRÉDITO ── */}
+              <div className={cn("rounded-xl border p-4", darkMode ? "bg-purple-500/5 border-purple-500/15" : "bg-purple-50/60 border-purple-200")}>
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <p className={cn("text-[10px] font-black uppercase tracking-wider", darkMode ? "text-purple-400" : "text-purple-700")}>
+                      🧾 Nota de Crédito
+                    </p>
+                    <p className={cn("text-[9px] mt-0.5", darkMode ? "text-purple-500/60" : "text-purple-600/70")}>
+                      Opcional — devolución física o anulación/refacturación
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setEditingRecord({ ...editingRecord,
+                      nc_type: (editingRecord as any).nc_type ? undefined : 'devolucion',
+                      nc_number: undefined, nc_invoice_ref: undefined, nc_new_invoice: undefined, nc_reason: undefined
+                    } as any)}
+                    className={cn("px-3 py-1.5 rounded-xl text-[10px] font-black transition-all border",
+                      (editingRecord as any).nc_type
+                        ? (darkMode ? "bg-purple-500/20 border-purple-500/30 text-purple-400" : "bg-purple-100 border-purple-300 text-purple-700")
+                        : (darkMode ? "bg-white/5 border-white/10 text-gray-500 hover:bg-white/8" : "bg-white border-gray-200 text-gray-500 hover:bg-gray-50")
+                    )}
+                  >
+                    {(editingRecord as any).nc_type ? 'Activado' : 'Activar'}
+                  </button>
+                </div>
+
+                {(editingRecord as any).nc_type && (
+                  <div className="space-y-3">
+                    {/* Tipo de NC */}
+                    <div className={cn("flex gap-1 p-1 rounded-xl", darkMode ? "bg-white/5" : "bg-white/80")}>
+                      {[
+                        { val: 'devolucion', label: '📦 Devolución física', desc: 'Cliente devuelve cajas · afecta stock' },
+                        { val: 'anulacion',  label: '🔄 Anulación/Refacturación', desc: 'Ajuste contable · no afecta stock' },
+                      ].map(opt => (
+                        <button key={opt.val} type="button"
+                          onClick={() => setEditingRecord({ ...editingRecord, nc_type: opt.val as any } as any)}
+                          className={cn("flex-1 px-3 py-2 rounded-lg text-left transition-all",
+                            (editingRecord as any).nc_type === opt.val
+                              ? (darkMode ? "bg-purple-500/20 text-white" : "bg-purple-100 text-purple-900")
+                              : (darkMode ? "text-gray-500 hover:bg-white/5" : "text-gray-400 hover:bg-gray-50")
+                          )}>
+                          <p className="text-[10px] font-black">{opt.label}</p>
+                          <p className={cn("text-[8px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{opt.desc}</p>
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Número de NC y factura referencia */}
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className={cn("text-[9px] font-bold uppercase tracking-wider block mb-1", darkMode ? "text-purple-500/70" : "text-purple-700/70")}>
+                          Nº Nota de Crédito *
+                        </label>
+                        <input type="text"
+                          value={(editingRecord as any).nc_number || ''}
+                          onChange={e => setEditingRecord({ ...editingRecord, nc_number: e.target.value } as any)}
+                          placeholder="NC-001-001-0000001"
+                          className={cn("w-full px-3 py-2 rounded-xl text-xs font-mono outline-none border focus:ring-2 focus:ring-purple-500/30",
+                            darkMode ? "bg-[#16161A] border-purple-500/20 text-white placeholder:text-gray-600" : "bg-white border-purple-200 text-gray-800 placeholder:text-gray-400"
+                          )}
+                        />
+                      </div>
+                      <div>
+                        <label className={cn("text-[9px] font-bold uppercase tracking-wider block mb-1", darkMode ? "text-purple-500/70" : "text-purple-700/70")}>
+                          Factura original que anula
+                        </label>
+                        <input type="text"
+                          value={(editingRecord as any).nc_invoice_ref || ''}
+                          onChange={e => setEditingRecord({ ...editingRecord, nc_invoice_ref: e.target.value } as any)}
+                          placeholder="001-001-0000123"
+                          className={cn("w-full px-3 py-2 rounded-xl text-xs font-mono outline-none border focus:ring-2 focus:ring-purple-500/30",
+                            darkMode ? "bg-[#16161A] border-purple-500/20 text-white placeholder:text-gray-600" : "bg-white border-purple-200 text-gray-800 placeholder:text-gray-400"
+                          )}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Nueva factura (solo anulación) */}
+                    {(editingRecord as any).nc_type === 'anulacion' && (
+                      <div>
+                        <label className={cn("text-[9px] font-bold uppercase tracking-wider block mb-1", darkMode ? "text-purple-500/70" : "text-purple-700/70")}>
+                          Nueva factura (refacturación)
+                        </label>
+                        <input type="text"
+                          value={(editingRecord as any).nc_new_invoice || ''}
+                          onChange={e => setEditingRecord({ ...editingRecord, nc_new_invoice: e.target.value } as any)}
+                          placeholder="001-001-0000124"
+                          className={cn("w-full px-3 py-2 rounded-xl text-xs font-mono outline-none border focus:ring-2 focus:ring-purple-500/30",
+                            darkMode ? "bg-[#16161A] border-purple-500/20 text-white placeholder:text-gray-600" : "bg-white border-purple-200 text-gray-800 placeholder:text-gray-400"
+                          )}
+                        />
+                      </div>
+                    )}
+
+                    {/* Motivo */}
+                    <div>
+                      <label className={cn("text-[9px] font-bold uppercase tracking-wider block mb-1", darkMode ? "text-purple-500/70" : "text-purple-700/70")}>
+                        Motivo
+                      </label>
+                      <input type="text"
+                        value={(editingRecord as any).nc_reason || ''}
+                        onChange={e => setEditingRecord({ ...editingRecord, nc_reason: e.target.value } as any)}
+                        placeholder={
+                          (editingRecord as any).nc_type === 'anulacion'
+                            ? 'Ej: Reprogramación de pago, error en datos de facturación...'
+                            : 'Ej: Producto defectuoso, caja dañada en transporte...'
+                        }
+                        className={cn("w-full px-3 py-2 rounded-xl text-xs outline-none border focus:ring-2 focus:ring-purple-500/30",
+                          darkMode ? "bg-[#16161A] border-purple-500/20 text-white placeholder:text-gray-600" : "bg-white border-purple-200 text-gray-800 placeholder:text-gray-400"
+                        )}
+                      />
+                    </div>
+
+                    {/* Info box */}
+                    <div className={cn("rounded-xl px-3 py-2 text-[9px] leading-relaxed",
+                      darkMode ? "bg-white/4 text-gray-500" : "bg-purple-50 text-purple-600"
+                    )}>
+                      {(editingRecord as any).nc_type === 'devolucion'
+                        ? '📦 Devolución física: se registra como salida negativa — resta del consumo del cliente y suma al stock de bodega.'
+                        : '🔄 Anulación: registro informativo únicamente — no afecta el stock ni el consumo. Vincula la factura anulada con la nueva.'}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <button
                 type="submit"
                 className="w-full bg-[#ED1C24] text-white py-4 rounded-2xl font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-[#D11920] shadow-lg shadow-red-500/20 transition-all"
@@ -10784,7 +11869,7 @@ ${rows.map(r=>{
                     )}
                   />
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">COD Cliente</label>
                     <input 
@@ -11205,7 +12290,7 @@ ${rows.map(r=>{
                         )}
                       </div>
                       {printer && (
-                        <div className={cn("mt-3 pt-3 border-t grid grid-cols-3 gap-1.5", darkMode ? "border-white/6" : "border-gray-100")}>
+                        <div className={cn("mt-3 pt-3 border-t grid grid-cols-3 gap-2", darkMode ? "border-white/6" : "border-gray-100")}>
                           <div>
                             <p className={cn("text-[9px] font-bold uppercase tracking-wide", darkMode ? "text-gray-600" : "text-gray-400")}>Modelo</p>
                             <p className="text-xs font-semibold mt-0.5">{printer.type || '—'}</p>
@@ -11286,7 +12371,7 @@ ${rows.map(r=>{
                   ))}
                 </div>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-4">
                 {/* Date */}
                 <div>
                   <label className={cn("text-[9px] font-bold uppercase tracking-wider block mb-1.5", darkMode ? "text-gray-500" : "text-gray-400")}>Fecha *</label>
@@ -11329,7 +12414,7 @@ ${rows.map(r=>{
                 </div>
               </div>
               {/* Orden + Factura */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className={cn("text-[9px] font-bold uppercase tracking-wider block mb-1.5", darkMode ? "text-gray-500" : "text-gray-400")}>
                     Orden de compra
@@ -11460,7 +12545,7 @@ ${rows.map(r=>{
 
               <div className="p-7 space-y-7">
                 {/* KPI Cards */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="grid grid-cols-4 gap-4">
                   {[
                     { label: 'Total Cajas', value: totalCajas.toLocaleString(), sub: 'vendidas', color: darkMode ? 'text-white' : 'text-gray-800' },
                     { label: 'Total m²', value: totalM2sp.toLocaleString('es-EC', { maximumFractionDigits: 1 }), sub: 'metros cuadrados', color: darkMode ? 'text-cyan-400' : 'text-cyan-600' },
@@ -11512,9 +12597,9 @@ ${rows.map(r=>{
                 </div>
 
                 {/* Bottom: Top Clients + Size dist + Province */}
-                <div className="grid grid-cols-12 gap-4 md:gap-5">
+                <div className="grid grid-cols-12 gap-5">
                   {/* Top Clients */}
-                  <div className={cn("col-span-12 md:col-span-6 rounded-xl p-4 md:p-5 border", darkMode ? "bg-white/3 border-white/6" : "bg-gray-50 border-gray-100")}>
+                  <div className={cn("col-span-6 rounded-xl p-5 border", darkMode ? "bg-white/3 border-white/6" : "bg-gray-50 border-gray-100")}>
                     <p className={cn("text-[10px] font-bold uppercase tracking-wider mb-4", darkMode ? "text-gray-500" : "text-gray-400")}>Top clientes por m²</p>
                     <div className="space-y-2.5">
                       {topClients.map((c, i) => (
@@ -11536,7 +12621,7 @@ ${rows.map(r=>{
                   </div>
 
                   {/* Size + Province */}
-                  <div className="col-span-12 md:col-span-6 space-y-4">
+                  <div className="col-span-6 space-y-4">
                     {/* Size distribution */}
                     <div className={cn("rounded-xl p-5 border", darkMode ? "bg-white/3 border-white/6" : "bg-gray-50 border-gray-100")}>
                       <p className={cn("text-[10px] font-bold uppercase tracking-wider mb-3", darkMode ? "text-gray-500" : "text-gray-400")}>Distribución por medida</p>
@@ -11709,7 +12794,7 @@ ${rows.map(r=>{
                     </div>
                   )}
                   {/* Summary badges */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="grid grid-cols-3 gap-3">
                     <div className={cn(
                       "rounded-xl p-4 border text-center",
                       darkMode ? "bg-emerald-500/10 border-emerald-500/20" : "bg-emerald-50 border-emerald-200"
@@ -12092,7 +13177,7 @@ ${rows.map(r=>{
                 <div className="p-6 space-y-5">
 
                   {/* KPIs principales */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="grid grid-cols-4 gap-3">
                     {[
                       { label: 'Stock bodega', value: `${m.currentStock} cj`, sub: `${(m.currentStock * m.m2box).toFixed(1)} m²`, color: darkMode ? 'text-cyan-400' : 'text-cyan-600' },
                       { label: 'En tránsito', value: `${m.realTransit} cj`, sub: `${(m.realTransit * m.m2box).toFixed(1)} m²`, color: 'text-amber-400' },
@@ -12512,7 +13597,7 @@ ${rows.map(r=>{
 
               <div className="p-5 space-y-4">
                 {/* Summary */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 gap-3">
                   <div className={cn("rounded-xl p-3 border text-center", darkMode ? "bg-white/4 border-white/8" : "bg-gray-50 border-gray-100")}>
                     <p className={cn("text-2xl font-black", darkMode ? "text-emerald-400" : "text-emerald-600")}>{withDate.length}</p>
                     <p className={cn("text-[9px] font-bold uppercase tracking-wider mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>Con fecha instalación</p>
@@ -12613,6 +13698,772 @@ ${rows.map(r=>{
         );
       })()}
 
+      {/* ── CLIENT PREVIEW MODAL ── */}
+      {clientPreviewModal && (() => {
+        const { client, rank, m2, cajas } = clientPreviewModal;
+        const clientConsumos = filteredConsumosForView
+          .filter(r => r.client_id === client.id && !r.is_return)
+          .sort((a,b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime());
+        const totalRevenue = clientConsumos.reduce((s, r) => s + r.quantity * (r.unit_cost || 0), 0);
+        const lastOrder = clientConsumos[0];
+        const daysSince = lastOrder ? Math.floor((Date.now() - new Date(lastOrder.order_date).getTime()) / (1000*60*60*24)) : null;
+        const printers = client.printers || [];
+
+        // m² breakdown by size
+        const bySize: Record<string, { cajas: number; m2: number }> = {};
+        clientConsumos.forEach(r => {
+          const m2r = getTotalM2(r.quantity, r.size, r.film_type);
+          if (!bySize[r.size]) bySize[r.size] = { cajas: 0, m2: 0 };
+          bySize[r.size].cajas += r.quantity;
+          bySize[r.size].m2 += m2r;
+        });
+        const sizeBreakdown = Object.entries(bySize).sort((a,b) => b[1].m2 - a[1].m2);
+        const maxSizeM2 = sizeBreakdown[0]?.[1].m2 || 1;
+
+        // Last 6 months
+        const now = new Date();
+        const last6 = Array.from({length:6}, (_,i) => {
+          const d = new Date(now.getFullYear(), now.getMonth() - 5 + i, 1);
+          const rows = clientConsumos.filter(r => { const rd = new Date(r.order_date); return rd.getFullYear()===d.getFullYear()&&rd.getMonth()===d.getMonth(); });
+          const qty = rows.reduce((s,r)=>s+r.quantity,0);
+          const rev = rows.reduce((s,r)=>s+r.quantity*(r.unit_cost||0),0);
+          return { label: d.toLocaleDateString('es-EC',{month:'short'}), qty, rev };
+        });
+        const maxQty = Math.max(...last6.map(x=>x.qty), 1);
+
+        return (
+          <div className="fixed inset-0 z-[9997] flex items-center justify-center" onClick={() => setClientPreviewModal(null)}>
+            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+            <div className={cn("relative w-full max-w-md mx-4 rounded-2xl shadow-2xl border overflow-hidden max-h-[90vh] flex flex-col",
+              darkMode ? "bg-[#16161A] border-white/12" : "bg-white border-gray-200"
+            )} onClick={e => e.stopPropagation()}>
+
+              {/* Header */}
+              <div className={cn("px-5 py-4 border-b shrink-0", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm shrink-0",
+                      rank === 1 ? "bg-[#ED1C24] text-white" : rank === 2 ? (darkMode ? "bg-white/15 text-white" : "bg-gray-200 text-gray-700") : (darkMode ? "bg-white/8 text-gray-300" : "bg-gray-100 text-gray-500")
+                    )}>#{rank}</div>
+                    <div>
+                      <p className={cn("text-sm font-black leading-tight", darkMode ? "text-white" : "text-gray-900")}>{client.name}</p>
+                      <p className={cn("text-[10px] mt-0.5", darkMode ? "text-gray-500" : "text-gray-400")}>{client.province} · {client.salesperson || '—'}</p>
+                    </div>
+                  </div>
+                  <button onClick={() => setClientPreviewModal(null)}
+                    className={cn("p-1.5 rounded-lg transition-colors shrink-0", darkMode ? "hover:bg-white/8 text-gray-500" : "hover:bg-gray-100 text-gray-400")}>
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="overflow-y-auto custom-scrollbar flex-1 p-4 space-y-3">
+
+                {/* KPIs row */}
+                <div className="grid grid-cols-4 gap-2">
+                  {[
+                    { label: 'm²', val: m2.toFixed(1), color: darkMode ? 'text-cyan-400' : 'text-cyan-600' },
+                    { label: 'Cajas', val: cajas.toString(), color: darkMode ? 'text-white' : 'text-gray-900' },
+                    { label: 'Facturas', val: clientConsumos.length.toString(), color: darkMode ? 'text-amber-400' : 'text-amber-600' },
+                    { label: 'Revenue', val: `$${totalRevenue >= 1000 ? (totalRevenue/1000).toFixed(1)+'k' : totalRevenue.toFixed(0)}`, color: darkMode ? 'text-emerald-400' : 'text-emerald-600' },
+                  ].map((k,i) => (
+                    <div key={i} className={cn("rounded-xl p-2.5 border text-center", darkMode ? "bg-white/4 border-white/8" : "bg-gray-50 border-gray-100")}>
+                      <p className={cn("text-base font-black leading-none", k.color)}>{k.val}</p>
+                      <p className={cn("text-[8px] font-bold uppercase tracking-wider mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>{k.label}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* m² breakdown by size */}
+                {sizeBreakdown.length > 0 && (
+                  <div className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-white/3 border-white/6" : "bg-gray-50 border-gray-100")}>
+                    <p className={cn("px-4 py-2 text-[9px] font-bold uppercase tracking-wider border-b", darkMode ? "border-white/5 text-gray-600" : "border-gray-100 text-gray-400")}>
+                      Consumo por medida
+                    </p>
+                    <div className="px-4 py-3 space-y-2">
+                      {sizeBreakdown.map(([size, data]) => (
+                        <div key={size} className="flex items-center gap-3">
+                          <span className={cn("text-[10px] font-black w-10 shrink-0", darkMode ? "text-gray-300" : "text-gray-700")}>{size}</span>
+                          <div className="flex-1">
+                            <div className={cn("h-1.5 rounded-full overflow-hidden", darkMode ? "bg-white/8" : "bg-gray-200")}>
+                              <div className="h-full rounded-full bg-[#ED1C24]" style={{ width: `${(data.m2/maxSizeM2)*100}%` }} />
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0 w-24">
+                            <span className={cn("text-[10px] font-black", darkMode ? "text-cyan-400" : "text-cyan-600")}>{data.m2.toFixed(1)} m²</span>
+                            <span className={cn("text-[9px] ml-1.5", darkMode ? "text-gray-600" : "text-gray-400")}>{data.cajas} cj</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Last 6 months bar chart + revenue */}
+                <div className={cn("rounded-xl p-4 border", darkMode ? "bg-white/3 border-white/6" : "bg-gray-50 border-gray-100")}>
+                  <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-3", darkMode ? "text-gray-600" : "text-gray-400")}>Últimos 6 meses</p>
+                  <div className="flex items-end gap-1.5 h-14">
+                    {last6.map((bar, i) => (
+                      <div key={i} className="flex-1 flex flex-col items-center gap-1 h-full justify-end">
+                        {bar.qty > 0 && <span className={cn("text-[7px] font-bold", darkMode ? "text-gray-500" : "text-gray-400")}>{bar.qty}</span>}
+                        <div className={cn("w-full rounded-t-sm", i===5 ? "bg-cyan-500" : (darkMode ? "bg-white/20" : "bg-gray-300"))}
+                          style={{ height: `${Math.max(3, (bar.qty/maxQty)*44)}px` }} />
+                        <span className={cn("text-[7px]", darkMode ? "text-gray-700" : "text-gray-400")}>{bar.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Last 5 invoices */}
+                {clientConsumos.length > 0 && (
+                  <div className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-white/3 border-white/6" : "bg-gray-50 border-gray-100")}>
+                    <p className={cn("px-4 py-2 text-[9px] font-bold uppercase tracking-wider border-b flex items-center justify-between", darkMode ? "border-white/5 text-gray-600" : "border-gray-100 text-gray-400")}>
+                      <span>Últimas facturas</span>
+                      <span className={cn(darkMode ? "text-gray-700" : "text-gray-300")}>{clientConsumos.length} total</span>
+                    </p>
+                    {clientConsumos.slice(0, 5).map((r, i) => {
+                      const m2r = getTotalM2(r.quantity, r.size, r.film_type);
+                      const rev = r.quantity * (r.unit_cost || 0);
+                      return (
+                        <div key={i} className={cn("px-4 py-2.5 flex items-center gap-3 border-b last:border-0", darkMode ? "border-white/4" : "border-gray-50")}>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className={cn("text-[9px] font-mono", darkMode ? "text-gray-500" : "text-gray-400")}>{r.order_date}</span>
+                              {r.invoice_number && <span className={cn("text-[8px] font-mono truncate max-w-[100px]", darkMode ? "text-gray-600" : "text-gray-300")}>{r.invoice_number}</span>}
+                            </div>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <span className={cn("text-[9px] font-black px-1.5 py-0.5 rounded", darkMode ? "bg-white/8 text-gray-300" : "bg-gray-100 text-gray-600")}>{r.size}</span>
+                              <span className={cn("text-[9px]", darkMode ? "text-gray-500" : "text-gray-400")}>{r.quantity} cj</span>
+                              <span className={cn("text-[9px] font-bold", darkMode ? "text-cyan-500" : "text-cyan-600")}>{m2r.toFixed(1)} m²</span>
+                            </div>
+                          </div>
+                          {rev > 0 && <span className={cn("text-[10px] font-black shrink-0", darkMode ? "text-emerald-400" : "text-emerald-600")}>${rev.toLocaleString('es-EC',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Printers — compact */}
+                {printers.length > 0 && (
+                  <div className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-white/3 border-white/6" : "bg-gray-50 border-gray-100")}>
+                    <p className={cn("px-4 py-2 text-[9px] font-bold uppercase tracking-wider border-b", darkMode ? "border-white/5 text-gray-600" : "border-gray-100 text-gray-400")}>
+                      {printers.length} impresora{printers.length!==1?'s':''} instalada{printers.length!==1?'s':''}
+                    </p>
+                    {printers.slice(0,3).map((p,i) => (
+                      <div key={i} className={cn("px-4 py-2 flex items-center gap-2.5 border-b last:border-0", darkMode ? "border-white/4" : "border-gray-50")}>
+                        <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
+                        <span className={cn("text-[10px] font-bold flex-1 truncate", darkMode ? "text-gray-300" : "text-gray-700")}>{p.type}</span>
+                        <span className={cn("text-[8px] font-mono", darkMode ? "text-gray-600" : "text-gray-400")}>{p.serial}</span>
+                        {p.installDate && <span className={cn("text-[8px] font-mono shrink-0", darkMode ? "text-gray-700" : "text-gray-300")}>{p.installDate}</span>}
+                      </div>
+                    ))}
+                    {printers.length > 3 && <p className={cn("px-4 py-1.5 text-[8px]", darkMode ? "text-gray-700" : "text-gray-400")}>+{printers.length-3} más en la ficha completa</p>}
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className={cn("px-5 py-3 border-t shrink-0 flex items-center justify-between gap-3", darkMode ? "border-white/8" : "border-gray-100")}>
+                <button onClick={() => setClientPreviewModal(null)}
+                  className={cn("px-4 py-2 rounded-xl text-xs font-bold transition-colors", darkMode ? "bg-white/5 text-gray-400 hover:bg-white/10" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}>
+                  Cerrar
+                </button>
+                <button onClick={() => { setSelectedClient(client); setView('clients'); setClientPreviewModal(null); }}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-black bg-[#1A3A5C] text-white hover:bg-[#22487A] transition-colors">
+                  Ver ficha completa <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── TOP CLIENTS FULL MODAL ── */}
+      {showTopClientsModal && (() => {
+        const allSorted = (globalMetrics as any).allClientsSorted || [];
+        const displayList = topClientsLimit === 'all' ? allSorted : allSorted.slice(0, topClientsLimit);
+        const maxM2 = allSorted[0]?.m2 || 1;
+        const totalM2all = allSorted.reduce((s: number, c: any) => s + c.m2, 0);
+        const filmLabel = globalFilmFilter === 'all' ? 'Global' : globalFilmFilter === 'DIHT' ? 'DI-HT' : globalFilmFilter === 'DIHL' ? 'DI-HL' : 'DI-ML';
+        const isCompact = topClientsLimit !== 'all'; // Top 5 / Top 10 → card layout; Todos → table
+
+        return (
+          <div className="fixed inset-0 z-[9995] flex items-center justify-center p-4" onClick={() => setShowTopClientsModal(false)}>
+            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+            <div
+              className={cn(
+                "relative rounded-2xl shadow-2xl border max-h-[88vh] flex flex-col transition-all",
+                isCompact ? "w-full max-w-lg" : "w-full max-w-3xl",
+                darkMode ? "bg-[#16161A] border-white/12" : "bg-white border-gray-200"
+              )}
+              onClick={e => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className={cn("px-6 py-4 border-b shrink-0", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className={cn("w-9 h-9 rounded-xl flex items-center justify-center shrink-0", darkMode ? "bg-red-500/15" : "bg-red-50")}>
+                      <TrendingUp className="w-4 h-4 text-[#ED1C24]" />
+                    </div>
+                    <div>
+                      <p className={cn("text-sm font-black", darkMode ? "text-white" : "text-gray-900")}>
+                        {topClientsLimit === 'all' ? 'Todos los clientes' : `Top ${topClientsLimit} clientes`} — {filmLabel}
+                      </p>
+                      <p className={cn("text-[10px] mt-0.5", darkMode ? "text-gray-500" : "text-gray-400")}>
+                        {displayList.length} de {allSorted.length} · {displayList.reduce((s:number,c:any)=>s+c.m2,0).toLocaleString('es-EC',{minimumFractionDigits:1,maximumFractionDigits:1})} m²
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {/* Switch between modes */}
+                    <div className={cn("flex items-center gap-0.5 p-0.5 rounded-lg", darkMode ? "bg-white/5" : "bg-gray-100")}>
+                      {([5, 10, 'all'] as const).map(n => (
+                        <button key={String(n)} onClick={() => setTopClientsLimit(n)}
+                          className={cn("px-2.5 py-1 rounded-md text-[9px] font-black transition-all",
+                            topClientsLimit === n
+                              ? (darkMode ? "bg-white/15 text-white" : "bg-white text-gray-800 shadow-sm")
+                              : (darkMode ? "text-gray-600 hover:text-gray-400" : "text-gray-400 hover:text-gray-600")
+                          )}>{n === 'all' ? 'Todos' : `Top ${n}`}</button>
+                      ))}
+                    </div>
+                    <span className={cn("text-[9px] font-black px-2 py-1 rounded-full",
+                      globalFilmFilter === 'all' ? (darkMode ? "bg-white/10 text-gray-400" : "bg-gray-100 text-gray-500") :
+                      globalFilmFilter === 'DIHT' ? "bg-[#ED1C24]/20 text-[#ED1C24]" : "bg-blue-500/20 text-blue-400"
+                    )}>{filmLabel}</span>
+                    <button onClick={() => setShowTopClientsModal(false)}
+                      className={cn("p-1.5 rounded-lg transition-colors", darkMode ? "hover:bg-white/8 text-gray-500" : "hover:bg-gray-100 text-gray-400")}>
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Content — card layout for Top 5/10, table for Todos */}
+              <div className="overflow-y-auto custom-scrollbar flex-1">
+                {isCompact ? (
+                  /* Card layout — professional ranking */
+                  <div className="p-5 space-y-2">
+                    {displayList.map((client: any, idx: number) => {
+                      const pct = totalM2all > 0 ? (client.m2 / totalM2all * 100).toFixed(1) : '0';
+                      const barPct = (client.m2 / maxM2) * 100;
+                      return (
+                        <div key={client.id}
+                          onClick={() => { const c = allClients.find(x => x.id === client.id); if (c) setClientPreviewModal({ client: c, rank: idx+1, m2: client.m2, cajas: client.value }); }}
+                          className={cn("flex items-center gap-4 px-4 py-3.5 rounded-xl border cursor-pointer transition-all",
+                            idx === 0
+                              ? (darkMode ? "bg-[#ED1C24]/8 border-[#ED1C24]/20 hover:bg-[#ED1C24]/12" : "bg-red-50 border-red-200 hover:bg-red-50/80")
+                              : (darkMode ? "bg-white/3 border-white/6 hover:bg-white/5" : "bg-gray-50 border-gray-100 hover:bg-gray-50/80")
+                          )}
+                        >
+                          {/* Rank */}
+                          <div className={cn("w-8 h-8 rounded-xl flex items-center justify-center font-black text-sm shrink-0",
+                            idx === 0 ? "bg-[#ED1C24] text-white" :
+                            idx === 1 ? (darkMode ? "bg-white/15 text-gray-200" : "bg-gray-200 text-gray-600") :
+                            idx === 2 ? (darkMode ? "bg-white/8 text-gray-400" : "bg-gray-100 text-gray-500") :
+                            (darkMode ? "bg-white/4 text-gray-600" : "bg-gray-50 text-gray-400")
+                          )}>{idx + 1}</div>
+
+                          {/* Name + bar */}
+                          <div className="flex-1 min-w-0">
+                            <p className={cn("text-xs font-bold truncate", darkMode ? "text-gray-100" : "text-gray-800")}>{client.name}</p>
+                            <div className="flex items-center gap-2 mt-1.5">
+                              <div className={cn("flex-1 h-1.5 rounded-full overflow-hidden", darkMode ? "bg-white/8" : "bg-gray-200")}>
+                                <div className="h-full rounded-full bg-[#ED1C24] transition-all" style={{ width: `${barPct}%` }} />
+                              </div>
+                              <span className={cn("text-[9px] font-bold shrink-0", darkMode ? "text-gray-600" : "text-gray-400")}>{pct}%</span>
+                            </div>
+                            <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>
+                              {client.province} · {client.value} cj
+                            </p>
+                          </div>
+
+                          {/* m² */}
+                          <div className="text-right shrink-0">
+                            <p className={cn("text-xl font-black", darkMode ? "text-cyan-400" : "text-cyan-600")}>{client.m2.toFixed(1)}</p>
+                            <p className={cn("text-[8px]", darkMode ? "text-gray-600" : "text-gray-400")}>m²</p>
+                          </div>
+                          <ChevronRight className={cn("w-3.5 h-3.5 shrink-0", darkMode ? "text-gray-700" : "text-gray-300")} />
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  /* Table layout for Todos */
+                  <table className="w-full text-xs">
+                    <thead className={cn("text-[8px] font-bold uppercase tracking-wider sticky top-0 z-10", darkMode ? "text-gray-600 bg-[#16161A]" : "text-gray-400 bg-white")}>
+                      <tr className={cn("border-b", darkMode ? "border-white/6" : "border-gray-100")}>
+                        <th className="px-5 py-2.5 text-left w-10">#</th>
+                        <th className="px-5 py-2.5 text-left">Cliente</th>
+                        <th className="px-4 py-2.5 text-left">Provincia</th>
+                        <th className="px-4 py-2.5 text-left">Vendedor</th>
+                        <th className="px-4 py-2.5 text-right">Cajas</th>
+                        <th className="px-4 py-2.5 text-right">m²</th>
+                        <th className="px-4 py-2.5 text-right">%</th>
+                      </tr>
+                    </thead>
+                    <tbody className={cn("divide-y", darkMode ? "divide-white/4" : "divide-gray-50")}>
+                      {displayList.map((client: any, idx: number) => {
+                        const pct = totalM2all > 0 ? (client.m2 / totalM2all * 100).toFixed(1) : '0';
+                        return (
+                          <tr key={client.id}
+                            className={cn("transition-colors cursor-pointer", darkMode ? "hover:bg-white/4" : "hover:bg-gray-50")}
+                            onClick={() => { const c = allClients.find(x => x.id === client.id); if (c) setClientPreviewModal({ client: c, rank: idx+1, m2: client.m2, cajas: client.value }); }}
+                          >
+                            <td className="px-5 py-2.5">
+                              <span className={cn("w-6 h-6 rounded-lg flex items-center justify-center font-black text-[10px]",
+                                idx === 0 ? "bg-[#ED1C24] text-white" : idx === 1 ? (darkMode ? "bg-white/15 text-gray-200" : "bg-gray-200 text-gray-600") : idx === 2 ? (darkMode ? "bg-white/8 text-gray-400" : "bg-gray-100 text-gray-500") : (darkMode ? "text-gray-700" : "text-gray-300")
+                              )}>{idx + 1}</span>
+                            </td>
+                            <td className="px-5 py-2.5"><p className={cn("font-semibold truncate max-w-[220px]", darkMode ? "text-gray-200" : "text-gray-800")}>{client.name}</p></td>
+                            <td className={cn("px-4 py-2.5 text-[10px]", darkMode ? "text-gray-500" : "text-gray-400")}>{client.province}</td>
+                            <td className={cn("px-4 py-2.5 text-[10px]", darkMode ? "text-gray-500" : "text-gray-400")}>{client.salesperson}</td>
+                            <td className={cn("px-4 py-2.5 text-right font-semibold", darkMode ? "text-gray-400" : "text-gray-600")}>{client.value}</td>
+                            <td className={cn("px-4 py-2.5 text-right font-black", darkMode ? "text-cyan-400" : "text-cyan-600")}>{client.m2.toFixed(1)}</td>
+                            <td className={cn("px-4 py-2.5 text-right text-[10px] font-bold", darkMode ? "text-gray-600" : "text-gray-400")}>{pct}%</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+
+              <div className={cn("px-5 py-3 border-t shrink-0 flex justify-between items-center", darkMode ? "border-white/8" : "border-gray-100")}>
+                <p className={cn("text-[9px]", darkMode ? "text-gray-700" : "text-gray-400")}>Clic en un cliente para ver su preview</p>
+                <button onClick={() => setShowTopClientsModal(false)}
+                  className={cn("px-4 py-1.5 rounded-xl text-xs font-bold transition-colors", darkMode ? "bg-white/5 text-gray-400 hover:bg-white/10" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}>
+                  Cerrar
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+      {/* ── NC REPORT MODAL ── */}
+      {showNCReport && (() => {
+        const allNC = allConsumos.filter(r => r.nc_type).filter(r => {
+          if (ncReportStart && new Date(r.order_date) < new Date(ncReportStart)) return false;
+          if (ncReportEnd && new Date(r.order_date) > new Date(ncReportEnd)) return false;
+          return true;
+        }).sort((a,b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime());
+
+        const devoluciones = allNC.filter(r => r.nc_type === 'devolucion');
+        const anulaciones = allNC.filter(r => r.nc_type === 'anulacion');
+        const totalCajasDevueltas = devoluciones.reduce((s,r) => s + r.quantity, 0);
+        const totalM2Devueltos = devoluciones.reduce((s,r) => s + getTotalM2(r.quantity, r.size, r.film_type), 0);
+
+        const exportPDF = () => {
+          const rows = (type: 'devolucion'|'anulacion') => allNC.filter(r => r.nc_type === type).map(r => {
+            const client = allClients.find(c => c.id === r.client_id);
+            return `<tr>
+              <td>${r.order_date}</td>
+              <td>${client?.name || '—'}</td>
+              <td style="font-family:monospace">${r.nc_number || '—'}</td>
+              <td style="font-family:monospace">${r.nc_invoice_ref || '—'}</td>
+              ${type === 'anulacion' ? `<td style="font-family:monospace">${r.nc_new_invoice || '—'}</td>` : ''}
+              <td>${r.size} × ${r.quantity} cj</td>
+              ${type === 'devolucion' ? `<td>${getTotalM2(r.quantity, r.size, r.film_type).toFixed(1)} m²</td>` : ''}
+              <td>${r.nc_reason || '—'}</td>
+            </tr>`;
+          }).join('');
+
+          const html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"/>
+<title>Notas de Crédito — Orimec</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'Segoe UI',Arial,sans-serif;font-size:10px;color:#1e293b;background:white;}
+@page{margin:12mm 10mm;size:A4 portrait;}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+.header{display:flex;align-items:flex-start;justify-content:space-between;padding-bottom:10px;border-bottom:3px solid #1A3A5C;margin-bottom:14px;}
+.brand{font-size:20px;font-weight:900;color:#1A3A5C;}
+.sub{font-size:7.5px;color:#4A9FD4;letter-spacing:2px;text-transform:uppercase;margin-top:2px;}
+.doc-title{font-size:14px;font-weight:800;color:#1A3A5C;text-align:right;}
+.doc-sub{font-size:8px;color:#94a3b8;text-align:right;margin-top:3px;}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px;}
+.kpi{background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:8px;padding:8px 12px;}
+.kpi .val{font-size:20px;font-weight:900;line-height:1;}
+.kpi .lbl{font-size:7px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#94a3b8;margin-top:2px;}
+.section{margin-bottom:16px;}
+.section-title{font-size:10px;font-weight:800;margin-bottom:6px;padding:6px 10px;border-radius:6px;}
+.dev-title{background:#fff7ed;color:#c2410c;border-left:3px solid #f97316;}
+.anu-title{background:#faf5ff;color:#7c3aed;border-left:3px solid #8b5cf6;}
+table{width:100%;border-collapse:collapse;font-size:8.5px;}
+thead tr{background:#1A3A5C;color:white;}
+th{padding:4px 6px;text-align:left;font-size:7.5px;font-weight:700;text-transform:uppercase;}
+tbody tr:nth-child(even){background:#f8fafc;}
+td{padding:3.5px 6px;border-bottom:1px solid #f1f5f9;}
+.footer{margin-top:12px;padding-top:8px;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;font-size:7.5px;color:#94a3b8;}
+</style></head><body>
+<div class="header">
+  <div><div class="brand">ORIMEC</div><div class="sub">Oriental Medical del Ecuador C.A.</div></div>
+  <div><div class="doc-title">Reporte de Notas de Crédito</div>
+  <div class="doc-sub">Período: ${ncReportStart||'Inicio'} → ${ncReportEnd||'Hoy'} · Generado: ${new Date().toLocaleDateString('es-EC')}</div></div>
+</div>
+<div class="kpis">
+  <div class="kpi"><div class="val">${allNC.length}</div><div class="lbl">Total NCs</div></div>
+  <div class="kpi"><div class="val" style="color:#c2410c">${devoluciones.length}</div><div class="lbl">Devoluciones</div></div>
+  <div class="kpi"><div class="val" style="color:#7c3aed">${anulaciones.length}</div><div class="lbl">Anulaciones</div></div>
+  <div class="kpi"><div class="val" style="color:#0891b2">${totalCajasDevueltas} cj</div><div class="lbl">Cajas devueltas</div></div>
+</div>
+${devoluciones.length > 0 ? `
+<div class="section">
+  <div class="section-title dev-title">📦 Devoluciones físicas (${devoluciones.length})</div>
+  <table><thead><tr><th>Fecha</th><th>Cliente</th><th>Nº NC</th><th>Fact. original</th><th>Producto</th><th>m²</th><th>Motivo</th></tr></thead>
+  <tbody>${rows('devolucion')}</tbody></table>
+</div>` : ''}
+${anulaciones.length > 0 ? `
+<div class="section">
+  <div class="section-title anu-title">🔄 Anulaciones / Refacturaciones (${anulaciones.length})</div>
+  <table><thead><tr><th>Fecha</th><th>Cliente</th><th>Nº NC</th><th>Fact. anulada</th><th>Nueva fact.</th><th>Producto</th><th>Motivo</th></tr></thead>
+  <tbody>${rows('anulacion')}</tbody></table>
+</div>` : ''}
+<div class="footer"><span>ORIMEC C.A. — Reporte de Notas de Crédito</span><span>${new Date().toLocaleString('es-EC')}</span></div>
+</body></html>`;
+          const w = window.open('', '_blank');
+          if (w) { w.document.write(html); w.document.close(); setTimeout(() => w.print(), 500); }
+        };
+
+        return (
+          <div className="fixed inset-0 z-[9994] flex items-center justify-center p-4" onClick={() => setShowNCReport(false)}>
+            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+            <div className={cn("relative w-full max-w-2xl rounded-2xl shadow-2xl border max-h-[88vh] flex flex-col",
+              darkMode ? "bg-[#16161A] border-white/12" : "bg-white border-gray-200"
+            )} onClick={e => e.stopPropagation()}>
+              {/* Header */}
+              <div className={cn("px-6 py-4 border-b shrink-0", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className={cn("text-sm font-black", darkMode ? "text-white" : "text-gray-900")}>🧾 Reporte de Notas de Crédito</p>
+                    <p className={cn("text-[10px] mt-0.5", darkMode ? "text-gray-500" : "text-gray-400")}>{allNC.length} NC registradas en el período</p>
+                  </div>
+                  <button onClick={() => setShowNCReport(false)}
+                    className={cn("p-1.5 rounded-lg", darkMode ? "hover:bg-white/8 text-gray-500" : "hover:bg-gray-100 text-gray-400")}>
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                {/* Filters */}
+                <div className="flex items-center gap-3 mt-3">
+                  <div className="flex-1">
+                    <label className={cn("text-[8px] font-bold block mb-1", darkMode ? "text-gray-600" : "text-gray-400")}>Desde</label>
+                    <input type="date" value={ncReportStart} onChange={e => setNcReportStart(e.target.value)}
+                      style={darkMode ? {colorScheme:'dark'} : {}}
+                      className={cn("w-full px-2 py-1.5 rounded-lg text-xs outline-none border", darkMode ? "bg-white/8 border-white/10 text-white" : "bg-gray-50 border-gray-200 text-gray-800")} />
+                  </div>
+                  <div className="flex-1">
+                    <label className={cn("text-[8px] font-bold block mb-1", darkMode ? "text-gray-600" : "text-gray-400")}>Hasta</label>
+                    <input type="date" value={ncReportEnd} onChange={e => setNcReportEnd(e.target.value)}
+                      style={darkMode ? {colorScheme:'dark'} : {}}
+                      className={cn("w-full px-2 py-1.5 rounded-lg text-xs outline-none border", darkMode ? "bg-white/8 border-white/10 text-white" : "bg-gray-50 border-gray-200 text-gray-800")} />
+                  </div>
+                  <div className="flex gap-2 mt-4">
+                    <div className={cn("px-3 py-1.5 rounded-lg text-[9px] font-bold", darkMode ? "bg-orange-500/15 text-orange-400" : "bg-orange-50 text-orange-600")}>
+                      📦 {devoluciones.length} devoluciones
+                    </div>
+                    <div className={cn("px-3 py-1.5 rounded-lg text-[9px] font-bold", darkMode ? "bg-purple-500/15 text-purple-400" : "bg-purple-50 text-purple-600")}>
+                      🔄 {anulaciones.length} anulaciones
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* List */}
+              <div className="overflow-y-auto custom-scrollbar flex-1">
+                {allNC.length === 0 ? (
+                  <div className={cn("flex flex-col items-center justify-center py-16 gap-2", darkMode ? "text-gray-700" : "text-gray-300")}>
+                    <span className="text-4xl">🧾</span>
+                    <p className="text-sm font-black">No hay NCs en este período</p>
+                  </div>
+                ) : (
+                  <div className={cn("divide-y", darkMode ? "divide-white/5" : "divide-gray-50")}>
+                    {allNC.map((r, i) => {
+                      const client = allClients.find(c => c.id === r.client_id);
+                      return (
+                        <div key={i} className={cn("px-5 py-3", darkMode ? "hover:bg-white/3" : "hover:bg-gray-50")}>
+                          <div className="flex items-start gap-3">
+                            <span className={cn("text-[8px] font-black px-2 py-1 rounded-lg shrink-0 mt-0.5",
+                              r.nc_type === 'devolucion'
+                                ? (darkMode ? "bg-orange-500/15 text-orange-400" : "bg-orange-100 text-orange-700")
+                                : (darkMode ? "bg-purple-500/15 text-purple-400" : "bg-purple-100 text-purple-700")
+                            )}>
+                              {r.nc_type === 'devolucion' ? '📦 Dev.' : '🔄 Anu.'}
+                            </span>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className={cn("text-xs font-bold truncate", darkMode ? "text-gray-200" : "text-gray-800")}>{client?.name || '—'}</p>
+                                <span className={cn("text-[8px] font-mono", darkMode ? "text-purple-400" : "text-purple-600")}>{r.nc_number || 'sin NC#'}</span>
+                              </div>
+                              <div className="flex items-center gap-3 mt-0.5 flex-wrap">
+                                <span className={cn("text-[9px] font-mono", darkMode ? "text-gray-600" : "text-gray-400")}>{r.order_date}</span>
+                                <span className={cn("text-[9px]", darkMode ? "text-gray-500" : "text-gray-500")}>{r.size} · {r.quantity} cj{r.nc_type === 'devolucion' ? ` · ${getTotalM2(r.quantity, r.size, r.film_type).toFixed(1)} m²` : ''}</span>
+                                {r.nc_invoice_ref && <span className={cn("text-[8px] font-mono", darkMode ? "text-gray-600" : "text-gray-400")}>Anula: {r.nc_invoice_ref}</span>}
+                                {r.nc_new_invoice && <span className={cn("text-[8px] font-mono", darkMode ? "text-emerald-500/70" : "text-emerald-600")}>→ {r.nc_new_invoice}</span>}
+                              </div>
+                              {r.nc_reason && <p className={cn("text-[9px] mt-0.5 italic", darkMode ? "text-gray-600" : "text-gray-400")}>{r.nc_reason}</p>}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div className={cn("px-5 py-3 border-t shrink-0 flex items-center justify-between", darkMode ? "border-white/8" : "border-gray-100")}>
+                <button onClick={() => setShowNCReport(false)}
+                  className={cn("px-4 py-2 rounded-xl text-xs font-bold", darkMode ? "bg-white/5 text-gray-400 hover:bg-white/10" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}>
+                  Cerrar
+                </button>
+                <button onClick={exportPDF} disabled={allNC.length === 0}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-black bg-[#1A3A5C] text-white hover:bg-[#22487A] transition-colors disabled:opacity-40">
+                  <FileText className="w-3.5 h-3.5" /> Exportar PDF
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── PRINTER STATS FULL MODAL ── */}
+      {showPrinterStatsModal && (() => {
+        const stats = printerMetrics.clientPrinterStats.filter(s => s.consumption > 0);
+        const maxM2 = stats[0]?.m2 || 1;
+        return (
+          <div className="fixed inset-0 z-[9995] flex items-center justify-center p-4" onClick={() => setShowPrinterStatsModal(false)}>
+            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+            <div className={cn("relative w-full max-w-3xl rounded-2xl shadow-2xl border max-h-[88vh] flex flex-col",
+              darkMode ? "bg-[#16161A] border-white/12" : "bg-white border-gray-200"
+            )} onClick={e => e.stopPropagation()}>
+              {/* Header */}
+              <div className={cn("px-6 py-4 border-b shrink-0", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className={cn("text-sm font-black", darkMode ? "text-white" : "text-gray-900")}>Consumo vs Impresoras — Todos los clientes</p>
+                    <p className={cn("text-[10px] mt-0.5", darkMode ? "text-gray-500" : "text-gray-400")}>{stats.length} clientes con consumo registrado</p>
+                  </div>
+                  <button onClick={() => setShowPrinterStatsModal(false)}
+                    className={cn("p-1.5 rounded-lg", darkMode ? "hover:bg-white/8 text-gray-500" : "hover:bg-gray-100 text-gray-400")}>
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                {/* Summary KPIs */}
+                <div className="grid grid-cols-4 gap-3 mt-4">
+                  {[
+                    { label: 'Clientes', val: stats.length, color: darkMode ? 'text-white' : 'text-gray-900' },
+                    { label: 'Total m²', val: stats.reduce((s,c)=>s+c.m2,0).toFixed(1), color: darkMode ? 'text-cyan-400' : 'text-cyan-600' },
+                    { label: 'Total cajas', val: stats.reduce((s,c)=>s+c.consumption,0), color: darkMode ? 'text-red-400' : 'text-red-600' },
+                    { label: 'Sin impresora', val: stats.filter(s=>s.printerCount===0).length, color: darkMode ? 'text-amber-400' : 'text-amber-600' },
+                  ].map((k,i) => (
+                    <div key={i} className={cn("rounded-xl p-3 border text-center", darkMode ? "bg-white/4 border-white/8" : "bg-gray-50 border-gray-100")}>
+                      <p className={cn("text-lg font-black leading-none", k.color)}>{k.val}</p>
+                      <p className={cn("text-[8px] font-bold uppercase tracking-wider mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>{k.label}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              {/* Table */}
+              <div className="overflow-y-auto custom-scrollbar flex-1">
+                <table className="w-full text-xs">
+                  <thead className={cn("text-[8px] font-bold uppercase tracking-wider sticky top-0", darkMode ? "text-gray-600 bg-[#16161A]" : "text-gray-400 bg-white")}>
+                    <tr className={cn("border-b", darkMode ? "border-white/6" : "border-gray-100")}>
+                      <th className="px-5 py-2.5 text-left w-10">#</th>
+                      <th className="px-5 py-2.5 text-left">Cliente</th>
+                      <th className="px-4 py-2.5 text-center">Impr.</th>
+                      <th className="px-4 py-2.5 text-right">Cajas</th>
+                      <th className="px-4 py-2.5 text-right">m²</th>
+                      <th className="px-4 py-2.5 text-right">cj/impr.</th>
+                      <th className="px-4 py-2.5 text-right">m²/impr.</th>
+                      <th className="px-4 py-2.5 text-left">Participación</th>
+                    </tr>
+                  </thead>
+                  <tbody className={cn("divide-y", darkMode ? "divide-white/4" : "divide-gray-50")}>
+                    {stats.map((stat, idx) => {
+                      const barPct = (stat.m2 / maxM2) * 100;
+                      return (
+                        <tr key={idx}
+                          className={cn("transition-colors cursor-pointer", darkMode ? "hover:bg-white/4" : "hover:bg-gray-50")}
+                          onClick={() => { const c = allClients.find(x => x.id === stat.clientId); if (c) { setSelectedClient(c); setView('clients'); setShowPrinterStatsModal(false); } }}
+                        >
+                          <td className={cn("px-5 py-2.5 font-black text-[10px]", idx < 3 ? "text-[#ED1C24]" : (darkMode ? "text-gray-700" : "text-gray-300"))}>{idx+1}</td>
+                          <td className="px-5 py-2.5">
+                            <p className={cn("font-semibold truncate max-w-[220px]", darkMode ? "text-gray-200" : "text-gray-800")}>{stat.clientName}</p>
+                          </td>
+                          <td className="px-4 py-2.5 text-center font-black">{stat.printerCount || <span className={cn(darkMode ? "text-gray-700" : "text-gray-300")}>—</span>}</td>
+                          <td className={cn("px-4 py-2.5 text-right font-black", darkMode ? "text-red-400" : "text-red-600")}>{stat.consumption}</td>
+                          <td className={cn("px-4 py-2.5 text-right font-black", darkMode ? "text-cyan-400" : "text-cyan-600")}>{stat.m2.toFixed(1)}</td>
+                          <td className={cn("px-4 py-2.5 text-right text-[10px] font-bold", stat.printerCount === 0 ? (darkMode ? "text-gray-700" : "text-gray-300") : (darkMode ? "text-gray-400" : "text-gray-600"))}>
+                            {stat.printerCount > 0 ? (stat.consumption / stat.printerCount).toFixed(1) : '—'}
+                          </td>
+                          <td className={cn("px-4 py-2.5 text-right text-[10px] font-bold", stat.printerCount === 0 ? (darkMode ? "text-gray-700" : "text-gray-300") : (darkMode ? "text-gray-500" : "text-gray-500"))}>
+                            {stat.printerCount > 0 ? (stat.m2 / stat.printerCount).toFixed(1) : '—'}
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <div className={cn("h-1.5 w-24 rounded-full overflow-hidden", darkMode ? "bg-white/8" : "bg-gray-200")}>
+                              <div className="h-full rounded-full bg-cyan-500" style={{ width: `${barPct}%` }} />
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div className={cn("px-5 py-3 border-t shrink-0 flex justify-between items-center", darkMode ? "border-white/8" : "border-gray-100")}>
+                <p className={cn("text-[9px]", darkMode ? "text-gray-700" : "text-gray-400")}>Clic en un cliente para ver su ficha</p>
+                <button onClick={() => setShowPrinterStatsModal(false)}
+                  className={cn("px-4 py-1.5 rounded-xl text-xs font-bold transition-colors", darkMode ? "bg-white/5 text-gray-400 hover:bg-white/10" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}>
+                  Cerrar
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── INTELLIGENCE HELP MODAL ── */}
+      {intelHelpModal && (() => {
+        const INTEL_HELP: Record<string, { title: string; desc: string; items: { label: string; calc: string; example?: string }[] }> = {
+          projection: {
+            title: 'Proyección de Stock',
+            desc: 'Muestra cuántas cajas de cada medida se necesitan en los próximos meses basándose en el consumo histórico y el stock actual.',
+            items: [
+              { label: 'Stock actual', calc: 'Stock físico en bodega + cajas en tránsito pendientes de llegada.', example: 'Bodega: 250 cj + Tránsito: 172 cj = 422 cj disponibles' },
+              { label: 'Consumo promedio mensual', calc: 'Promedio de cajas vendidas por mes en los últimos 6 meses filtrados.', example: '180+165+190+200+175+160 ÷ 6 = 178 cj/mes' },
+              { label: 'Cobertura (meses)', calc: 'Stock actual ÷ Consumo promedio mensual. Indica cuántos meses dura el stock sin nuevos pedidos.', example: '422 ÷ 178 = 2.37 meses' },
+              { label: 'Stock de seguridad', calc: 'Mínimo recomendado = consumo 1 mes. Alerta roja si cobertura < 1 mes, ámbar si < 2 meses.' },
+              { label: 'Pedido sugerido', calc: 'Cantidad para llegar a 3 meses de cobertura: (3 × promedio) − stock actual.', example: '(3 × 178) − 422 = 112 cj sugeridas' },
+              { label: 'Tránsito', calc: 'Cajas pedidas a Fujifilm que aún no han llegado. Se suman al stock disponible proyectado.' },
+            ]
+          },
+          comparativo: {
+            title: 'Comparativo de Ventas',
+            desc: 'Compara el desempeño de ventas entre diferentes períodos y tipos de película para identificar tendencias.',
+            items: [
+              { label: 'Período actual vs anterior', calc: 'Compara m² y cajas del período seleccionado contra el mismo período del año anterior.' },
+              { label: 'Crecimiento %', calc: '((Período actual − Período anterior) ÷ Período anterior) × 100.', example: '(1200 − 1000) ÷ 1000 × 100 = +20%' },
+              { label: 'Participación por medida', calc: 'M² de cada medida ÷ M² totales × 100.', example: '8x10: 3000 m² ÷ 10000 m² = 30%' },
+              { label: 'DI-HT vs DI-HL', calc: 'Separación por tipo de película. DI-HT es película estándar, DI-HL es alta luminosidad para equipos específicos.' },
+            ]
+          },
+          health: {
+            title: 'Salud de Clientes',
+            desc: 'Puntaje 0–100 que indica qué tan saludable es la relación comercial con cada cliente.',
+            items: [
+              { label: 'Puntaje (0–100)', calc: 'Suma ponderada: Recencia 30% + Frecuencia 25% + Volumen 25% + Tendencia 20%.' },
+              { label: 'Recencia', calc: 'Días desde el último pedido. <30d = 100pts · 30–60d = 75pts · 60–90d = 50pts · >180d = 0pts.' },
+              { label: 'Frecuencia', calc: 'Pedidos en los últimos 90 días comparado con el promedio histórico mensual del cliente.' },
+              { label: 'Volumen', calc: 'M² comprados en los últimos 3 meses vs promedio histórico del cliente.' },
+              { label: 'Tendencia', calc: 'Últimos 3 meses vs los 3 anteriores. Positivo si está creciendo, negativo si decrece.' },
+              { label: 'Estado', calc: '🟢 Saludable >70 · 🟡 En riesgo 40–70 · 🔴 Crítico <40' },
+            ]
+          },
+          profitability: {
+            title: 'Rentabilidad',
+            desc: 'Análisis del revenue y margen por cliente, medida y vendedor.',
+            items: [
+              { label: 'Revenue total', calc: 'Suma de (cantidad × costo unitario) de todas las facturas del período.' },
+              { label: 'Revenue por m²', calc: 'Revenue total ÷ M² totales del período.', example: '$5,000 ÷ 900 m² = $5.56/m²' },
+              { label: 'Participación %', calc: 'Revenue del cliente ÷ Revenue total de todos los clientes × 100.' },
+              { label: 'Concentración Pareto', calc: 'Identifica si el 20% de clientes genera el 80% del revenue (regla 80/20).' },
+            ]
+          },
+          seasonality: {
+            title: 'Estacionalidad',
+            desc: 'Detecta patrones de consumo según el mes para anticipar picos y valles de demanda.',
+            items: [
+              { label: 'Índice estacional', calc: 'Consumo promedio del mes ÷ Promedio mensual general × 100. >100 = mes alto, <100 = mes bajo.', example: 'Dic promedio 250 cj ÷ promedio general 200 cj = índice 125 (+25%)' },
+              { label: 'Mes pico', calc: 'Mes con el mayor índice estacional histórico. Útil para planificar pedidos con anticipación.' },
+              { label: 'Mes valle', calc: 'Mes con el menor índice. Indica cuándo reducir pedidos a Fujifilm.' },
+              { label: 'Variación año a año', calc: 'Compara el mismo mes entre años para ver si el patrón se mantiene o está cambiando.' },
+            ]
+          },
+          potential: {
+            title: 'Módulo Potencial',
+            desc: 'Identifica oportunidades de colocación de impresoras y crecimiento de ventas.',
+            items: [
+              { label: 'Califica para impresora', calc: 'Cliente cuyo consumo 2024 supera el umbral mínimo para justificar una impresora Fujifilm (calculado por Fujifilm según mix de medidas y volumen).' },
+              { label: 'Pendiente de instalación', calc: 'Califica = 1 en el análisis 2024 pero no tiene impresora registrada actualmente en el sistema.' },
+              { label: 'Configuración recomendada', calc: 'S = Small Tray (8x10/10x12) · L = Large Tray (14x17) · F = Feeder (alto volumen). El número indica cuántas unidades de cada tipo.' },
+              { label: 'm² 2024 vs 2025', calc: 'Compara el consumo anual del año base del análisis vs lo acumulado en 2025 para ver evolución.' },
+              { label: 'Nuevas oportunidades', calc: 'Clientes que en 2024 no calificaban pero en 2025 superaron 100 m² — ahora podrían justificar una impresora.' },
+              { label: 'Captura %', calc: 'Consumo actual ÷ Consumo esperado (según impresoras instaladas × benchmark 2 cj/mes) × 100.', example: 'Cliente con 2 impresoras: esperado 4 cj/mes, consume 2 cj/mes → captura 50%' },
+            ]
+          },
+          provinces: {
+            title: 'Análisis por Provincias',
+            desc: 'Distribución geográfica del consumo y clientes.',
+            items: [
+              { label: 'M² por provincia', calc: 'Suma de m² de todos los clientes de esa provincia en el período filtrado.' },
+              { label: 'Participación %', calc: 'M² de la provincia ÷ M² totales × 100.' },
+              { label: 'Activos', calc: 'Clientes con al menos un pedido en los últimos 90 días.' },
+              { label: 'Inactivos', calc: 'Clientes sin pedidos en más de 90 días. Oportunidad de reactivación.' },
+              { label: 'Promedio m²/cliente', calc: 'M² totales de la provincia ÷ número de clientes registrados en esa provincia.' },
+            ]
+          },
+          anomalies: {
+            title: 'Detección de Anomalías',
+            desc: 'Comportamientos inusuales en el consumo que pueden indicar problemas u oportunidades.',
+            items: [
+              { label: 'Caída brusca', calc: 'Consumo del mes < 50% del promedio de los 3 meses anteriores. Posible pérdida del cliente o problema de stock.', example: 'Promedio 3 meses: 60 cj → mes actual 25 cj → caída del 58%' },
+              { label: 'Pico inusual', calc: 'Consumo del mes > 200% del promedio. Puede indicar compra especial o cambio de proveedor.', example: 'Promedio 3 meses: 30 cj → mes actual 90 cj → pico del 200%' },
+              { label: 'Inactividad prolongada', calc: 'Sin pedidos por más de 90 días cuando históricamente compraba mensualmente.' },
+              { label: 'Desviación estándar', calc: 'Anomalía = consumo fuera de ±2σ (dos desviaciones estándar) del promedio histórico del cliente.', example: 'Promedio: 50 cj, σ=10 → anomalía si <30 o >70 cj' },
+            ]
+          },
+        };
+
+        const help = INTEL_HELP[intelHelpModal];
+        if (!help) return null;
+
+        return (
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4" onClick={() => setIntelHelpModal(null)}>
+            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+            <div className={cn("relative w-full max-w-xl rounded-2xl shadow-2xl border max-h-[85vh] flex flex-col",
+              darkMode ? "bg-[#16161A] border-white/12" : "bg-white border-gray-200"
+            )} onClick={e => e.stopPropagation()}>
+              <div className={cn("px-6 py-4 border-b shrink-0", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className={cn("w-9 h-9 rounded-xl flex items-center justify-center shrink-0", darkMode ? "bg-blue-500/15" : "bg-blue-50")}>
+                      <span className="text-lg">📖</span>
+                    </div>
+                    <div>
+                      <p className={cn("text-sm font-black", darkMode ? "text-white" : "text-gray-900")}>{help.title}</p>
+                      <p className={cn("text-[10px] mt-0.5 leading-relaxed max-w-sm", darkMode ? "text-gray-500" : "text-gray-500")}>{help.desc}</p>
+                    </div>
+                  </div>
+                  <button onClick={() => setIntelHelpModal(null)}
+                    className={cn("p-1.5 rounded-lg shrink-0 transition-colors", darkMode ? "hover:bg-white/8 text-gray-500" : "hover:bg-gray-100 text-gray-400")}>
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+              <div className="overflow-y-auto custom-scrollbar flex-1 p-5 space-y-2.5">
+                {help.items.map((item, i) => (
+                  <div key={i} className={cn("rounded-xl border p-4", darkMode ? "bg-white/3 border-white/6" : "bg-gray-50 border-gray-100")}>
+                    <p className={cn("text-[10px] font-black uppercase tracking-wider mb-1.5", darkMode ? "text-blue-400" : "text-blue-600")}>{item.label}</p>
+                    <p className={cn("text-xs leading-relaxed", darkMode ? "text-gray-300" : "text-gray-700")}>{item.calc}</p>
+                    {item.example && (
+                      <div className={cn("mt-2 px-3 py-1.5 rounded-lg text-[10px] font-mono leading-relaxed",
+                        darkMode ? "bg-white/5 text-gray-500 border border-white/5" : "bg-white text-gray-500 border border-gray-100"
+                      )}>
+                        Ej: {item.example}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div className={cn("px-5 py-3 border-t shrink-0", darkMode ? "border-white/8" : "border-gray-100")}>
+                <button onClick={() => setIntelHelpModal(null)}
+                  className={cn("w-full py-2 rounded-xl text-xs font-bold transition-colors",
+                    darkMode ? "bg-white/5 text-gray-400 hover:bg-white/10" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                  )}>Cerrar</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* ── PROVINCE CLIENTS MODAL ── */}
       {provinceClientsModal && (() => {
         const { province, clients: provClients } = provinceClientsModal;
@@ -12658,7 +14509,7 @@ ${rows.map(r=>{
                   </button>
                 </div>
                 {/* KPIs rápidos */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
+                <div className="grid grid-cols-4 gap-3 mt-4">
                   {[
                     { label: 'Clientes', val: provClients.length, color: darkMode ? 'text-white' : 'text-gray-900' },
                     { label: 'Total m²', val: `${totalProvM2.toLocaleString('es-EC',{minimumFractionDigits:1,maximumFractionDigits:1})}`, color: darkMode ? 'text-cyan-400' : 'text-cyan-600' },
@@ -12754,6 +14605,76 @@ ${rows.map(r=>{
           </div>
         );
       })()}
+
+      {/* ── IMAGER MONTH DETAIL MODAL ── */}
+      {imagerMonthModal && (
+        <div className="fixed inset-0 z-[9996] flex items-center justify-center" onClick={() => setImagerMonthModal(null)}>
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+          <div className={cn("relative w-full max-w-md mx-4 rounded-2xl shadow-2xl border overflow-hidden max-h-[80vh] flex flex-col",
+            darkMode ? "bg-[#16161A] border-white/12" : "bg-white border-gray-200"
+          )} onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div className={cn("px-5 py-4 border-b shrink-0", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className={cn("text-sm font-black", darkMode ? "text-white" : "text-gray-900")}>
+                    {imagerMonthModal.prodLabel}
+                  </p>
+                  <p className={cn("text-[10px] mt-0.5", darkMode ? "text-gray-500" : "text-gray-400")}>
+                    {imagerMonthModal.month} {imagerMonthModal.year} · {imagerMonthModal.clients.length} instalación{imagerMonthModal.clients.length !== 1 ? 'es' : ''}
+                  </p>
+                </div>
+                <button onClick={() => setImagerMonthModal(null)}
+                  className={cn("p-1.5 rounded-lg transition-colors", darkMode ? "hover:bg-white/8 text-gray-500" : "hover:bg-gray-100 text-gray-400")}>
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            {/* Client list */}
+            <div className="overflow-y-auto custom-scrollbar flex-1">
+              {imagerMonthModal.clients.length === 0 ? (
+                <div className={cn("py-10 text-center text-sm", darkMode ? "text-gray-600" : "text-gray-400")}>Sin instalaciones este mes</div>
+              ) : (
+                <div className={cn("divide-y", darkMode ? "divide-white/5" : "divide-gray-50")}>
+                  {imagerMonthModal.clients.map((inst, i) => (
+                    <div key={i}
+                      className={cn("px-5 py-3.5 flex items-center gap-4 transition-colors cursor-pointer",
+                        darkMode ? "hover:bg-white/4" : "hover:bg-gray-50"
+                      )}
+                      onClick={() => {
+                        const client = allClients.find(c => c.name === inst.clientName);
+                        if (client) { setSelectedClient(client); setView('clients'); setImagerMonthModal(null); }
+                      }}
+                    >
+                      <div className={cn("w-8 h-8 rounded-xl flex items-center justify-center shrink-0 text-xs font-black",
+                        darkMode ? "bg-red-500/15 text-red-400" : "bg-red-50 text-red-600"
+                      )}>
+                        {i + 1}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className={cn("text-xs font-bold truncate", darkMode ? "text-gray-200" : "text-gray-800")}>{inst.clientName}</p>
+                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                          <span className={cn("text-[9px] font-mono", darkMode ? "text-gray-500" : "text-gray-400")}>{inst.serial}</span>
+                          {inst.location && <span className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>· {inst.location}</span>}
+                          {inst.installDate && <span className={cn("text-[9px] font-mono", darkMode ? "text-gray-600" : "text-gray-400")}>· {inst.installDate}</span>}
+                        </div>
+                      </div>
+                      <ChevronRight className={cn("w-3.5 h-3.5 shrink-0", darkMode ? "text-gray-700" : "text-gray-300")} />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className={cn("px-5 py-3 border-t shrink-0 flex justify-between items-center", darkMode ? "border-white/8" : "border-gray-100")}>
+              <p className={cn("text-[9px]", darkMode ? "text-gray-700" : "text-gray-400")}>Clic en un cliente para ver su ficha</p>
+              <button onClick={() => setImagerMonthModal(null)}
+                className={cn("px-4 py-1.5 rounded-xl text-xs font-bold transition-colors", darkMode ? "bg-white/5 text-gray-400 hover:bg-white/10" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}>
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── AUDIT LOG DETAIL MODAL ── */}
       {selectedAuditLog && (() => {
@@ -13181,7 +15102,7 @@ ${sectionsHtml}
                     </div>
 
                     {/* Stats row */}
-                    <div className={cn("px-5 py-3 grid grid-cols-2 md:grid-cols-4 gap-3 border-b", darkMode ? "border-white/5 bg-white/1" : "border-gray-50")}>
+                    <div className={cn("px-5 py-3 grid grid-cols-4 gap-3 border-b", darkMode ? "border-white/5 bg-white/1" : "border-gray-50")}>
                       {[
                         { label: 'Total eventos', val: auditLogs.length, color: darkMode ? 'text-white' : 'text-gray-800' },
                         { label: 'Hoy', val: auditLogs.filter(l => new Date(l.timestamp).toDateString() === new Date().toDateString()).length, color: darkMode ? 'text-cyan-400' : 'text-cyan-600' },
@@ -13349,8 +15270,6 @@ ${sectionsHtml}
         .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(160,160,160,0.2); border-radius: 10px; }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(160,160,160,0.4); }
         * { scrollbar-width: thin; scrollbar-color: rgba(160,160,160,0.2) transparent; }
-        .scrollbar-hide::-webkit-scrollbar { display: none; }
-        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
       `}} />
       </div>
 
