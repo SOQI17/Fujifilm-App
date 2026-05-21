@@ -997,194 +997,274 @@ const PURCHASE_ORDERS_2025 = [
   ]},
 ] as const;
 
-function PurchasesDashboardView({ darkMode, globalMetrics }: {
+const FILM_PRICE_REF: Record<string, {costo: number; precio: number; margen: number}> = {
+  'DIHT_8x10':  {costo: 31.29, precio: 62.58,  margen: 50.0},
+  'DIHT_10x12': {costo: 39.07, precio: 78.14,  margen: 50.0},
+  'DIHT_11x14': {costo: 48.76, precio: 97.53,  margen: 50.0},
+  'DIHT_14x17': {costo: 78.41, precio: 156.82, margen: 50.0},
+  'DIHL_8x10':  {costo: 61.18, precio: 122.35, margen: 50.0},
+  'DIHL_11x14': {costo: 115.28,precio: 230.57, margen: 50.0},
+  'DIHL_14x17': {costo: 122.89,precio: 245.78, margen: 50.0},
+  'DIML_8x10':  {costo: 68.33, precio: 136.65, margen: 50.0},
+};
+
+function PurchasesDashboardView({ darkMode, globalMetrics, allConsumos }: {
   darkMode: boolean;
   globalMetrics: any;
+  allConsumos: any[];
 }) {
   const orders = PURCHASE_ORDERS_2025 as any[];
+  const M2_PER_BOX: Record<string, number> = {
+    '20x25': 9.03, '25x30': 13.55, '26x36': 16.77, '35x43': 25.55,
+  };
+  const SIZE_PURCHASE_TO_SALES: Record<string,string> = { '20x25':'8x10','25x30':'10x12','26x36':'11x14','35x43':'14x17' };
+  const SIZE_SALES_TO_PURCHASE: Record<string,string> = { '8x10':'20x25','10x12':'25x30','11x14':'26x36','14x17':'35x43' };
+  const getM2Film = (qty: number, size: string) => qty * (M2_PER_BOX[size] || 9.03);
 
   // Film items only
   const filmItems: any[] = orders.flatMap((o: any) =>
-    o.items
-      .filter((i: any) => i.cat.startsWith('film'))
+    o.items.filter((i: any) => i.cat.startsWith('film'))
       .map((i: any) => ({ ...i, orden: o.orden, fecha: o.fecha }))
   );
-
-  // Film-only orders (orders that contain at least one film item)
   const filmOrders = orders.filter((o: any) => o.items.some((i: any) => i.cat.startsWith('film')));
 
-  const totalFilmInversion = filmItems.reduce((s: number, i: any) => s + i.costo_total, 0);
-  const totalFilmUnits = filmItems.reduce((s: number, i: any) => s + i.qty, 0);
-  const totalVentas = globalMetrics.totalRevenue || 0;
-  const margenGlobal = totalVentas > 0 ? ((totalVentas - totalFilmInversion) / totalVentas * 100) : 0;
-
-  // By size
-  const bySize: Record<string, { qty: number; costo: number; venta_est: number; items: any[] }> = {};
+  // By size — with pricing
+  const bySize: Record<string, { qty: number; costo: number; m2: number; film: string }> = {};
   filmItems.forEach((i: any) => {
-    const k = i.size || 'otros';
-    if (!bySize[k]) bySize[k] = { qty: 0, costo: 0, venta_est: 0, items: [] };
+    const k = i.size || '20x25';
+    if (!bySize[k]) bySize[k] = { qty: 0, costo: 0, m2: 0, film: i.cat.replace('film_','').toUpperCase() };
     bySize[k].qty += i.qty;
     bySize[k].costo += i.costo_total;
-    bySize[k].venta_est += (i.venta_uni || 0) * i.qty;
-    bySize[k].items.push(i);
+    bySize[k].m2 += getM2Film(i.qty, i.size || '20x25');
   });
 
   // By type
-  const byType: Record<string, { qty: number; costo: number }> = {};
+  const byType: Record<string, { qty: number; costo: number; m2: number }> = {};
   filmItems.forEach((i: any) => {
-    const t = i.cat.replace('film_', '').toUpperCase();
-    if (!byType[t]) byType[t] = { qty: 0, costo: 0 };
+    const t = i.cat.replace('film_','').toUpperCase();
+    if (!byType[t]) byType[t] = { qty: 0, costo: 0, m2: 0 };
     byType[t].qty += i.qty;
     byType[t].costo += i.costo_total;
+    byType[t].m2 += getM2Film(i.qty, i.size || '20x25');
   });
 
-  const sizeMapPurchase: Record<string, string> = { '20x25': '8x10', '25x30': '10x12', '35x43': '14x17', '26x36': '11x14' };
+  const totalFilmInversion = filmItems.reduce((s: number, i: any) => s + i.costo_total, 0);
+  const totalFilmUnits = filmItems.reduce((s: number, i: any) => s + i.qty, 0);
+  const totalFilmM2 = filmItems.reduce((s: number, i: any) => s + getM2Film(i.qty, i.size || '20x25'), 0);
+  const costoPerM2 = totalFilmM2 > 0 ? totalFilmInversion / totalFilmM2 : 0;
+
+  // Estimated revenue from price reference (precio = 2× costo)
+  const ventaEstimadaTotal = filmItems.reduce((s: number, i: any) => {
+    const salesSize = SIZE_PURCHASE_TO_SALES[i.size || '20x25'] || '8x10';
+    const film = i.cat.replace('film_','').toUpperCase();
+    const ref = FILM_PRICE_REF[`${film}_${salesSize}`];
+    return s + (ref ? ref.precio * i.qty : i.costo_uni * 2 * i.qty);
+  }, 0);
+  const margenEstimado = 50.0; // confirmed from Excel
+
+  // Real revenue from invoices (2025, no date filter)
+  const invoiceRevenue2025 = allConsumos.filter((r: any) => !r.is_return && r.order_date >= '2025-01-01' && r.order_date <= '2025-12-31')
+    .reduce((s: number, r: any) => s + r.quantity * (r.unit_cost || 0), 0);
+
+  // Sales by size (2025)
+  const sales2025: Record<string,{cajas:number;m2:number}> = {};
+  allConsumos.filter((r: any) => !r.is_return && r.order_date >= '2025-01-01').forEach((r: any) => {
+    if (!sales2025[r.size]) sales2025[r.size] = { cajas: 0, m2: 0 };
+    sales2025[r.size].cajas += r.quantity;
+    const pSize = SIZE_SALES_TO_PURCHASE[r.size] || r.size;
+    sales2025[r.size].m2 += r.quantity * (M2_PER_BOX[pSize] || 9.03);
+  });
+
+  // Size rows with real margin per medida
   const sizeRows = Object.entries(bySize).sort((a, b) => b[1].costo - a[1].costo).map(([size, data]) => {
-    const salesSize = sizeMapPurchase[size] || size;
-    const vendido = (globalMetrics.sizeData || []).find((s: any) => s.name === salesSize)?.value || 0;
-    const rotacion = data.qty > 0 ? Math.round((vendido / data.qty) * 100) : 0;
-    const balance = vendido - data.qty;
+    const salesSize = SIZE_PURCHASE_TO_SALES[size] || size;
+    const ref = FILM_PRICE_REF[`${data.film}_${salesSize}`];
     const costoUni = data.qty > 0 ? data.costo / data.qty : 0;
-    const ventaUni = data.venta_est > 0 ? data.venta_est / data.qty : 0;
-    const margen = ventaUni > 0 ? ((ventaUni - costoUni) / ventaUni * 100) : 0;
-    return { size, salesSize, comprado: data.qty, vendido, costo: data.costo, costoUni, ventaUni, rotacion, margen, balance };
+    const precioVenta = ref ? ref.precio : costoUni * 2;
+    const margen = ref ? ref.margen : 50.0;
+    const ventaEstimada = precioVenta * data.qty;
+    const utilidad = ventaEstimada - data.costo;
+    // Real sales 2025 for this size
+    const vendidoCajas = sales2025[salesSize]?.cajas || 0;
+    const vendidoM2 = sales2025[salesSize]?.m2 || 0;
+    const rotacion = data.qty > 0 ? Math.round((vendidoCajas / data.qty) * 100) : 0;
+    const balance = vendidoCajas - data.qty;
+    return { size, salesSize, film: data.film, qty: data.qty, m2: data.m2, costo: data.costo, costoUni, precioVenta, margen, ventaEstimada, utilidad, vendidoCajas, vendidoM2, rotacion, balance };
   });
 
-  const typeColors: Record<string, string> = { DIHT: '#ED1C24', DIHL: '#3B82F6', DIML: '#8B5CF6' };
-  const maxTypeCosto = Math.max(...Object.values(byType).map((d: any) => d.costo));
+  const typeColors: Record<string,string> = { DIHT:'#ED1C24', DIHL:'#3B82F6', DIML:'#8B5CF6' };
 
   return (
     <div className="flex flex-col gap-5">
 
-      {/* ── KPIs ── */}
+      {/* Nota metodológica */}
+      <div className={cn('px-4 py-2.5 rounded-xl border flex items-center gap-3', darkMode ? 'bg-blue-500/8 border-blue-500/20' : 'bg-blue-50 border-blue-200')}>
+        <span className="text-base shrink-0">📋</span>
+        <p className={cn('text-[9px] leading-relaxed', darkMode ? 'text-blue-300' : 'text-blue-700')}>
+          <strong>Metodología:</strong> Inversión = costo landed (FOB + flete + impuestos + gastos locales). 
+          Precio de venta = 2× costo (margen 50% confirmado del Excel de importaciones). 
+          Revenue real 2025 usa facturas registradas con costo unitario en el sistema.
+        </p>
+      </div>
+
+      {/* KPIs */}
       <div className="grid grid-cols-4 gap-4">
         {[
-          { label: 'Inversión en película', val: `$${(totalFilmInversion/1000).toFixed(1)}k`, sub: `${filmOrders.length} órdenes de compra`, color: darkMode ? 'text-blue-400' : 'text-blue-700', bg: darkMode ? 'bg-blue-500/10 border-blue-500/20' : 'bg-blue-50 border-blue-200' },
-          { label: 'Cajas importadas', val: totalFilmUnits.toLocaleString(), sub: `${sizeRows.length} medidas distintas`, color: darkMode ? 'text-cyan-400' : 'text-cyan-700', bg: darkMode ? 'bg-cyan-500/10 border-cyan-500/20' : 'bg-cyan-50 border-cyan-200' },
-          { label: 'Revenue ventas', val: `$${(totalVentas/1000).toFixed(1)}k`, sub: 'acumulado del período', color: darkMode ? 'text-emerald-400' : 'text-emerald-700', bg: darkMode ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-emerald-50 border-emerald-200' },
-          { label: 'Margen bruto est.', val: `${margenGlobal.toFixed(1)}%`, sub: `$${((totalVentas - totalFilmInversion)/1000).toFixed(1)}k utilidad bruta`, color: margenGlobal > 30 ? (darkMode ? 'text-emerald-400' : 'text-emerald-700') : 'text-amber-400', bg: margenGlobal > 30 ? (darkMode ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-emerald-50 border-emerald-200') : (darkMode ? 'bg-amber-500/10 border-amber-500/20' : 'bg-amber-50 border-amber-200') },
-        ].map((k, i) => (
+          { label: 'Inversión en película', val: `$${(totalFilmInversion/1000).toFixed(1)}k`, sub: `$${costoPerM2.toFixed(2)}/m² · ${filmOrders.length} órdenes`, color: darkMode ? 'text-blue-400':'text-blue-700', bg: darkMode?'bg-blue-500/10 border-blue-500/20':'bg-blue-50 border-blue-200' },
+          { label: 'M² importados 2025', val: `${(totalFilmM2/1000).toFixed(1)}k m²`, sub: `${totalFilmUnits.toLocaleString()} cajas`, color: darkMode?'text-cyan-400':'text-cyan-700', bg: darkMode?'bg-cyan-500/10 border-cyan-500/20':'bg-cyan-50 border-cyan-200' },
+          { label: 'Venta estimada 2025', val: `$${(ventaEstimadaTotal/1000).toFixed(1)}k`, sub: `Basado en precio = 2× costo`, color: darkMode?'text-emerald-400':'text-emerald-700', bg: darkMode?'bg-emerald-500/10 border-emerald-500/20':'bg-emerald-50 border-emerald-200' },
+          { label: 'Margen bruto confirmado', val: `${margenEstimado.toFixed(0)}%`, sub: `Utilidad est. $${((ventaEstimadaTotal-totalFilmInversion)/1000).toFixed(1)}k`, color: 'text-emerald-400', bg: darkMode?'bg-emerald-500/10 border-emerald-500/20':'bg-emerald-50 border-emerald-200' },
+        ].map((k,i) => (
           <div key={i} className={cn('p-5 rounded-xl border', k.bg)}>
-            <p className={cn('text-[9px] font-bold uppercase tracking-wider mb-2', darkMode ? 'text-gray-500' : 'text-gray-500')}>{k.label}</p>
+            <p className={cn('text-[9px] font-bold uppercase tracking-wider mb-2', darkMode?'text-gray-500':'text-gray-500')}>{k.label}</p>
             <p className={cn('text-3xl font-black leading-none', k.color)}>{k.val}</p>
-            <p className={cn('text-[9px] mt-1', darkMode ? 'text-gray-600' : 'text-gray-400')}>{k.sub}</p>
+            <p className={cn('text-[9px] mt-1', darkMode?'text-gray-600':'text-gray-400')}>{k.sub}</p>
           </div>
         ))}
       </div>
 
       <div className="grid grid-cols-12 gap-5">
 
-        {/* ── Match por medida ── */}
-        <div className={cn('col-span-8 rounded-xl border overflow-hidden', darkMode ? 'bg-[#16161A] border-white/8' : 'bg-white border-gray-200 shadow-sm')}>
-          <div className={cn('px-5 py-4 border-b', darkMode ? 'border-white/8 bg-white/3' : 'border-gray-100 bg-gray-50')}>
-            <p className={cn('text-xs font-black', darkMode ? 'text-white' : 'text-gray-900')}>Compras vs Ventas por medida</p>
-            <p className={cn('text-[9px] mt-0.5', darkMode ? 'text-gray-500' : 'text-gray-400')}>Rotación = cajas vendidas / cajas compradas · Balance = sobrante o faltante</p>
+        {/* Tabla principal por medida */}
+        <div className={cn('col-span-8 rounded-xl border overflow-hidden', darkMode?'bg-[#16161A] border-white/8':'bg-white border-gray-200 shadow-sm')}>
+          <div className={cn('px-5 py-4 border-b', darkMode?'border-white/8 bg-white/3':'border-gray-100 bg-gray-50')}>
+            <p className={cn('text-xs font-black', darkMode?'text-white':'text-gray-900')}>Análisis por medida — Costo vs Precio de venta</p>
+            <p className={cn('text-[9px] mt-0.5', darkMode?'text-gray-500':'text-gray-400')}>Rotación = cajas vendidas 2025 / cajas importadas · Precio = 2× costo (confirmado)</p>
           </div>
           <table className="w-full text-xs">
-            <thead className={cn('text-[8px] font-bold uppercase tracking-wider', darkMode ? 'text-gray-600 bg-white/2' : 'text-gray-400 bg-gray-50')}>
-              <tr className={cn('border-b', darkMode ? 'border-white/6' : 'border-gray-100')}>
+            <thead className={cn('text-[8px] font-bold uppercase tracking-wider', darkMode?'text-gray-600 bg-white/2':'text-gray-400 bg-gray-50')}>
+              <tr className={cn('border-b', darkMode?'border-white/6':'border-gray-100')}>
                 <th className="px-5 py-2.5 text-left">Medida</th>
-                <th className="px-4 py-2.5 text-right">Comprado</th>
-                <th className="px-4 py-2.5 text-right">Vendido</th>
-                <th className="px-4 py-2.5 text-center">Rotación</th>
+                <th className="px-4 py-2.5 text-right">Qty</th>
                 <th className="px-4 py-2.5 text-right">Costo/cj</th>
+                <th className="px-4 py-2.5 text-right">Precio/cj</th>
+                <th className="px-4 py-2.5 text-center">Margen</th>
                 <th className="px-4 py-2.5 text-right">Inversión</th>
-                <th className="px-4 py-2.5 text-center">Balance</th>
+                <th className="px-4 py-2.5 text-right">Venta est.</th>
+                <th className="px-4 py-2.5 text-center">Rotación</th>
               </tr>
             </thead>
-            <tbody className={cn('divide-y', darkMode ? 'divide-white/4' : 'divide-gray-50')}>
+            <tbody className={cn('divide-y', darkMode?'divide-white/4':'divide-gray-50')}>
               {sizeRows.map((row, i) => (
-                <tr key={i} className={cn('transition-colors', darkMode ? 'hover:bg-white/3' : 'hover:bg-gray-50/60')}>
-                  <td className="px-5 py-3.5">
+                <tr key={i} className={cn('transition-colors', darkMode?'hover:bg-white/3':'hover:bg-gray-50/60')}>
+                  <td className="px-5 py-3">
                     <div className="flex items-center gap-2">
-                      <span className={cn('font-black text-xs px-2 py-0.5 rounded', darkMode ? 'bg-white/8 text-gray-200' : 'bg-gray-100 text-gray-700')}>{row.size}</span>
-                      <span className={cn('text-[8px]', darkMode ? 'text-gray-600' : 'text-gray-400')}>→ {row.salesSize}</span>
+                      <span className={cn('font-black text-[10px] px-1.5 py-0.5 rounded', darkMode?'bg-white/8 text-gray-200':'bg-gray-100 text-gray-700')}>{row.size}</span>
+                      <span className={cn('text-[8px]', darkMode?'text-gray-600':'text-gray-400')}>→ {row.salesSize}</span>
+                      <span className="text-[8px] font-black" style={{color: typeColors[row.film]}}>{row.film}</span>
                     </div>
+                    <p className={cn('text-[8px] mt-0.5', darkMode?'text-gray-700':'text-gray-300')}>{row.qty} cj · {row.m2.toFixed(0)} m²</p>
                   </td>
-                  <td className={cn('px-4 py-3.5 text-right font-black', darkMode ? 'text-blue-400' : 'text-blue-600')}>{row.comprado.toLocaleString()}</td>
-                  <td className={cn('px-4 py-3.5 text-right font-black', darkMode ? 'text-red-400' : 'text-red-600')}>{row.vendido.toLocaleString()}</td>
-                  <td className="px-4 py-3.5">
-                    <div className="flex items-center gap-2 justify-center">
-                      <div className={cn('h-1.5 w-20 rounded-full overflow-hidden', darkMode ? 'bg-white/8' : 'bg-gray-200')}>
-                        <div className={cn('h-full rounded-full', row.rotacion >= 80 ? 'bg-emerald-500' : row.rotacion >= 50 ? 'bg-amber-500' : 'bg-red-400')} style={{ width: `${Math.min(100, row.rotacion)}%` }} />
+                  <td className={cn('px-4 py-3 text-right font-black', darkMode?'text-gray-300':'text-gray-700')}>{row.qty}</td>
+                  <td className={cn('px-4 py-3 text-right font-mono text-[10px]', darkMode?'text-red-400':'text-red-600')}>${row.costoUni.toFixed(2)}</td>
+                  <td className={cn('px-4 py-3 text-right font-mono text-[10px] font-bold', darkMode?'text-emerald-400':'text-emerald-600')}>${row.precioVenta.toFixed(2)}</td>
+                  <td className="px-4 py-3 text-center">
+                    <span className={cn('text-[9px] font-black px-2 py-0.5 rounded-full', darkMode?'bg-emerald-500/15 text-emerald-400':'bg-emerald-50 text-emerald-600')}>{row.margen.toFixed(0)}%</span>
+                  </td>
+                  <td className={cn('px-4 py-3 text-right text-[10px] font-bold', darkMode?'text-gray-400':'text-gray-600')}>${(row.costo/1000).toFixed(1)}k</td>
+                  <td className={cn('px-4 py-3 text-right font-bold text-[10px]', darkMode?'text-emerald-400':'text-emerald-600')}>${(row.ventaEstimada/1000).toFixed(1)}k</td>
+                  <td className="px-4 py-3 text-center">
+                    <div className="flex items-center gap-1.5 justify-center">
+                      <div className={cn('h-1.5 w-16 rounded-full overflow-hidden', darkMode?'bg-white/8':'bg-gray-200')}>
+                        <div className={cn('h-full rounded-full', row.rotacion>=80?'bg-emerald-500':row.rotacion>=50?'bg-amber-500':'bg-red-400')} style={{width:`${Math.min(100,row.rotacion)}%`}} />
                       </div>
-                      <span className={cn('text-[9px] font-black w-8 text-right', row.rotacion >= 80 ? 'text-emerald-400' : row.rotacion >= 50 ? 'text-amber-400' : 'text-red-400')}>{row.rotacion}%</span>
+                      <span className={cn('text-[9px] font-black w-8', row.rotacion>=80?'text-emerald-400':row.rotacion>=50?'text-amber-400':'text-red-400')}>{row.rotacion}%</span>
                     </div>
-                  </td>
-                  <td className={cn('px-4 py-3.5 text-right text-[10px] font-mono', darkMode ? 'text-gray-500' : 'text-gray-500')}>${row.costoUni.toFixed(2)}</td>
-                  <td className={cn('px-4 py-3.5 text-right font-bold text-[10px]', darkMode ? 'text-gray-400' : 'text-gray-600')}>${(row.costo/1000).toFixed(1)}k</td>
-                  <td className="px-4 py-3.5 text-center">
-                    <span className={cn('text-[9px] font-black px-2 py-0.5 rounded-full',
-                      row.balance < -100 ? (darkMode ? 'bg-red-500/15 text-red-400' : 'bg-red-50 text-red-600') :
-                      row.balance < 0 ? (darkMode ? 'bg-amber-500/15 text-amber-400' : 'bg-amber-50 text-amber-600') :
-                      (darkMode ? 'bg-emerald-500/15 text-emerald-400' : 'bg-emerald-50 text-emerald-600')
-                    )}>{row.balance >= 0 ? `+${row.balance}` : row.balance} cj</span>
                   </td>
                 </tr>
               ))}
+              {/* Totals row */}
+              <tr className={cn('font-black', darkMode?'bg-white/4':'bg-gray-50')}>
+                <td className="px-5 py-3 text-xs font-black">TOTAL PELÍCULA</td>
+                <td className={cn('px-4 py-3 text-right', darkMode?'text-gray-200':'text-gray-800')}>{totalFilmUnits}</td>
+                <td className={cn('px-4 py-3 text-right font-mono text-[10px]', darkMode?'text-red-400':'text-red-600')}>${costoPerM2.toFixed(2)}/m²</td>
+                <td className={cn('px-4 py-3 text-right font-mono text-[10px]', darkMode?'text-emerald-400':'text-emerald-600')}>${(costoPerM2*2).toFixed(2)}/m²</td>
+                <td className="px-4 py-3 text-center">
+                  <span className={cn('text-[9px] font-black px-2 py-0.5 rounded-full', darkMode?'bg-emerald-500/20 text-emerald-400':'bg-emerald-100 text-emerald-700')}>50%</span>
+                </td>
+                <td className={cn('px-4 py-3 text-right font-black', darkMode?'text-red-400':'text-red-600')}>${(totalFilmInversion/1000).toFixed(1)}k</td>
+                <td className={cn('px-4 py-3 text-right font-black', darkMode?'text-emerald-400':'text-emerald-600')}>${(ventaEstimadaTotal/1000).toFixed(1)}k</td>
+                <td className="px-4 py-3"></td>
+              </tr>
             </tbody>
           </table>
         </div>
 
-        {/* ── Columna derecha ── */}
+        {/* Columna derecha */}
         <div className="col-span-4 flex flex-col gap-4">
-
           {/* Por tipo */}
-          <div className={cn('rounded-xl border p-5', darkMode ? 'bg-[#16161A] border-white/8' : 'bg-white border-gray-200 shadow-sm')}>
-            <p className={cn('text-[10px] font-bold uppercase tracking-wider mb-4', darkMode ? 'text-gray-500' : 'text-gray-400')}>Inversión por tipo de película</p>
+          <div className={cn('rounded-xl border p-5', darkMode?'bg-[#16161A] border-white/8':'bg-white border-gray-200 shadow-sm')}>
+            <p className={cn('text-[10px] font-bold uppercase tracking-wider mb-4', darkMode?'text-gray-500':'text-gray-400')}>Inversión y utilidad por tipo</p>
             <div className="flex flex-col gap-4">
-              {Object.entries(byType).sort((a,b) => b[1].costo - a[1].costo).map(([type, data]: any) => {
-                const pct = totalFilmInversion > 0 ? (data.costo / totalFilmInversion * 100) : 0;
+              {Object.entries(byType).sort((a,b)=>b[1].costo-a[1].costo).map(([type, data]: any) => {
+                const pct = totalFilmInversion>0 ? (data.costo/totalFilmInversion*100) : 0;
                 const color = typeColors[type] || '#64748b';
+                const utilidad = data.costo; // 50% margin → utilidad = inversión
                 return (
                   <div key={type}>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-[11px] font-black" style={{ color }}>{type}</span>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[11px] font-black" style={{color}}>{type}</span>
                       <div className="text-right">
-                        <span className={cn('text-xs font-black', darkMode ? 'text-gray-200' : 'text-gray-800')}>{data.qty.toLocaleString()} cj</span>
-                        <span className={cn('text-[9px] ml-2 font-bold', darkMode ? 'text-gray-500' : 'text-gray-500')}>${(data.costo/1000).toFixed(1)}k</span>
+                        <span className={cn('text-xs font-black', darkMode?'text-gray-200':'text-gray-800')}>{data.qty} cj</span>
+                        <span className={cn('text-[8px] ml-1.5', darkMode?'text-gray-600':'text-gray-400')}>{data.m2.toFixed(0)} m²</span>
                       </div>
                     </div>
-                    <div className={cn('h-2.5 rounded-full overflow-hidden', darkMode ? 'bg-white/8' : 'bg-gray-100')}>
-                      <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: color }} />
+                    <div className="flex gap-1 mb-1">
+                      <div className="flex-1">
+                        <p className={cn('text-[7px] mb-0.5', darkMode?'text-gray-700':'text-gray-400')}>Inversión</p>
+                        <div className={cn('h-2 rounded-full overflow-hidden', darkMode?'bg-white/8':'bg-gray-100')}>
+                          <div className="h-full rounded-full opacity-70" style={{width:`${pct}%`, background:color}} />
+                        </div>
+                      </div>
                     </div>
-                    <p className={cn('text-[8px] mt-0.5 text-right', darkMode ? 'text-gray-700' : 'text-gray-400')}>{pct.toFixed(1)}% de la inversión en película</p>
+                    <div className="flex items-center justify-between">
+                      <span className={cn('text-[9px] font-bold', darkMode?'text-gray-500':'text-gray-400')}>${(data.costo/1000).toFixed(1)}k costo</span>
+                      <span className={cn('text-[9px] font-black', darkMode?'text-emerald-400':'text-emerald-600')}>+${(utilidad/1000).toFixed(1)}k utilidad est.</span>
+                    </div>
                   </div>
                 );
               })}
             </div>
           </div>
 
-          {/* Órdenes — film only */}
-          <div className={cn('rounded-xl border overflow-hidden', darkMode ? 'bg-[#16161A] border-white/8' : 'bg-white border-gray-200 shadow-sm')}>
-            <div className={cn('px-4 py-2.5 border-b', darkMode ? 'border-white/8 bg-white/3' : 'border-gray-100 bg-gray-50')}>
-              <p className={cn('text-[10px] font-bold uppercase tracking-wider', darkMode ? 'text-gray-500' : 'text-gray-400')}>
-                Órdenes de película ({filmOrders.length})
-              </p>
+          {/* Órdenes */}
+          <div className={cn('rounded-xl border overflow-hidden', darkMode?'bg-[#16161A] border-white/8':'bg-white border-gray-200 shadow-sm')}>
+            <div className={cn('px-4 py-2.5 border-b', darkMode?'border-white/8 bg-white/3':'border-gray-100 bg-gray-50')}>
+              <p className={cn('text-[10px] font-bold uppercase tracking-wider', darkMode?'text-gray-500':'text-gray-400')}>Órdenes de película ({filmOrders.length})</p>
             </div>
             {filmOrders.map((o: any, i: number) => {
-              const filmOnly = o.items.filter((it: any) => it.cat.startsWith('film'));
-              const filmCosto = filmOnly.reduce((s: number, it: any) => s + it.costo_total, 0);
-              const filmQty = filmOnly.reduce((s: number, it: any) => s + it.qty, 0);
+              const fl = o.items.filter((it: any) => it.cat.startsWith('film'));
+              const filmCosto = fl.reduce((s: number, it: any) => s+it.costo_total, 0);
+              const filmM2 = fl.reduce((s: number, it: any) => s+getM2Film(it.qty, it.size||'20x25'), 0);
+              const filmVenta = fl.reduce((s: number, it: any) => {
+                const ss = SIZE_PURCHASE_TO_SALES[it.size||'20x25']||'8x10';
+                const film = it.cat.replace('film_','').toUpperCase();
+                const ref = FILM_PRICE_REF[`${film}_${ss}`];
+                return s+(ref?ref.precio*it.qty:it.costo_uni*2*it.qty);
+              }, 0);
               return (
-                <div key={i} className={cn('px-4 py-3 border-b last:border-0 transition-colors', darkMode ? 'border-white/5 hover:bg-white/3' : 'border-gray-50 hover:bg-gray-50/60')}>
+                <div key={i} className={cn('px-4 py-2.5 border-b last:border-0', darkMode?'border-white/5 hover:bg-white/3':'border-gray-50 hover:bg-gray-50/60')}>
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
-                      <p className={cn('text-[10px] font-black', darkMode ? 'text-gray-200' : 'text-gray-800')}>{o.orden}</p>
-                      <p className={cn('text-[8px] mt-0.5', darkMode ? 'text-gray-600' : 'text-gray-400')}>{o.fecha} · {filmQty} cj película</p>
-                      <div className="flex gap-1 mt-1.5 flex-wrap">
-                        {filmOnly.map((it: any, j: number) => (
-                          <span key={j} className={cn('text-[7px] font-bold px-1 py-0.5 rounded',
-                            it.cat === 'film_diht' ? (darkMode ? 'bg-red-500/15 text-red-400' : 'bg-red-50 text-red-600') :
-                            it.cat === 'film_dihl' ? (darkMode ? 'bg-blue-500/15 text-blue-400' : 'bg-blue-50 text-blue-600') :
-                            (darkMode ? 'bg-purple-500/15 text-purple-400' : 'bg-purple-50 text-purple-600')
-                          )}>{it.size || it.cat.replace('film_','').toUpperCase()} {it.qty}cj</span>
-                        ))}
+                      <p className={cn('text-[10px] font-black', darkMode?'text-gray-200':'text-gray-800')}>{o.orden}</p>
+                      <p className={cn('text-[8px]', darkMode?'text-gray-600':'text-gray-400')}>{o.fecha} · {filmM2.toFixed(0)} m²</p>
+                      <div className="flex gap-1 mt-1 flex-wrap">
+                        {fl.map((it: any, j: number) => {
+                          const ss = SIZE_PURCHASE_TO_SALES[it.size||'20x25']||'8x10';
+                          const film = it.cat.replace('film_','').toUpperCase();
+                          return (
+                            <span key={j} className={cn('text-[7px] font-bold px-1 py-0.5 rounded',
+                              it.cat==='film_diht'?(darkMode?'bg-red-500/15 text-red-400':'bg-red-50 text-red-600'):
+                              it.cat==='film_dihl'?(darkMode?'bg-blue-500/15 text-blue-400':'bg-blue-50 text-blue-600'):
+                              (darkMode?'bg-purple-500/15 text-purple-400':'bg-purple-50 text-purple-600')
+                            )}>{film} {ss} {it.qty}cj</span>
+                          );
+                        })}
                       </div>
                     </div>
                     <div className="text-right shrink-0">
-                      <p className={cn('text-[10px] font-black', darkMode ? 'text-blue-400' : 'text-blue-600')}>${(filmCosto/1000).toFixed(1)}k</p>
-                      <p className={cn('text-[8px]', darkMode ? 'text-gray-600' : 'text-gray-400')}>FOB: ${(o.fob/1000).toFixed(1)}k</p>
+                      <p className={cn('text-[10px] font-black', darkMode?'text-red-400':'text-red-600')}>${(filmCosto/1000).toFixed(1)}k</p>
+                      <p className={cn('text-[9px] font-bold', darkMode?'text-emerald-400':'text-emerald-600')}>→${(filmVenta/1000).toFixed(1)}k</p>
                     </div>
                   </div>
                 </div>
@@ -1197,6 +1277,540 @@ function PurchasesDashboardView({ darkMode, globalMetrics }: {
   );
 }
 
+
+
+
+// ── TRIMAX HISTORICAL DATA 2024 — previously sold product (now discontinued) ──
+// Source: Sales report image provided by user · Used for combined m² metrics only
+const IMAGER_2024: Array<{nombre:string;total_m2:number;m2_8x10:number;m2_10x12:number;m2_11x14:number;m2_14x17:number;califica:number;printers:number;small_tray:number;large_tray:number;feeder:number}> = [
+  {nombre:"GOMEZ VERA JOSE ANTONIO",total_m2:190.56,m2_8x10:0.0,m2_10x12:38.32,m2_11x14:0.0,m2_14x17:152.24,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
+  {nombre:"ADAMANTIUM",total_m2:38.22,m2_8x10:38.22,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+  {nombre:"ANDERSON MICHAEL MEDRANDA ALCIVAR",total_m2:433.16,m2_8x10:433.16,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+  {nombre:"ASUNELEC S.A.",total_m2:249.52,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:97.28,m2_14x17:152.24,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+  {nombre:"BALSECA CABERA DIANA ADRIANA",total_m2:203.2,m2_8x10:50.96,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:152.24,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
+  {nombre:"BOLANOS RODRIGUEZ GERMAN MARCELO",total_m2:114.66,m2_8x10:114.66,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+  {nombre:"BORJA ZAMBRANO JAZMIN BEATRIZ",total_m2:515.97,m2_8x10:515.97,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:5,small_tray:5,large_tray:0,feeder:0},
+  {nombre:"C Y M IMAGENES MEDICINA Y SALUD SA CMSALUD SA",total_m2:2626.24,m2_8x10:1936.48,m2_10x12:689.76,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:10,small_tray:10,large_tray:0,feeder:0},
+  {nombre:"CENTRO CLINICO QUIRURGICO AMBULATORIO HOSPITAL DEL DIA COTOCOLLAO",total_m2:761.36,m2_8x10:38.22,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:723.14,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+  {nombre:"CENTRO CLINICO QUIRURGICO AMBULATORIO HOSPITAL DEL DIA SANGOLQUI",total_m2:4605.69,m2_8x10:0.0,m2_10x12:1465.74,m2_11x14:0.0,m2_14x17:3139.95,califica:1,printers:3,small_tray:1,large_tray:1,feeder:1},
+  {nombre:"CENTRO CLINICO QUIRURGICO AMBULATORIO HOSPITAL DEL DIA ZAMORA",total_m2:152.4,m2_8x10:38.22,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:114.18,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+  {nombre:"CENTRO DE ESPECIALIDADES COLON ECCM S.A.",total_m2:6.37,m2_8x10:6.37,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:2,small_tray:2,large_tray:1,feeder:1},
+  {nombre:"CENTRO ESPECIALIZADO EN DIAGNOSTICO POR IMAGEN Y",total_m2:558.64,m2_8x10:101.92,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:456.72,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
+  {nombre:"CLINICA DEL SOL CIA LTDA",total_m2:76.25,m2_8x10:0.0,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:57.09,califica:0,printers:1,small_tray:0,large_tray:1,feeder:0},
+  {nombre:"CLINICA MODERNA. BABAHOYO",total_m2:19.03,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:19.03,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+  {nombre:"CLISAISA CLINICA SANTA INES SA",total_m2:755.13,m2_8x10:0.0,m2_10x12:507.74,m2_11x14:0.0,m2_14x17:247.39,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+  {nombre:"CLUB DE LEONES QUITO CENTRAL",total_m2:1191.78,m2_8x10:0.0,m2_10x12:354.46,m2_11x14:0.0,m2_14x17:837.32,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+  {nombre:"COMPANIA FONAR3D IMAGE DENTAL CIA LTDA",total_m2:136.98,m2_8x10:127.4,m2_10x12:9.58,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+  {nombre:"CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.",total_m2:2814.8,m2_8x10:216.58,m2_10x12:1494.48,m2_11x14:0.0,m2_14x17:1103.74,califica:1,printers:4,small_tray:4,large_tray:4,feeder:4},
+  {nombre:"CRISTIAN OMAR CAMACHO CHADAN",total_m2:44.59,m2_8x10:44.59,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+  {nombre:"DAVID GABRIEL GARCIA ALVARADO",total_m2:101.92,m2_8x10:101.92,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+  {nombre:"DEFINE S.A.S.",total_m2:50.96,m2_8x10:50.96,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+  {nombre:"DIAGNOSTICO AGUDO Y MEDICOS ESPECIALISTA",total_m2:209.49,m2_8x10:38.22,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:171.27,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+  {nombre:"DIAGNOSTICO MEDICO POR IMAGENES SAS CEDIM",total_m2:57.22,m2_8x10:0.0,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:38.06,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+  {nombre:"DIRAD DIAGNOSTICO RADIOLOGICO CIA LTDA",total_m2:1857.66,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:753.92,m2_14x17:1103.74,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
+  {nombre:"DR ANDRES EUCLIDES MONTALVAN AYALA",total_m2:124.76,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:48.64,m2_14x17:76.12,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+  {nombre:"DR CARLOS SANTANA RODRIGUEZ",total_m2:12.74,m2_8x10:12.74,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+  {nombre:"DR EDGAR SEBASTIAN EPINOZA MUNOZ",total_m2:218.33,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:85.12,m2_14x17:133.21,califica:1,printers:0,small_tray:0,large_tray:0,feeder:0},
+  {nombre:"DR EDGAR SEBASTIAN ESPINOZA MUNOZ",total_m2:374.28,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:145.92,m2_14x17:228.36,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+  {nombre:"DR FELIPE MOROCHO PACHECO",total_m2:114.44,m2_8x10:0.0,m2_10x12:38.32,m2_11x14:0.0,m2_14x17:76.12,califica:0,printers:1,small_tray:1,large_tray:1,feeder:1},
+  {nombre:"DR FELIPE RODORIGUEZ MAYA",total_m2:340.48,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:340.48,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+  {nombre:"DR FELIPE RODRIGUEZ",total_m2:431.92,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:279.68,m2_14x17:152.24,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+  {nombre:"DR FERNANDO AGUILERA",total_m2:458.64,m2_8x10:458.64,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:2,small_tray:2,large_tray:0,feeder:0},
+  {nombre:"DR HUGO GUAMAN",total_m2:140.44,m2_8x10:25.48,m2_10x12:114.96,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:2,large_tray:0,feeder:1},
+  {nombre:"DR HUGO VINICIO PALACIOS",total_m2:19.11,m2_8x10:19.11,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+  {nombre:"DR JHONNY JACOME PONCE",total_m2:428.37,m2_8x10:0.0,m2_10x12:28.74,m2_11x14:0.0,m2_14x17:399.63,califica:1,printers:1,small_tray:0,large_tray:1,feeder:0},
+  {nombre:"DR JORGE ORDONEZ",total_m2:43.48,m2_8x10:0.0,m2_10x12:19.16,m2_11x14:24.32,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+  {nombre:"DR JOSE MANUEL HUNG ARROYO",total_m2:152.88,m2_8x10:152.88,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+  {nombre:"DR KEVIN WILFRIDO VERSOZA CASTRO",total_m2:95.41,m2_8x10:0.0,m2_10x12:38.32,m2_11x14:0.0,m2_14x17:57.09,califica:0,printers:1,small_tray:1,large_tray:1,feeder:1},
+  {nombre:"DR LEONARDO MORETA",total_m2:76.64,m2_8x10:0.0,m2_10x12:76.64,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+  {nombre:"DR OSCAR VINICIO VACA SANCHEZ",total_m2:1707.44,m2_8x10:0.0,m2_10x12:459.84,m2_11x14:486.4,m2_14x17:761.2,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
+  {nombre:"DR PASCUAL LOOR FIENCO",total_m2:28.61,m2_8x10:0.0,m2_10x12:9.58,m2_11x14:0.0,m2_14x17:19.03,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+  {nombre:"DR PEDRO DELGADO ORTIZ",total_m2:102.12,m2_8x10:25.48,m2_10x12:76.64,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:2,large_tray:0,feeder:1},
+  {nombre:"DR. JOSE MULLO",total_m2:63.7,m2_8x10:63.7,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+  {nombre:"DRA ALEXANDRA MONARD",total_m2:79.7,m2_8x10:50.96,m2_10x12:28.74,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:1,feeder:1},
+  {nombre:"DRA FERNANDA ANDRADE METROMEC",total_m2:9.58,m2_8x10:0.0,m2_10x12:9.58,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+  {nombre:"DRA HILDA DEL CARMEN CORREA JIMENEZ",total_m2:599.3,m2_8x10:101.92,m2_10x12:383.2,m2_11x14:0.0,m2_14x17:114.18,califica:1,printers:4,small_tray:4,large_tray:4,feeder:4},
+  {nombre:"DRA HILDA SALAZAR SANCHEZ",total_m2:38.32,m2_8x10:0.0,m2_10x12:38.32,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+  {nombre:"DRA MARIA TERESA RAMIREZ",total_m2:928.28,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:243.2,m2_14x17:685.08,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+  {nombre:"DRA SILVIA ALEXANDRA CULLACAY BUNAY",total_m2:233.78,m2_8x10:25.48,m2_10x12:0.0,m2_11x14:170.24,m2_14x17:38.06,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
+  {nombre:"DRA. GUARIN MOREIRA CLARA VICTORIA",total_m2:9.58,m2_8x10:0.0,m2_10x12:9.58,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+  {nombre:"ECOGRAMED CIA LTDA",total_m2:340.48,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:340.48,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+  {nombre:"ECOSCAN",total_m2:219.69,m2_8x10:0.0,m2_10x12:124.54,m2_11x14:0.0,m2_14x17:95.15,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+  {nombre:"ECUAIMAGEN",total_m2:76.64,m2_8x10:0.0,m2_10x12:76.64,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+  {nombre:"ECUATORIANA DE ESPECIALIDADES Y TECNOLOGIA MEDICA ECUATECMED",total_m2:57.48,m2_8x10:0.0,m2_10x12:57.48,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+  {nombre:"EXTOM C.L.",total_m2:380.6,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:380.6,califica:1,printers:2,small_tray:0,large_tray:2,feeder:0},
+  {nombre:"FABIAN CLOTARIO BORJA ZAMBRANO",total_m2:197.47,m2_8x10:197.47,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+  {nombre:"FREDDY HIDALGO",total_m2:146.43,m2_8x10:127.4,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:19.03,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+  {nombre:"FULLCARE MEDICAL S.A.",total_m2:286.1,m2_8x10:0.0,m2_10x12:95.8,m2_11x14:0.0,m2_14x17:190.3,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+  {nombre:"FUNARMAF",total_m2:31.85,m2_8x10:31.85,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+  {nombre:"HOSPITAL BASICO ALAUSI",total_m2:266.94,m2_8x10:0.0,m2_10x12:76.64,m2_11x14:0.0,m2_14x17:190.3,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+  {nombre:"HOSPITAL BASICO EDGAR ARCOS",total_m2:108.05,m2_8x10:50.96,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:57.09,califica:0,printers:1,small_tray:1,large_tray:1,feeder:1},
+  {nombre:"HOSPITAL DE ESPECIALIDADES CARLOS ANDRADE MARIN",total_m2:254.0,m2_8x10:63.7,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:190.3,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
+  {nombre:"HOSPITAL PROVINCIAL GENERAL  PABLO",total_m2:5892.23,m2_8x10:0.0,m2_10x12:1762.72,m2_11x14:0.0,m2_14x17:4129.51,califica:1,printers:3,small_tray:3,large_tray:3,feeder:3},
+  {nombre:"HUGO ORLANDO TAPI CARDENA",total_m2:127.6,m2_8x10:50.96,m2_10x12:76.64,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:2,large_tray:0,feeder:1},
+  {nombre:"IDENT SAS",total_m2:101.92,m2_8x10:101.92,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+  {nombre:"IMAGENES DIAGNOSTICAS CRUZ ROCA SANANGO CROCSAN S.A.S",total_m2:172.05,m2_8x10:0.0,m2_10x12:114.96,m2_11x14:0.0,m2_14x17:57.09,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+  {nombre:"IMAGENES Y PRISMA SA",total_m2:361.96,m2_8x10:0.0,m2_10x12:57.48,m2_11x14:0.0,m2_14x17:304.48,califica:1,printers:2,small_tray:2,large_tray:1,feeder:1},
+  {nombre:"INDRA.S.A.",total_m2:43.35,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:24.32,m2_14x17:19.03,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+  {nombre:"ING WALTER ALDAS",total_m2:209.68,m2_8x10:178.36,m2_10x12:19.16,m2_11x14:12.16,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+  {nombre:"INSTITUTO DE DIAGNOSTICO",total_m2:1192.57,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:145.92,m2_14x17:1046.65,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+  {nombre:"JAAR ASOCIADOS SAS",total_m2:152.88,m2_8x10:152.88,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+  {nombre:"JAIME GEOVANNY LARREA TELLO",total_m2:38.32,m2_8x10:0.0,m2_10x12:38.32,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+  {nombre:"JIMENEZ CASTILLO SANDRA DEL CISNE",total_m2:95.47,m2_8x10:76.44,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:19.03,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+  {nombre:"JOSE ARIAS MUNIOZ",total_m2:19.16,m2_8x10:0.0,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+  {nombre:"JULIO HUMBERTO RUIZ FLORES",total_m2:248.43,m2_8x10:248.43,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+  {nombre:"KLEVER EDUARDO ECHEVERRIA MARQUEZ",total_m2:143.18,m2_8x10:0.0,m2_10x12:67.06,m2_11x14:0.0,m2_14x17:76.12,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+  {nombre:"LABMETA S.A.",total_m2:28.74,m2_8x10:0.0,m2_10x12:28.74,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+  {nombre:"LCDO JOHNNY GUSTAVO OVALLE GALARZA",total_m2:19.03,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:19.03,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+  {nombre:"LEIDY ANABEL PEREZ MACIAS",total_m2:47.9,m2_8x10:0.0,m2_10x12:47.9,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+  {nombre:"LM RADIOLOGOS CL",total_m2:286.1,m2_8x10:0.0,m2_10x12:95.8,m2_11x14:0.0,m2_14x17:190.3,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
+  {nombre:"LORFAVE SA S.",total_m2:38.32,m2_8x10:0.0,m2_10x12:38.32,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+  {nombre:"LUIS ALBERTO SANCHEZ OVIEDO",total_m2:19.16,m2_8x10:0.0,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+  {nombre:"MAGDALENA VERNAZA MEJIA",total_m2:146.5,m2_8x10:0.0,m2_10x12:9.58,m2_11x14:60.8,m2_14x17:76.12,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+  {nombre:"MARCELO ALEJANDRO MONTANO BENITEZ",total_m2:6.37,m2_8x10:6.37,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+  {nombre:"MARIANA YOCONDA CANTOS RIVERA",total_m2:200.14,m2_8x10:0.0,m2_10x12:47.9,m2_11x14:0.0,m2_14x17:152.24,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+  {nombre:"MEDIMAGENES CIA LTDA",total_m2:524.3,m2_8x10:0.0,m2_10x12:143.7,m2_11x14:0.0,m2_14x17:380.6,califica:1,printers:3,small_tray:3,large_tray:3,feeder:3},
+  {nombre:"MICKELY DAYANA ROMERO CHAMORRO",total_m2:63.7,m2_8x10:63.7,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+  {nombre:"MILTON TRUJILLO",total_m2:19.11,m2_8x10:19.11,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+  {nombre:"MONARD PROANIO MARIA ALEXANDRA",total_m2:79.7,m2_8x10:50.96,m2_10x12:28.74,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+  {nombre:"MULTI-IMAGEN SAS",total_m2:695.83,m2_8x10:0.0,m2_10x12:182.02,m2_11x14:0.0,m2_14x17:513.81,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
+  {nombre:"MUNOZ AREVALO  JAVIER ARMANDO",total_m2:19.16,m2_8x10:0.0,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+  {nombre:"NORMA ORBEA HERRERA",total_m2:311.09,m2_8x10:63.7,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:247.39,califica:1,printers:3,small_tray:3,large_tray:3,feeder:3},
+  {nombre:"NUEVAIMAGENTC CIA LTDA",total_m2:286.36,m2_8x10:0.0,m2_10x12:134.12,m2_11x14:0.0,m2_14x17:152.24,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+  {nombre:"OFFICEGOLDEN S.A.",total_m2:305.13,m2_8x10:0.0,m2_10x12:95.8,m2_11x14:0.0,m2_14x17:209.33,califica:1,printers:7,small_tray:7,large_tray:7,feeder:7},
+  {nombre:"OLIVO FLORES JOSE EDUARDO",total_m2:19.03,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:19.03,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+  {nombre:"ORDEN CAPUCHINA EN EL ECUADOR",total_m2:190.3,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:190.3,califica:0,printers:1,small_tray:0,large_tray:1,feeder:0},
+  {nombre:"ORIMEC INTERNO",total_m2:12.16,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:12.16,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+  {nombre:"ORIONGROUP S.A.",total_m2:363.09,m2_8x10:363.09,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:3,small_tray:3,large_tray:0,feeder:0},
+  {nombre:"PATRICIA DEL ROSARIO ROJAS QUEZADA",total_m2:19.16,m2_8x10:0.0,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+  {nombre:"PATRICIA YAJAIRA ERAZO TORRES",total_m2:57.38,m2_8x10:38.22,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+  {nombre:"PAZOS GONZALES MERCEDES COLIS",total_m2:95.28,m2_8x10:0.0,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:76.12,califica:0,printers:1,small_tray:1,large_tray:1,feeder:1},
+  {nombre:"QUIZHPI BRAVO MARCO VINICIO",total_m2:102.07,m2_8x10:44.59,m2_10x12:57.48,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:1,feeder:1},
+  {nombre:"RADIOMED",total_m2:92.65,m2_8x10:31.85,m2_10x12:0.0,m2_11x14:60.8,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+  {nombre:"RADXIMAGEN SAS",total_m2:564.03,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:12.16,m2_14x17:551.87,califica:1,printers:1,small_tray:0,large_tray:1,feeder:0},
+  {nombre:"RESONADOR CLINICA SAN PABLO CIA LTDA",total_m2:209.33,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:209.33,califica:1,printers:1,small_tray:0,large_tray:1,feeder:0},
+  {nombre:"RICARDO VASQUEZ",total_m2:12.74,m2_8x10:12.74,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+  {nombre:"RINCON ALVAREZ EDILMARIS DE LOS ANGELES",total_m2:1063.79,m2_8x10:815.36,m2_10x12:153.28,m2_11x14:0.0,m2_14x17:95.15,califica:1,printers:5,small_tray:5,large_tray:2,feeder:2},
+  {nombre:"RONALD DAVID CONTRERAS POTES",total_m2:9.58,m2_8x10:0.0,m2_10x12:9.58,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+  {nombre:"RUTHY CIA. LTDA.",total_m2:228.36,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:228.36,califica:0,printers:1,small_tray:0,large_tray:1,feeder:0},
+  {nombre:"SARMIENTO SALTOS MARIA ALEJANDRA",total_m2:190.46,m2_8x10:38.22,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:152.24,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+  {nombre:"SCAN-3D S.A.S.",total_m2:101.92,m2_8x10:101.92,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+  {nombre:"SCAN3DIGITAL S.A.S.",total_m2:60.54,m2_8x10:50.96,m2_10x12:9.58,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+  {nombre:"SERVICIOS Y VENTAS MOGROVEJO RODRIGUEZ SERVEMOR CIA LTDA",total_m2:329.35,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:158.08,m2_14x17:171.27,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+  {nombre:"SMIMAGENES SAS",total_m2:120.63,m2_8x10:25.48,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:95.15,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+  {nombre:"SOCIEDAD CIVIL CTRO DE IMAGENES QUEVEDO CIQ",total_m2:942.83,m2_8x10:0.0,m2_10x12:124.54,m2_11x14:0.0,m2_14x17:818.29,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
+  {nombre:"TAILY LUISANA MONTOYA BERSOZA",total_m2:31.77,m2_8x10:12.74,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:19.03,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+  {nombre:"TAYANA SA",total_m2:81.41,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:24.32,m2_14x17:57.09,califica:0,printers:2,small_tray:2,large_tray:2,feeder:2},
+  {nombre:"TEC MED CRISTOBAL REYES TIGSE",total_m2:179.85,m2_8x10:76.44,m2_10x12:47.9,m2_11x14:36.48,m2_14x17:19.03,califica:0,printers:3,small_tray:3,large_tray:1,feeder:1},
+  {nombre:"TERESA CORDOVA",total_m2:121.03,m2_8x10:121.03,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+  {nombre:"TMD EDWIN ESPANA",total_m2:343.32,m2_8x10:0.0,m2_10x12:114.96,m2_11x14:0.0,m2_14x17:228.36,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
+  {nombre:"TOMOIMAGEN",total_m2:38.06,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:38.06,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+  {nombre:"UDIP S.A.",total_m2:485.98,m2_8x10:0.0,m2_10x12:105.38,m2_11x14:0.0,m2_14x17:380.6,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+  {nombre:"ULLOA AGUILERA LUIS FELIPE",total_m2:1349.85,m2_8x10:433.16,m2_10x12:479.0,m2_11x14:0.0,m2_14x17:437.69,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
+  {nombre:"ULTRADIAGNOSTIC",total_m2:31.9,m2_8x10:12.74,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+  {nombre:"UNIDAD DE DIAGNOSTICOS E IMAGENES S.A. UNIMAGENLOOR",total_m2:69.96,m2_8x10:12.74,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:38.06,califica:0,printers:1,small_tray:1,large_tray:1,feeder:1},
+  {nombre:"UNIMOVILRAY CIA LTDA",total_m2:114.44,m2_8x10:0.0,m2_10x12:38.32,m2_11x14:0.0,m2_14x17:76.12,califica:0,printers:1,small_tray:1,large_tray:1,feeder:1},
+  {nombre:"UNIVERSIDAD CATOLICA DE CUENCA",total_m2:562.23,m2_8x10:0.0,m2_10x12:124.54,m2_11x14:0.0,m2_14x17:437.69,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
+  {nombre:"USAIMPORT S.A.S.",total_m2:28.74,m2_8x10:0.0,m2_10x12:28.74,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+  {nombre:"VANESSA ALEXANDER SOSA ARROBA",total_m2:63.8,m2_8x10:25.48,m2_10x12:38.32,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+  {nombre:"VERA MURILLO EXITA JANET",total_m2:19.16,m2_8x10:0.0,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
+  {nombre:"X RAY SOLUTIONS DENTALMEDIC",total_m2:101.92,m2_8x10:101.92,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
+  {nombre:"ZAMBRANO ORDONEZ JOSE PAUL",total_m2:295.5,m2_8x10:19.11,m2_10x12:67.06,m2_11x14:0.0,m2_14x17:209.33,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
+  {nombre:"CLINICA SAN GREGORIO ASUNELEC",total_m2:0.0,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:1,printers:1,small_tray:1,large_tray:1,feeder:0},
+  {nombre:"SAAB CORP SAS",total_m2:0.0,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:1,printers:1,small_tray:1,large_tray:1,feeder:0},
+  {nombre:"CEDIMAGEN",total_m2:0.0,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:1,printers:1,small_tray:1,large_tray:1,feeder:0},
+  {nombre:"RX IMAGENT",total_m2:0.0,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:1,printers:1,small_tray:1,large_tray:1,feeder:0},
+  {nombre:"ANITA QUINTANA",total_m2:0.0,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:1,printers:1,small_tray:1,large_tray:1,feeder:0},
+];
+
+function ImagerAnalysis2024View({
+  darkMode, allClients, allConsumos, setSelectedClient,
+  imager2024Tab, setImager2024Tab,
+  imager2024ManualMatch, setImager2024ManualMatch,
+  setImager2024MatchModal, setImager2024MatchSearch,
+  growthPotentialClients, globalFilmFilter, filteredConsumosForView,
+  getM2PerBox, getTotalM2, effectiveQty
+}: {
+  darkMode: boolean;
+  allClients: any[];
+  allConsumos: any[];
+  setSelectedClient: (c: any) => void;
+  imager2024Tab: string;
+  setImager2024Tab: (t: any) => void;
+  imager2024ManualMatch: Record<string, number>;
+  setImager2024ManualMatch: (fn: any) => void;
+  setImager2024MatchModal: (v: any) => void;
+  setImager2024MatchSearch: (v: string) => void;
+  growthPotentialClients: any[];
+  globalFilmFilter: string;
+  filteredConsumosForView: any[];
+  getM2PerBox: (size: string, film: string) => number;
+  getTotalM2: (qty: number, size: string, film?: string) => number;
+  effectiveQty: (r: any) => number;
+}) {
+  const normalize = (s: string) => s.toUpperCase().trim()
+    .replace(/\s+/g, ' ')
+    .replace(/[ÁÀÄÂ]/g, 'A').replace(/[ÉÈËÊ]/g, 'E')
+    .replace(/[ÍÌÏÎ]/g, 'I').replace(/[ÓÒÖÔ]/g, 'O')
+    .replace(/[ÚÙÜÛ]/g, 'U').replace(/Ñ/g, 'N')
+    .replace(/[.,;]/g, '');
+
+  const findClient = (nombre: string) => {
+    const nNom = normalize(nombre);
+    let c = allClients.find(c => normalize(c.name) === nNom);
+    if (c) return c;
+    c = allClients.find(c => {
+      const nC = normalize(c.name);
+      return nC.includes(nNom) || nNom.includes(nC);
+    });
+    if (c) return c;
+    const words = nNom.split(' ').filter(w => w.length > 2);
+    if (words.length >= 2) {
+      c = allClients.find(c => {
+        const cWords = normalize(c.name).split(' ').filter(w => w.length > 2);
+        const matches = words.filter(w => cWords.includes(w)).length;
+        return matches >= Math.min(3, Math.floor(words.length * 0.6));
+      });
+    }
+    return c;
+  };
+
+  const enriched = IMAGER_2024.map(row => {
+    const manualId = imager2024ManualMatch[row.nombre];
+    const client = manualId ? allClients.find(c => c.id === manualId) : findClient(row.nombre);
+    const currentPrinters = client?.printers?.length || 0;
+    const consumos2025 = client ? allConsumos.filter((r: any) => r.client_id === client.id && new Date(r.order_date).getFullYear() >= 2025) : [];
+    const m2_2025 = consumos2025.reduce((s: number, r: any) => s + getTotalM2(effectiveQty(r), r.size, r.film_type), 0);
+    const isManual = !!manualId;
+    return { ...row, client, currentPrinters, m2_2025, isManual };
+  });
+
+  const pending = enriched.filter(r => r.califica === 1).sort((a,b) => b.total_m2 - a.total_m2);
+  const pendingYes = pending.filter(r => r.currentPrinters > 0);
+  const pendingNo  = pending.filter(r => r.currentPrinters === 0);
+  const growth = enriched.filter(r => r.califica === 0 && r.m2_2025 > 100).sort((a,b) => b.m2_2025 - a.m2_2025);
+
+  const tabs = [
+    { key: 'pending',   label: 'Pendientes de impresora',  count: pendingNo.length,  color: 'text-red-400',     bg: 'bg-red-500/15' },
+    { key: 'installed', label: 'Instaladas 2024',          count: pendingYes.length, color: 'text-emerald-400', bg: 'bg-emerald-500/15' },
+    { key: 'growth',    label: 'Nuevas oportunidades',     count: growth.length,     color: 'text-amber-400',   bg: 'bg-amber-500/15' },
+  ] as const;
+
+  return (
+    <div className="space-y-4">
+      {/* Header card */}
+      <div className={cn("rounded-xl border p-5", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h3 className={cn("text-sm font-black", darkMode ? "text-white" : "text-gray-900")}>Análisis de Impresoras — Base 2024</h3>
+            <p className={cn("text-[10px] mt-1", darkMode ? "text-gray-500" : "text-gray-400")}>Cruce entre el consumo 2024 y el estado actual de instalaciones.</p>
+          </div>
+          <div className="flex gap-3 flex-wrap">
+            {[
+              { label: 'Califican', val: pending.length, color: darkMode?'text-red-400':'text-red-600' },
+              { label: 'Ya instaladas', val: pendingYes.length, color: darkMode?'text-emerald-400':'text-emerald-600' },
+              { label: 'Pendientes', val: pendingNo.length, color: darkMode?'text-amber-400':'text-amber-600' },
+              { label: 'Nuevas oport.', val: growth.length, color: darkMode?'text-cyan-400':'text-cyan-600' },
+            ].map((k,i) => (
+              <div key={i} className={cn("px-4 py-2.5 rounded-xl border text-center min-w-[80px]", darkMode?"bg-white/4 border-white/8":"bg-gray-50 border-gray-100")}>
+                <p className={cn("text-xl font-black leading-none", k.color)}>{k.val}</p>
+                <p className={cn("text-[8px] font-bold uppercase tracking-wider mt-1", darkMode?"text-gray-600":"text-gray-400")}>{k.label}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className={cn("flex gap-1 mt-4 p-1 rounded-xl", darkMode?"bg-white/5":"bg-gray-100")}>
+          {tabs.map(t => (
+            <button key={t.key} onClick={() => setImager2024Tab(t.key as any)}
+              className={cn("flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-[10px] font-black transition-all",
+                imager2024Tab === t.key
+                  ? (darkMode?"bg-[#16161A] text-white shadow-sm":"bg-white text-gray-900 shadow-sm")
+                  : (darkMode?"text-gray-600 hover:text-gray-400":"text-gray-400 hover:text-gray-600")
+              )}>
+              <span className={cn("px-1.5 py-0.5 rounded-full text-[8px] font-black", imager2024Tab===t.key ? t.bg+' '+t.color : (darkMode?"bg-white/5 text-gray-600":"bg-gray-100 text-gray-400"))}>{t.count}</span>
+              <span className="hidden sm:inline">{t.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Pendientes */}
+      {imager2024Tab === 'pending' && (
+        <div className={cn("rounded-xl border overflow-hidden", darkMode?"bg-[#16161A] border-white/8":"bg-white border-gray-200/70 shadow-sm")}>
+          <div className={cn("px-5 py-3 border-b", darkMode?"border-white/8 bg-white/3":"border-gray-100 bg-gray-50")}>
+            <p className={cn("text-xs font-black", darkMode?"text-white":"text-gray-900")}>Clientes que califican pero aún no tienen impresora</p>
+          </div>
+          <div className="overflow-x-auto max-h-[500px] overflow-y-auto custom-scrollbar">
+            <table className="w-full text-xs">
+              <thead className={cn("text-[8px] font-bold uppercase tracking-wider sticky top-0", darkMode?"text-gray-600 bg-[#16161A]":"text-gray-400 bg-white")}>
+                <tr className={cn("border-b", darkMode?"border-white/6":"border-gray-100")}>
+                  <th className="px-5 py-2.5 text-left">#</th>
+                  <th className="px-5 py-2.5 text-left">Cliente</th>
+                  <th className="px-4 py-2.5 text-right">m² 2024</th>
+                  <th className="px-4 py-2.5 text-center">Medidas</th>
+                  <th className="px-4 py-2.5 text-center">Impr. rec.</th>
+                  <th className="px-4 py-2.5 text-center">Config.</th>
+                  <th className="px-4 py-2.5 text-center">Match</th>
+                  <th className="px-4 py-2.5 text-right">m² 2025</th>
+                </tr>
+              </thead>
+              <tbody className={cn("divide-y", darkMode?"divide-white/4":"divide-gray-50")}>
+                {pendingNo.map((row: any, i: number) => (
+                  <tr key={i} className={cn("transition-colors", darkMode?"hover:bg-white/4":"hover:bg-gray-50")}>
+                    <td className={cn("px-5 py-3 font-black text-[10px]", i<3?"text-red-400":(darkMode?"text-gray-700":"text-gray-300"))}>{i+1}</td>
+                    <td className="px-5 py-3">
+                      <button className="text-left w-full group" onClick={() => { setImager2024MatchModal({ nombre: row.nombre, total_m2: row.total_m2 }); setImager2024MatchSearch(''); }}>
+                        <p className={cn("font-semibold truncate max-w-[200px] group-hover:underline", darkMode?"text-gray-200":"text-gray-800")}>{row.nombre}</p>
+                        <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                          {row.client ? (
+                            <>
+                              <span className={cn("text-[8px] font-bold px-1.5 py-0.5 rounded shrink-0", row.isManual?(darkMode?"bg-amber-500/15 text-amber-400":"bg-amber-100 text-amber-700"):(darkMode?"bg-emerald-500/15 text-emerald-400":"bg-emerald-100 text-emerald-700"))}>
+                                {row.isManual?'✋ manual':'✓ auto'}
+                              </span>
+                              <span className={cn("text-[9px] truncate max-w-[120px]", darkMode?"text-gray-600":"text-gray-400")}>{row.client.name}</span>
+                            </>
+                          ) : (
+                            <span className={cn("text-[8px] font-bold px-1.5 py-0.5 rounded", darkMode?"bg-red-500/15 text-red-400":"bg-red-100 text-red-600")}>⚠ sin match — clic para asignar</span>
+                          )}
+                        </div>
+                      </button>
+                    </td>
+                    <td className={cn("px-4 py-3 text-right font-black", darkMode?"text-cyan-400":"text-cyan-600")}>{row.total_m2.toFixed(1)}</td>
+                    <td className="px-4 py-3 text-center">
+                      <div className="flex gap-1 justify-center flex-wrap">
+                        {row.m2_8x10>0 && <span className={cn("text-[8px] font-bold px-1.5 py-0.5 rounded", darkMode?"bg-white/8 text-gray-300":"bg-gray-100 text-gray-600")}>8x10</span>}
+                        {row.m2_10x12>0 && <span className={cn("text-[8px] font-bold px-1.5 py-0.5 rounded", darkMode?"bg-white/8 text-gray-300":"bg-gray-100 text-gray-600")}>10x12</span>}
+                        {row.m2_11x14>0 && <span className={cn("text-[8px] font-bold px-1.5 py-0.5 rounded", darkMode?"bg-white/8 text-gray-300":"bg-gray-100 text-gray-600")}>11x14</span>}
+                        {row.m2_14x17>0 && <span className={cn("text-[8px] font-bold px-1.5 py-0.5 rounded", darkMode?"bg-white/8 text-gray-300":"bg-gray-100 text-gray-600")}>14x17</span>}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-center"><span className={cn("font-black text-sm", darkMode?"text-red-400":"text-red-600")}>{row.printers}</span></td>
+                    <td className="px-4 py-3 text-center">
+                      <div className="flex gap-1 justify-center flex-wrap">
+                        {row.small_tray>0 && <span className={cn("text-[8px] px-1.5 py-0.5 rounded font-bold", darkMode?"bg-blue-500/15 text-blue-400":"bg-blue-50 text-blue-600")}>S×{row.small_tray}</span>}
+                        {row.large_tray>0 && <span className={cn("text-[8px] px-1.5 py-0.5 rounded font-bold", darkMode?"bg-purple-500/15 text-purple-400":"bg-purple-50 text-purple-600")}>L×{row.large_tray}</span>}
+                        {row.feeder>0 && <span className={cn("text-[8px] px-1.5 py-0.5 rounded font-bold", darkMode?"bg-amber-500/15 text-amber-400":"bg-amber-50 text-amber-600")}>F×{row.feeder}</span>}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      {row.client
+                        ? <span className={cn("text-[8px] font-black px-2 py-0.5 rounded-full bg-red-500/15 text-red-400")}>Sin impresora</span>
+                        : <span className={cn("text-[8px] font-black px-2 py-0.5 rounded-full", darkMode?"bg-white/8 text-gray-600":"bg-gray-100 text-gray-400")}>Sin registro</span>}
+                    </td>
+                    <td className={cn("px-4 py-3 text-right font-semibold text-[10px]", row.m2_2025>row.total_m2?(darkMode?"text-emerald-400":"text-emerald-600"):(darkMode?"text-gray-500":"text-gray-400"))}>
+                      {row.m2_2025>0 ? row.m2_2025.toFixed(1) : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Instaladas */}
+      {imager2024Tab === 'installed' && (
+        <div className={cn("rounded-xl border overflow-hidden", darkMode?"bg-[#16161A] border-white/8":"bg-white border-gray-200/70 shadow-sm")}>
+          <div className={cn("px-5 py-3 border-b", darkMode?"border-white/8 bg-white/3":"border-gray-100 bg-gray-50")}>
+            <p className={cn("text-xs font-black", darkMode?"text-white":"text-gray-900")}>Clientes que calificaron y ya tienen impresora instalada</p>
+          </div>
+          <div className="overflow-x-auto max-h-[500px] overflow-y-auto custom-scrollbar">
+            <table className="w-full text-xs">
+              <thead className={cn("text-[8px] font-bold uppercase tracking-wider sticky top-0", darkMode?"text-gray-600 bg-[#16161A]":"text-gray-400 bg-white")}>
+                <tr className={cn("border-b", darkMode?"border-white/6":"border-gray-100")}>
+                  <th className="px-5 py-2.5 text-left">#</th>
+                  <th className="px-5 py-2.5 text-left">Cliente</th>
+                  <th className="px-4 py-2.5 text-right">m² 2024</th>
+                  <th className="px-4 py-2.5 text-center">Rec.</th>
+                  <th className="px-4 py-2.5 text-center">Actual</th>
+                  <th className="px-4 py-2.5 text-center">Diferencia</th>
+                  <th className="px-4 py-2.5 text-right">m² {new Date().getFullYear()} vs 2024</th>
+                </tr>
+              </thead>
+              <tbody className={cn("divide-y", darkMode?"divide-white/4":"divide-gray-50")}>
+                {pendingYes.map((row: any, i: number) => {
+                  const diff = row.currentPrinters - row.printers;
+                  const currentYear = new Date().getFullYear();
+                  const trend = row.total_m2>0 ? ((row.m2_2025-row.total_m2)/row.total_m2*100) : 0;
+                  const isGrowing = row.m2_2025 > row.total_m2;
+                  const isEqual = Math.abs(trend) < 5;
+                  return (
+                    <tr key={i} className={cn("transition-colors cursor-pointer", darkMode?"hover:bg-white/4":"hover:bg-gray-50")}
+                      onClick={() => row.client && setSelectedClient(row.client)}>
+                      <td className={cn("px-5 py-3 font-black text-[10px]", darkMode?"text-gray-700":"text-gray-300")}>{i+1}</td>
+                      <td className="px-5 py-3">
+                        <p className={cn("font-semibold truncate max-w-[180px]", darkMode?"text-gray-200":"text-gray-800")}>{row.nombre}</p>
+                        <p className={cn("text-[9px] mt-0.5", darkMode?"text-gray-600":"text-gray-400")}>{row.client?.province||'—'}</p>
+                      </td>
+                      <td className={cn("px-4 py-3 text-right font-black", darkMode?"text-cyan-400":"text-cyan-600")}>{row.total_m2.toFixed(1)}</td>
+                      <td className="px-4 py-3 text-center font-black text-amber-400">{row.printers}</td>
+                      <td className="px-4 py-3 text-center font-black text-emerald-400">{row.currentPrinters}</td>
+                      <td className="px-4 py-3 text-center">
+                        <span className={cn("text-[9px] font-black px-2 py-0.5 rounded-full",
+                          diff===0?(darkMode?"bg-emerald-500/15 text-emerald-400":"bg-emerald-50 text-emerald-600"):
+                          diff>0?(darkMode?"bg-cyan-500/15 text-cyan-400":"bg-cyan-50 text-cyan-600"):
+                          (darkMode?"bg-red-500/15 text-red-400":"bg-red-50 text-red-600")
+                        )}>{diff===0?'✓ Exacto':diff>0?`+${diff} extra`:`${diff} faltan`}</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        {row.m2_2025>0 ? (
+                          <div className="flex flex-col items-end gap-1 min-w-[120px]">
+                            <div className="flex items-baseline gap-1.5">
+                              <span className={cn("text-sm font-black", isGrowing?(darkMode?"text-emerald-400":"text-emerald-600"):isEqual?(darkMode?"text-gray-300":"text-gray-700"):(darkMode?"text-red-400":"text-red-600"))}>{row.m2_2025.toFixed(1)}</span>
+                              <span className={cn("text-[8px] font-bold px-1.5 py-0.5 rounded-full", isGrowing?(darkMode?"bg-emerald-500/15 text-emerald-400":"bg-emerald-50 text-emerald-600"):isEqual?(darkMode?"bg-white/8 text-gray-500":"bg-gray-100 text-gray-500"):(darkMode?"bg-red-500/15 text-red-400":"bg-red-50 text-red-600"))}>
+                                {isGrowing?'▲':isEqual?'─':'▼'} {Math.abs(trend).toFixed(0)}%
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1 w-full justify-end">
+                              <span className={cn("text-[7px] font-bold", darkMode?"text-gray-700":"text-gray-300")}>2024</span>
+                              <div className={cn("h-1 rounded-full overflow-hidden", darkMode?"bg-white/8":"bg-gray-200")} style={{width:'60px'}}>
+                                <div className={cn("h-full rounded-full", darkMode?"bg-white/20":"bg-gray-300")} style={{width:`${Math.min(100,(row.total_m2/Math.max(row.total_m2,row.m2_2025))*100)}%`}} />
+                              </div>
+                              <div className={cn("h-1 rounded-full overflow-hidden", darkMode?"bg-white/8":"bg-gray-200")} style={{width:'60px'}}>
+                                <div className={cn("h-full rounded-full", isGrowing?"bg-emerald-500":isEqual?"bg-gray-400":"bg-red-400")} style={{width:`${Math.min(100,(row.m2_2025/Math.max(row.total_m2,row.m2_2025))*100)}%`}} />
+                              </div>
+                              <span className={cn("text-[7px] font-bold", darkMode?"text-gray-600":"text-gray-400")}>{currentYear}</span>
+                            </div>
+                          </div>
+                        ) : (
+                          <span className={cn("text-[9px] text-right block", darkMode?"text-gray-700":"text-gray-300")}>Sin datos {currentYear}</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Nuevas oportunidades */}
+      {imager2024Tab === 'growth' && (
+        <div className={cn("rounded-xl border overflow-hidden", darkMode?"bg-[#16161A] border-white/8":"bg-white border-gray-200/70 shadow-sm")}>
+          <div className={cn("px-5 py-3 border-b", darkMode?"border-white/8 bg-white/3":"border-gray-100 bg-gray-50")}>
+            <p className={cn("text-xs font-black", darkMode?"text-white":"text-gray-900")}>Clientes que no calificaban en 2024 pero crecieron en 2025</p>
+          </div>
+          <div className="overflow-x-auto max-h-[500px] overflow-y-auto custom-scrollbar">
+            <table className="w-full text-xs">
+              <thead className={cn("text-[8px] font-bold uppercase tracking-wider sticky top-0", darkMode?"text-gray-600 bg-[#16161A]":"text-gray-400 bg-white")}>
+                <tr className={cn("border-b", darkMode?"border-white/6":"border-gray-100")}>
+                  <th className="px-5 py-2.5 text-left">#</th>
+                  <th className="px-5 py-2.5 text-left">Cliente</th>
+                  <th className="px-4 py-2.5 text-right">m² 2024</th>
+                  <th className="px-4 py-2.5 text-right">m² 2025</th>
+                  <th className="px-4 py-2.5 text-center">Crecimiento</th>
+                  <th className="px-4 py-2.5 text-center">Impresoras hoy</th>
+                </tr>
+              </thead>
+              <tbody className={cn("divide-y", darkMode?"divide-white/4":"divide-gray-50")}>
+                {growth.map((row: any, i: number) => {
+                  const pct = row.total_m2>0 ? ((row.m2_2025-row.total_m2)/row.total_m2*100) : 0;
+                  return (
+                    <tr key={i} className={cn("transition-colors cursor-pointer", darkMode?"hover:bg-white/4":"hover:bg-gray-50")}
+                      onClick={() => row.client && setSelectedClient(row.client)}>
+                      <td className={cn("px-5 py-3 font-black text-[10px]", i<3?"text-amber-400":(darkMode?"text-gray-700":"text-gray-300"))}>{i+1}</td>
+                      <td className="px-5 py-3">
+                        <p className={cn("font-semibold truncate max-w-[200px]", darkMode?"text-gray-200":"text-gray-800")}>{row.nombre}</p>
+                        <p className={cn("text-[9px] mt-0.5", darkMode?"text-gray-600":"text-gray-400")}>{row.client?.province||'—'} · {row.client?.salesperson||'—'}</p>
+                      </td>
+                      <td className={cn("px-4 py-3 text-right", darkMode?"text-gray-500":"text-gray-400")}>{row.total_m2.toFixed(1)}</td>
+                      <td className={cn("px-4 py-3 text-right font-black", darkMode?"text-amber-400":"text-amber-600")}>{row.m2_2025.toFixed(1)}</td>
+                      <td className="px-4 py-3 text-center">
+                        <span className={cn("text-[9px] font-black px-2 py-0.5 rounded-full",
+                          pct>50?(darkMode?"bg-emerald-500/15 text-emerald-400":"bg-emerald-50 text-emerald-600"):
+                          pct>0?(darkMode?"bg-amber-500/15 text-amber-400":"bg-amber-50 text-amber-600"):
+                          (darkMode?"bg-red-500/15 text-red-400":"bg-red-50 text-red-600")
+                        )}>{pct>=0?'+':''}{pct.toFixed(0)}%</span>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {row.currentPrinters>0
+                          ? <span className={cn("text-[9px] font-black px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400")}>{row.currentPrinters} instalada{row.currentPrinters!==1?'s':''}</span>
+                          : <span className={cn("text-[9px] font-black px-2 py-0.5 rounded-full bg-red-500/15 text-red-400")}>Sin impresora</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {growth.length===0 && (
+                  <tr><td colSpan={6} className={cn("px-5 py-10 text-center text-xs", darkMode?"text-gray-600":"text-gray-400")}>
+                    No hay clientes con crecimiento significativo identificado.
+                  </td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Potencial de crecimiento existente */}
+      <div className={cn("rounded-xl border overflow-hidden", darkMode?"bg-[#16161A] border-white/8":"bg-white border-gray-200/70 shadow-sm")}>
+        <div className={cn("px-6 py-4 border-b", darkMode?"border-white/8 bg-white/3":"border-gray-100 bg-gray-50")}>
+          <h3 className={cn("text-[10px] font-bold uppercase tracking-wider", darkMode?"text-gray-400":"text-gray-600")}>
+            Clientes con Potencial de Crecimiento — tienen impresora pero compran menos de lo esperado
+          </h3>
+          <p className={cn("text-[9px] mt-1", darkMode?"text-gray-600":"text-gray-400")}>Benchmark: ~2 cajas/impresora/mes.</p>
+        </div>
+        <div className="overflow-x-auto max-h-[400px] overflow-y-auto custom-scrollbar">
+          <table className="w-full text-left text-xs">
+            <thead className={cn("text-[9px] font-bold uppercase tracking-wider sticky top-0", darkMode?"text-gray-600 bg-[#16161A]":"text-gray-400 bg-white")}>
+              <tr>
+                <th className="px-5 py-2.5">Cliente</th>
+                <th className="px-5 py-2.5 text-center">Impresoras</th>
+                <th className="px-5 py-2.5 text-center">m²/mes actual</th>
+                <th className="px-5 py-2.5 text-center">m²/mes esperado</th>
+                <th className="px-5 py-2.5 text-center">Captura %</th>
+                <th className="px-5 py-2.5 text-center">Oportunidad</th>
+              </tr>
+            </thead>
+            <tbody className={cn("divide-y", darkMode?"divide-white/4":"divide-gray-50")}>
+              {growthPotentialClients.map((item: any, i: number) => (
+                <tr key={i} className={cn("transition-colors", darkMode?"hover:bg-white/3":"hover:bg-gray-50/60")}>
+                  <td className="px-5 py-3">
+                    <p className="font-semibold truncate max-w-[200px]">{item.client.name}</p>
+                    <p className={cn("text-[9px] mt-0.5", darkMode?"text-gray-600":"text-gray-400")}>{item.client.province} · {item.client.salesperson||'—'}</p>
+                  </td>
+                  <td className="px-5 py-3 text-center font-black">{item.printerCount}</td>
+                  <td className="px-5 py-3 text-center">
+                    <span className={cn("font-black", darkMode?"text-cyan-400":"text-cyan-600")}>
+                      {(item.avgMonthly * getM2PerBox(
+                        (filteredConsumosForView.filter((r: any) => r.client_id === item.client.id)
+                          .reduce((best: any, r: any, _: any, arr: any[]) => {
+                            const counts: Record<string,number> = {};
+                            arr.forEach((x: any) => { counts[x.size]=(counts[x.size]||0)+x.quantity; });
+                            return Object.entries(counts).sort((a,b)=>b[1]-a[1])[0]?.[0] || '14x17';
+                          }, '14x17') as string),
+                        globalFilmFilter==='DIHL'?'DIHL':'DIHT'
+                      )).toFixed(1)} m²
+                    </span>
+                  </td>
+                  <td className="px-5 py-3 text-center">
+                    <span className={cn("font-semibold", darkMode?"text-gray-400":"text-gray-600")}>{(item.expectedMonthly*9.03).toFixed(1)} m²</span>
+                  </td>
+                  <td className="px-5 py-3 text-center">
+                    <div className="flex items-center gap-2 justify-center">
+                      <div className={cn("h-1.5 w-14 rounded-full overflow-hidden", darkMode?"bg-white/8":"bg-gray-200")}>
+                        <div className="h-full rounded-full bg-amber-400" style={{width:`${item.captureRate}%`}} />
+                      </div>
+                      <span className="font-black text-amber-400">{item.captureRate}%</span>
+                    </div>
+                  </td>
+                  <td className="px-5 py-3 text-center">
+                    <span className="font-black text-emerald-400">+{item.untappedBoxes.toFixed(1)} cj/mes</span>
+                  </td>
+                </tr>
+              ))}
+              {growthPotentialClients.length===0 && (
+                <tr><td colSpan={6} className={cn("px-5 py-10 text-center text-xs", darkMode?"text-gray-600":"text-gray-400")}>
+                  No hay clientes con potencial de crecimiento identificado.
+                </td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 
 function App() {
@@ -1214,17 +1828,21 @@ function App() {
     const saved = localStorage.getItem('orimec_theme');
     return saved === 'dark';
   });
-  // Zoom automático: la app está diseñada para 1440px de ancho
-  // En pantallas más pequeñas se escala proporcionalmente
+  // Zoom automático con puntos de corte para laptop/monitor externo.
+  // Laptop 1920x1080 con escala 150% => innerWidth ~1280px => zoom 0.85
   const calcZoom = () => {
-    const designWidth = 1440;
+    const w = window.innerWidth;
     const minZoom = 0.55;
     const maxZoom = 1.5;
-    const raw = window.innerWidth / designWidth;
-    // Guardamos el zoom guardado por el usuario si existe
     const saved = parseFloat(localStorage.getItem('orimec_zoom') || '0');
     if (saved > 0) return Math.min(maxZoom, Math.max(minZoom, saved));
-    return Math.min(maxZoom, Math.max(minZoom, parseFloat(raw.toFixed(2))));
+    let zoom: number;
+    if (w >= 1600)      zoom = 1.0;
+    else if (w >= 1400) zoom = 0.95;
+    else if (w >= 1280) zoom = 0.85;
+    else if (w >= 1024) zoom = 0.75;
+    else                zoom = Math.max(minZoom, parseFloat((w / 1280).toFixed(2)));
+    return Math.min(maxZoom, zoom);
   };
   const [zoomLevel, setZoomLevel] = useState(calcZoom);
 
@@ -1831,6 +2449,10 @@ function App() {
   const [ncReportEnd, setNcReportEnd] = useState('');
   const [dashboardView, setDashboardView] = useState<'ventas'|'compras'>('ventas');
   const [imager2024Tab, setImager2024Tab] = useState<'pending'|'installed'|'growth'>('pending');
+  const [imagerView, setImagerView] = useState<'stock'|'analisis2024'>('stock');
+  const [imager2024ManualMatch, setImager2024ManualMatch] = useState<Record<string, number>>({}); // nombre → client.id
+  const [imager2024MatchModal, setImager2024MatchModal] = useState<{nombre: string; total_m2: number} | null>(null);
+  const [imager2024MatchSearch, setImager2024MatchSearch] = useState('');
   const [intelHelpModal, setIntelHelpModal] = useState<string|null>(null);
   const [stockFilmData, setStockFilmData] = useState<Record<string, typeof STOCK_FILM_DEFAULT_2025>>(() => {
     try {
@@ -2102,148 +2724,7 @@ function App() {
     'DIML': { '8x10': 7.74, '10x14': 13.55 },
   };
 
-  // ── TRIMAX HISTORICAL DATA 2024 — previously sold product (now discontinued) ──
-  // Source: Sales report image provided by user · Used for combined m² metrics only
-  const IMAGER_2024: Array<{nombre:string;total_m2:number;m2_8x10:number;m2_10x12:number;m2_11x14:number;m2_14x17:number;califica:number;printers:number;small_tray:number;large_tray:number;feeder:number}> = [
-    {nombre:"GOMEZ VERA JOSE ANTONIO",total_m2:190.56,m2_8x10:0.0,m2_10x12:38.32,m2_11x14:0.0,m2_14x17:152.24,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
-    {nombre:"ADAMANTIUM",total_m2:38.22,m2_8x10:38.22,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
-    {nombre:"ANDERSON MICHAEL MEDRANDA ALCIVAR",total_m2:433.16,m2_8x10:433.16,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
-    {nombre:"ASUNELEC S.A.",total_m2:249.52,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:97.28,m2_14x17:152.24,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
-    {nombre:"BALSECA CABERA DIANA ADRIANA",total_m2:203.2,m2_8x10:50.96,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:152.24,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
-    {nombre:"BOLANOS RODRIGUEZ GERMAN MARCELO",total_m2:114.66,m2_8x10:114.66,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
-    {nombre:"BORJA ZAMBRANO JAZMIN BEATRIZ",total_m2:515.97,m2_8x10:515.97,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:5,small_tray:5,large_tray:0,feeder:0},
-    {nombre:"C Y M IMAGENES MEDICINA Y SALUD SA CMSALUD SA",total_m2:2626.24,m2_8x10:1936.48,m2_10x12:689.76,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:10,small_tray:10,large_tray:0,feeder:0},
-    {nombre:"CENTRO CLINICO QUIRURGICO AMBULATORIO HOSPITAL DEL DIA COTOCOLLAO",total_m2:761.36,m2_8x10:38.22,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:723.14,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
-    {nombre:"CENTRO CLINICO QUIRURGICO AMBULATORIO HOSPITAL DEL DIA SANGOLQUI",total_m2:4605.69,m2_8x10:0.0,m2_10x12:1465.74,m2_11x14:0.0,m2_14x17:3139.95,califica:1,printers:3,small_tray:1,large_tray:1,feeder:1},
-    {nombre:"CENTRO CLINICO QUIRURGICO AMBULATORIO HOSPITAL DEL DIA ZAMORA",total_m2:152.4,m2_8x10:38.22,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:114.18,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
-    {nombre:"CENTRO DE ESPECIALIDADES COLON ECCM S.A.",total_m2:6.37,m2_8x10:6.37,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:2,small_tray:2,large_tray:1,feeder:1},
-    {nombre:"CENTRO ESPECIALIZADO EN DIAGNOSTICO POR IMAGEN Y",total_m2:558.64,m2_8x10:101.92,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:456.72,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
-    {nombre:"CLINICA DEL SOL CIA LTDA",total_m2:76.25,m2_8x10:0.0,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:57.09,califica:0,printers:1,small_tray:0,large_tray:1,feeder:0},
-    {nombre:"CLINICA MODERNA. BABAHOYO",total_m2:19.03,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:19.03,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
-    {nombre:"CLISAISA CLINICA SANTA INES SA",total_m2:755.13,m2_8x10:0.0,m2_10x12:507.74,m2_11x14:0.0,m2_14x17:247.39,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
-    {nombre:"CLUB DE LEONES QUITO CENTRAL",total_m2:1191.78,m2_8x10:0.0,m2_10x12:354.46,m2_11x14:0.0,m2_14x17:837.32,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
-    {nombre:"COMPANIA FONAR3D IMAGE DENTAL CIA LTDA",total_m2:136.98,m2_8x10:127.4,m2_10x12:9.58,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
-    {nombre:"CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.",total_m2:2814.8,m2_8x10:216.58,m2_10x12:1494.48,m2_11x14:0.0,m2_14x17:1103.74,califica:1,printers:4,small_tray:4,large_tray:4,feeder:4},
-    {nombre:"CRISTIAN OMAR CAMACHO CHADAN",total_m2:44.59,m2_8x10:44.59,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
-    {nombre:"DAVID GABRIEL GARCIA ALVARADO",total_m2:101.92,m2_8x10:101.92,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
-    {nombre:"DEFINE S.A.S.",total_m2:50.96,m2_8x10:50.96,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
-    {nombre:"DIAGNOSTICO AGUDO Y MEDICOS ESPECIALISTA",total_m2:209.49,m2_8x10:38.22,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:171.27,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
-    {nombre:"DIAGNOSTICO MEDICO POR IMAGENES SAS CEDIM",total_m2:57.22,m2_8x10:0.0,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:38.06,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
-    {nombre:"DIRAD DIAGNOSTICO RADIOLOGICO CIA LTDA",total_m2:1857.66,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:753.92,m2_14x17:1103.74,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
-    {nombre:"DR ANDRES EUCLIDES MONTALVAN AYALA",total_m2:124.76,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:48.64,m2_14x17:76.12,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
-    {nombre:"DR CARLOS SANTANA RODRIGUEZ",total_m2:12.74,m2_8x10:12.74,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
-    {nombre:"DR EDGAR SEBASTIAN EPINOZA MUNOZ",total_m2:218.33,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:85.12,m2_14x17:133.21,califica:1,printers:0,small_tray:0,large_tray:0,feeder:0},
-    {nombre:"DR EDGAR SEBASTIAN ESPINOZA MUNOZ",total_m2:374.28,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:145.92,m2_14x17:228.36,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
-    {nombre:"DR FELIPE MOROCHO PACHECO",total_m2:114.44,m2_8x10:0.0,m2_10x12:38.32,m2_11x14:0.0,m2_14x17:76.12,califica:0,printers:1,small_tray:1,large_tray:1,feeder:1},
-    {nombre:"DR FELIPE RODORIGUEZ MAYA",total_m2:340.48,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:340.48,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
-    {nombre:"DR FELIPE RODRIGUEZ",total_m2:431.92,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:279.68,m2_14x17:152.24,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
-    {nombre:"DR FERNANDO AGUILERA",total_m2:458.64,m2_8x10:458.64,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:2,small_tray:2,large_tray:0,feeder:0},
-    {nombre:"DR HUGO GUAMAN",total_m2:140.44,m2_8x10:25.48,m2_10x12:114.96,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:2,large_tray:0,feeder:1},
-    {nombre:"DR HUGO VINICIO PALACIOS",total_m2:19.11,m2_8x10:19.11,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
-    {nombre:"DR JHONNY JACOME PONCE",total_m2:428.37,m2_8x10:0.0,m2_10x12:28.74,m2_11x14:0.0,m2_14x17:399.63,califica:1,printers:1,small_tray:0,large_tray:1,feeder:0},
-    {nombre:"DR JORGE ORDONEZ",total_m2:43.48,m2_8x10:0.0,m2_10x12:19.16,m2_11x14:24.32,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
-    {nombre:"DR JOSE MANUEL HUNG ARROYO",total_m2:152.88,m2_8x10:152.88,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
-    {nombre:"DR KEVIN WILFRIDO VERSOZA CASTRO",total_m2:95.41,m2_8x10:0.0,m2_10x12:38.32,m2_11x14:0.0,m2_14x17:57.09,califica:0,printers:1,small_tray:1,large_tray:1,feeder:1},
-    {nombre:"DR LEONARDO MORETA",total_m2:76.64,m2_8x10:0.0,m2_10x12:76.64,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
-    {nombre:"DR OSCAR VINICIO VACA SANCHEZ",total_m2:1707.44,m2_8x10:0.0,m2_10x12:459.84,m2_11x14:486.4,m2_14x17:761.2,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
-    {nombre:"DR PASCUAL LOOR FIENCO",total_m2:28.61,m2_8x10:0.0,m2_10x12:9.58,m2_11x14:0.0,m2_14x17:19.03,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
-    {nombre:"DR PEDRO DELGADO ORTIZ",total_m2:102.12,m2_8x10:25.48,m2_10x12:76.64,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:2,large_tray:0,feeder:1},
-    {nombre:"DR. JOSE MULLO",total_m2:63.7,m2_8x10:63.7,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
-    {nombre:"DRA ALEXANDRA MONARD",total_m2:79.7,m2_8x10:50.96,m2_10x12:28.74,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:1,feeder:1},
-    {nombre:"DRA FERNANDA ANDRADE METROMEC",total_m2:9.58,m2_8x10:0.0,m2_10x12:9.58,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
-    {nombre:"DRA HILDA DEL CARMEN CORREA JIMENEZ",total_m2:599.3,m2_8x10:101.92,m2_10x12:383.2,m2_11x14:0.0,m2_14x17:114.18,califica:1,printers:4,small_tray:4,large_tray:4,feeder:4},
-    {nombre:"DRA HILDA SALAZAR SANCHEZ",total_m2:38.32,m2_8x10:0.0,m2_10x12:38.32,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
-    {nombre:"DRA MARIA TERESA RAMIREZ",total_m2:928.28,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:243.2,m2_14x17:685.08,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
-    {nombre:"DRA SILVIA ALEXANDRA CULLACAY BUNAY",total_m2:233.78,m2_8x10:25.48,m2_10x12:0.0,m2_11x14:170.24,m2_14x17:38.06,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
-    {nombre:"DRA. GUARIN MOREIRA CLARA VICTORIA",total_m2:9.58,m2_8x10:0.0,m2_10x12:9.58,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
-    {nombre:"ECOGRAMED CIA LTDA",total_m2:340.48,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:340.48,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
-    {nombre:"ECOSCAN",total_m2:219.69,m2_8x10:0.0,m2_10x12:124.54,m2_11x14:0.0,m2_14x17:95.15,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
-    {nombre:"ECUAIMAGEN",total_m2:76.64,m2_8x10:0.0,m2_10x12:76.64,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
-    {nombre:"ECUATORIANA DE ESPECIALIDADES Y TECNOLOGIA MEDICA ECUATECMED",total_m2:57.48,m2_8x10:0.0,m2_10x12:57.48,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
-    {nombre:"EXTOM C.L.",total_m2:380.6,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:380.6,califica:1,printers:2,small_tray:0,large_tray:2,feeder:0},
-    {nombre:"FABIAN CLOTARIO BORJA ZAMBRANO",total_m2:197.47,m2_8x10:197.47,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
-    {nombre:"FREDDY HIDALGO",total_m2:146.43,m2_8x10:127.4,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:19.03,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
-    {nombre:"FULLCARE MEDICAL S.A.",total_m2:286.1,m2_8x10:0.0,m2_10x12:95.8,m2_11x14:0.0,m2_14x17:190.3,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
-    {nombre:"FUNARMAF",total_m2:31.85,m2_8x10:31.85,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
-    {nombre:"HOSPITAL BASICO ALAUSI",total_m2:266.94,m2_8x10:0.0,m2_10x12:76.64,m2_11x14:0.0,m2_14x17:190.3,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
-    {nombre:"HOSPITAL BASICO EDGAR ARCOS",total_m2:108.05,m2_8x10:50.96,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:57.09,califica:0,printers:1,small_tray:1,large_tray:1,feeder:1},
-    {nombre:"HOSPITAL DE ESPECIALIDADES CARLOS ANDRADE MARIN",total_m2:254.0,m2_8x10:63.7,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:190.3,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
-    {nombre:"HOSPITAL PROVINCIAL GENERAL  PABLO",total_m2:5892.23,m2_8x10:0.0,m2_10x12:1762.72,m2_11x14:0.0,m2_14x17:4129.51,califica:1,printers:3,small_tray:3,large_tray:3,feeder:3},
-    {nombre:"HUGO ORLANDO TAPI CARDENA",total_m2:127.6,m2_8x10:50.96,m2_10x12:76.64,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:2,large_tray:0,feeder:1},
-    {nombre:"IDENT SAS",total_m2:101.92,m2_8x10:101.92,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
-    {nombre:"IMAGENES DIAGNOSTICAS CRUZ ROCA SANANGO CROCSAN S.A.S",total_m2:172.05,m2_8x10:0.0,m2_10x12:114.96,m2_11x14:0.0,m2_14x17:57.09,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
-    {nombre:"IMAGENES Y PRISMA SA",total_m2:361.96,m2_8x10:0.0,m2_10x12:57.48,m2_11x14:0.0,m2_14x17:304.48,califica:1,printers:2,small_tray:2,large_tray:1,feeder:1},
-    {nombre:"INDRA.S.A.",total_m2:43.35,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:24.32,m2_14x17:19.03,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
-    {nombre:"ING WALTER ALDAS",total_m2:209.68,m2_8x10:178.36,m2_10x12:19.16,m2_11x14:12.16,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
-    {nombre:"INSTITUTO DE DIAGNOSTICO",total_m2:1192.57,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:145.92,m2_14x17:1046.65,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
-    {nombre:"JAAR ASOCIADOS SAS",total_m2:152.88,m2_8x10:152.88,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
-    {nombre:"JAIME GEOVANNY LARREA TELLO",total_m2:38.32,m2_8x10:0.0,m2_10x12:38.32,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
-    {nombre:"JIMENEZ CASTILLO SANDRA DEL CISNE",total_m2:95.47,m2_8x10:76.44,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:19.03,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
-    {nombre:"JOSE ARIAS MUNIOZ",total_m2:19.16,m2_8x10:0.0,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
-    {nombre:"JULIO HUMBERTO RUIZ FLORES",total_m2:248.43,m2_8x10:248.43,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
-    {nombre:"KLEVER EDUARDO ECHEVERRIA MARQUEZ",total_m2:143.18,m2_8x10:0.0,m2_10x12:67.06,m2_11x14:0.0,m2_14x17:76.12,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
-    {nombre:"LABMETA S.A.",total_m2:28.74,m2_8x10:0.0,m2_10x12:28.74,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
-    {nombre:"LCDO JOHNNY GUSTAVO OVALLE GALARZA",total_m2:19.03,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:19.03,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
-    {nombre:"LEIDY ANABEL PEREZ MACIAS",total_m2:47.9,m2_8x10:0.0,m2_10x12:47.9,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
-    {nombre:"LM RADIOLOGOS CL",total_m2:286.1,m2_8x10:0.0,m2_10x12:95.8,m2_11x14:0.0,m2_14x17:190.3,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
-    {nombre:"LORFAVE SA S.",total_m2:38.32,m2_8x10:0.0,m2_10x12:38.32,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
-    {nombre:"LUIS ALBERTO SANCHEZ OVIEDO",total_m2:19.16,m2_8x10:0.0,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
-    {nombre:"MAGDALENA VERNAZA MEJIA",total_m2:146.5,m2_8x10:0.0,m2_10x12:9.58,m2_11x14:60.8,m2_14x17:76.12,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
-    {nombre:"MARCELO ALEJANDRO MONTANO BENITEZ",total_m2:6.37,m2_8x10:6.37,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
-    {nombre:"MARIANA YOCONDA CANTOS RIVERA",total_m2:200.14,m2_8x10:0.0,m2_10x12:47.9,m2_11x14:0.0,m2_14x17:152.24,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
-    {nombre:"MEDIMAGENES CIA LTDA",total_m2:524.3,m2_8x10:0.0,m2_10x12:143.7,m2_11x14:0.0,m2_14x17:380.6,califica:1,printers:3,small_tray:3,large_tray:3,feeder:3},
-    {nombre:"MICKELY DAYANA ROMERO CHAMORRO",total_m2:63.7,m2_8x10:63.7,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
-    {nombre:"MILTON TRUJILLO",total_m2:19.11,m2_8x10:19.11,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
-    {nombre:"MONARD PROANIO MARIA ALEXANDRA",total_m2:79.7,m2_8x10:50.96,m2_10x12:28.74,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
-    {nombre:"MULTI-IMAGEN SAS",total_m2:695.83,m2_8x10:0.0,m2_10x12:182.02,m2_11x14:0.0,m2_14x17:513.81,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
-    {nombre:"MUNOZ AREVALO  JAVIER ARMANDO",total_m2:19.16,m2_8x10:0.0,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
-    {nombre:"NORMA ORBEA HERRERA",total_m2:311.09,m2_8x10:63.7,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:247.39,califica:1,printers:3,small_tray:3,large_tray:3,feeder:3},
-    {nombre:"NUEVAIMAGENTC CIA LTDA",total_m2:286.36,m2_8x10:0.0,m2_10x12:134.12,m2_11x14:0.0,m2_14x17:152.24,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
-    {nombre:"OFFICEGOLDEN S.A.",total_m2:305.13,m2_8x10:0.0,m2_10x12:95.8,m2_11x14:0.0,m2_14x17:209.33,califica:1,printers:7,small_tray:7,large_tray:7,feeder:7},
-    {nombre:"OLIVO FLORES JOSE EDUARDO",total_m2:19.03,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:19.03,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
-    {nombre:"ORDEN CAPUCHINA EN EL ECUADOR",total_m2:190.3,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:190.3,califica:0,printers:1,small_tray:0,large_tray:1,feeder:0},
-    {nombre:"ORIMEC INTERNO",total_m2:12.16,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:12.16,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
-    {nombre:"ORIONGROUP S.A.",total_m2:363.09,m2_8x10:363.09,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:3,small_tray:3,large_tray:0,feeder:0},
-    {nombre:"PATRICIA DEL ROSARIO ROJAS QUEZADA",total_m2:19.16,m2_8x10:0.0,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
-    {nombre:"PATRICIA YAJAIRA ERAZO TORRES",total_m2:57.38,m2_8x10:38.22,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
-    {nombre:"PAZOS GONZALES MERCEDES COLIS",total_m2:95.28,m2_8x10:0.0,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:76.12,califica:0,printers:1,small_tray:1,large_tray:1,feeder:1},
-    {nombre:"QUIZHPI BRAVO MARCO VINICIO",total_m2:102.07,m2_8x10:44.59,m2_10x12:57.48,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:1,feeder:1},
-    {nombre:"RADIOMED",total_m2:92.65,m2_8x10:31.85,m2_10x12:0.0,m2_11x14:60.8,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
-    {nombre:"RADXIMAGEN SAS",total_m2:564.03,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:12.16,m2_14x17:551.87,califica:1,printers:1,small_tray:0,large_tray:1,feeder:0},
-    {nombre:"RESONADOR CLINICA SAN PABLO CIA LTDA",total_m2:209.33,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:209.33,califica:1,printers:1,small_tray:0,large_tray:1,feeder:0},
-    {nombre:"RICARDO VASQUEZ",total_m2:12.74,m2_8x10:12.74,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
-    {nombre:"RINCON ALVAREZ EDILMARIS DE LOS ANGELES",total_m2:1063.79,m2_8x10:815.36,m2_10x12:153.28,m2_11x14:0.0,m2_14x17:95.15,califica:1,printers:5,small_tray:5,large_tray:2,feeder:2},
-    {nombre:"RONALD DAVID CONTRERAS POTES",total_m2:9.58,m2_8x10:0.0,m2_10x12:9.58,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
-    {nombre:"RUTHY CIA. LTDA.",total_m2:228.36,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:228.36,califica:0,printers:1,small_tray:0,large_tray:1,feeder:0},
-    {nombre:"SARMIENTO SALTOS MARIA ALEJANDRA",total_m2:190.46,m2_8x10:38.22,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:152.24,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
-    {nombre:"SCAN-3D S.A.S.",total_m2:101.92,m2_8x10:101.92,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
-    {nombre:"SCAN3DIGITAL S.A.S.",total_m2:60.54,m2_8x10:50.96,m2_10x12:9.58,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
-    {nombre:"SERVICIOS Y VENTAS MOGROVEJO RODRIGUEZ SERVEMOR CIA LTDA",total_m2:329.35,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:158.08,m2_14x17:171.27,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
-    {nombre:"SMIMAGENES SAS",total_m2:120.63,m2_8x10:25.48,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:95.15,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
-    {nombre:"SOCIEDAD CIVIL CTRO DE IMAGENES QUEVEDO CIQ",total_m2:942.83,m2_8x10:0.0,m2_10x12:124.54,m2_11x14:0.0,m2_14x17:818.29,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
-    {nombre:"TAILY LUISANA MONTOYA BERSOZA",total_m2:31.77,m2_8x10:12.74,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:19.03,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
-    {nombre:"TAYANA SA",total_m2:81.41,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:24.32,m2_14x17:57.09,califica:0,printers:2,small_tray:2,large_tray:2,feeder:2},
-    {nombre:"TEC MED CRISTOBAL REYES TIGSE",total_m2:179.85,m2_8x10:76.44,m2_10x12:47.9,m2_11x14:36.48,m2_14x17:19.03,califica:0,printers:3,small_tray:3,large_tray:1,feeder:1},
-    {nombre:"TERESA CORDOVA",total_m2:121.03,m2_8x10:121.03,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
-    {nombre:"TMD EDWIN ESPANA",total_m2:343.32,m2_8x10:0.0,m2_10x12:114.96,m2_11x14:0.0,m2_14x17:228.36,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
-    {nombre:"TOMOIMAGEN",total_m2:38.06,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:38.06,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
-    {nombre:"UDIP S.A.",total_m2:485.98,m2_8x10:0.0,m2_10x12:105.38,m2_11x14:0.0,m2_14x17:380.6,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
-    {nombre:"ULLOA AGUILERA LUIS FELIPE",total_m2:1349.85,m2_8x10:433.16,m2_10x12:479.0,m2_11x14:0.0,m2_14x17:437.69,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
-    {nombre:"ULTRADIAGNOSTIC",total_m2:31.9,m2_8x10:12.74,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
-    {nombre:"UNIDAD DE DIAGNOSTICOS E IMAGENES S.A. UNIMAGENLOOR",total_m2:69.96,m2_8x10:12.74,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:38.06,califica:0,printers:1,small_tray:1,large_tray:1,feeder:1},
-    {nombre:"UNIMOVILRAY CIA LTDA",total_m2:114.44,m2_8x10:0.0,m2_10x12:38.32,m2_11x14:0.0,m2_14x17:76.12,califica:0,printers:1,small_tray:1,large_tray:1,feeder:1},
-    {nombre:"UNIVERSIDAD CATOLICA DE CUENCA",total_m2:562.23,m2_8x10:0.0,m2_10x12:124.54,m2_11x14:0.0,m2_14x17:437.69,califica:1,printers:1,small_tray:1,large_tray:1,feeder:1},
-    {nombre:"USAIMPORT S.A.S.",total_m2:28.74,m2_8x10:0.0,m2_10x12:28.74,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
-    {nombre:"VANESSA ALEXANDER SOSA ARROBA",total_m2:63.8,m2_8x10:25.48,m2_10x12:38.32,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
-    {nombre:"VERA MURILLO EXITA JANET",total_m2:19.16,m2_8x10:0.0,m2_10x12:19.16,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:0,small_tray:0,large_tray:0,feeder:0},
-    {nombre:"X RAY SOLUTIONS DENTALMEDIC",total_m2:101.92,m2_8x10:101.92,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:0,printers:1,small_tray:1,large_tray:0,feeder:0},
-    {nombre:"ZAMBRANO ORDONEZ JOSE PAUL",total_m2:295.5,m2_8x10:19.11,m2_10x12:67.06,m2_11x14:0.0,m2_14x17:209.33,califica:1,printers:2,small_tray:2,large_tray:2,feeder:2},
-    {nombre:"CLINICA SAN GREGORIO ASUNELEC",total_m2:0.0,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:1,printers:1,small_tray:1,large_tray:1,feeder:0},
-    {nombre:"SAAB CORP SAS",total_m2:0.0,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:1,printers:1,small_tray:1,large_tray:1,feeder:0},
-    {nombre:"CEDIMAGEN",total_m2:0.0,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:1,printers:1,small_tray:1,large_tray:1,feeder:0},
-    {nombre:"RX IMAGENT",total_m2:0.0,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:1,printers:1,small_tray:1,large_tray:1,feeder:0},
-    {nombre:"ANITA QUINTANA",total_m2:0.0,m2_8x10:0.0,m2_10x12:0.0,m2_11x14:0.0,m2_14x17:0.0,califica:1,printers:1,small_tray:1,large_tray:1,feeder:0},
-  ];
+
 
 
   const TRIMAX_2024 = {
@@ -3814,9 +4295,25 @@ ${rows.map(r=>{
       if (dashboardEndDate && new Date(r.order_date) > new Date(dashboardEndDate)) return false;
       return true;
     });
-    const activeClientIds = new Set(dateFilteredConsumos.map(r => r.client_id));
-    const hasDateFilter = !!(dashboardStartDate || dashboardEndDate);
-    const totalClients = hasDateFilter ? activeClientIds.size : allClients.length;
+    // Clients active in period filtered by both date AND film type
+    const totalClients = (() => {
+      // No filters at all → total registered
+      if (!dashboardStartDate && !dashboardEndDate && globalFilmFilter === 'all') return allClients.length;
+      // Apply both filters to get matching records
+      const matching = allConsumos.filter(r => {
+        if (r.is_return) return false;
+        if (dashboardStartDate && new Date(r.order_date) < new Date(dashboardStartDate)) return false;
+        if (dashboardEndDate && new Date(r.order_date) > new Date(dashboardEndDate)) return false;
+        if (globalFilmFilter !== 'all') {
+          const ft = r.film_type || 'DIHT';
+          if (globalFilmFilter === 'DIHT' && ft !== 'DIHT' && !(!r.film_type)) return false;
+          if (globalFilmFilter === 'DIHL' && ft !== 'DIHL') return false;
+          if (globalFilmFilter === 'DIML' && ft !== 'DIML') return false;
+        }
+        return true;
+      });
+      return new Set(matching.map(r => r.client_id)).size;
+    })();
 
     // ── m² calculations ──
     const totalM2 = parseFloat(filteredConsumos.reduce((acc, curr) => acc + getTotalM2(effectiveQty(curr), curr.size, curr.film_type), 0).toFixed(2));
@@ -3847,14 +4344,27 @@ ${rows.map(r=>{
     });
 
     const allClientsSorted = Object.entries(clientDistM2)
-      .map(([id, m2]) => ({
-        id: parseInt(id),
-        name: allClients.find(c => c.id === parseInt(id))?.name || 'Desconocido',
-        province: allClients.find(c => c.id === parseInt(id))?.province || '—',
-        salesperson: allClients.find(c => c.id === parseInt(id))?.salesperson || '—',
-        value: clientDist[parseInt(id)] || 0,
-        m2
-      }))
+      .map(([id, m2]) => {
+        const cId = parseInt(id);
+        const c = allClients.find(c => c.id === cId);
+        // Use allConsumos with date filter only (not film filter) for revenue
+        const revenueConsumos = allConsumos.filter(r => {
+          if (r.client_id !== cId || r.is_return) return false;
+          if (dashboardStartDate && new Date(r.order_date) < new Date(dashboardStartDate)) return false;
+          if (dashboardEndDate && new Date(r.order_date) > new Date(dashboardEndDate)) return false;
+          return true;
+        });
+        const revenue = revenueConsumos.reduce((s, r) => s + r.quantity * (r.unit_cost || 0), 0);
+        return {
+          id: cId,
+          name: c?.name || 'Desconocido',
+          province: c?.province || '—',
+          salesperson: c?.salesperson || '—',
+          value: clientDist[cId] || 0,
+          m2,
+          revenue: parseFloat(revenue.toFixed(2))
+        };
+      })
       .sort((a, b) => b.m2 - a.m2);
     const topClients = allClientsSorted.slice(0, 5);
 
@@ -5005,10 +5515,10 @@ ${rows.map(r=>{
       )}
       {/* Header Corporativo Orimec */}
       <header className={cn(
-        "border-b px-6 py-3 flex items-center justify-between z-10 shrink-0 transition-colors duration-300",
+        "border-b px-3 xl:px-6 py-3 flex items-center justify-between z-10 shrink-0 transition-colors duration-300",
         darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/80 shadow-sm"
       )}>
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-3 xl:gap-6 min-w-0">
           <div className="flex items-center gap-3">
             {/* Icon badge */}
             <OrimecLogo size={36} />
@@ -5045,7 +5555,7 @@ ${rows.map(r=>{
                 key={id}
                 onClick={() => setView(id as any)}
                 className={cn(
-                  "px-3.5 py-1.5 rounded-lg font-semibold text-xs flex items-center gap-1.5 transition-all",
+                  "px-2.5 xl:px-3.5 py-1.5 rounded-lg font-semibold text-xs flex items-center gap-1.5 transition-all",
                   view === id
                     ? (darkMode
                         ? "bg-[#ED1C24] text-white shadow-sm shadow-red-500/20"
@@ -5062,36 +5572,7 @@ ${rows.map(r=>{
           </nav>
         </div>
 
-        <div className="flex items-center gap-2.5">
-          {/* User chip */}
-          <div className={cn(
-            "flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-semibold",
-            darkMode ? "bg-white/5 border-white/8 text-gray-400" : "bg-gray-100 border-gray-200 text-gray-500"
-          )}>
-            <span className="max-w-[80px] truncate">{appUser?.nombre}</span>
-            <span className={cn(
-              "px-1.5 py-0.5 rounded-md text-[9px] font-bold",
-              appUser?.role === 'admin' ? 'bg-[#ED1C24]/15 text-[#ED1C24]' :
-              appUser?.role === 'financiero' ? 'bg-emerald-500/15 text-emerald-500' :
-              appUser?.role === 'asistente' ? 'bg-violet-500/15 text-violet-500' :
-              appUser?.role === 'gerencia' ? 'bg-amber-500/15 text-amber-500' :
-              'bg-blue-500/15 text-blue-500'
-            )}>{appUser?.role}</span>
-          </div>
-          {/* Logout */}
-          <button
-            onClick={logout}
-            className={cn(
-              "p-2 rounded-xl transition-all duration-300",
-              darkMode
-                ? "bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/10"
-                : "bg-red-50 text-red-400 hover:bg-red-100 border border-transparent"
-            )}
-            title="Cerrar sesión"
-          >
-            <LogOut className="w-4 h-4" />
-          </button>
-
+        <div className="flex items-center gap-1.5 min-w-0">
           {/* Zoom indicator — solo visible si zoom ≠ automático */}
           {Math.abs(zoomLevel - calcZoom()) > 0.04 && (
             <button
@@ -5143,7 +5624,7 @@ ${rows.map(r=>{
             <button
               onClick={() => setGlobalSearchOpen(true)}
               className={cn(
-                "flex items-center gap-2 pl-3 pr-3 py-2 rounded-xl w-64 text-xs font-medium transition-all text-left",
+                "flex items-center gap-2 pl-3 pr-3 py-2 rounded-xl w-40 xl:w-64 text-xs font-medium transition-all text-left",
                 darkMode
                   ? "bg-white/5 text-gray-500 hover:bg-white/8 hover:text-gray-400 border border-white/6"
                   : "bg-gray-100 text-gray-400 hover:bg-gray-200/70 border border-transparent"
@@ -5158,58 +5639,97 @@ ${rows.map(r=>{
             </button>
           </div>
 
+          {/* Separador antes de acciones */}
+          <div className={cn("h-5 w-px mx-1", darkMode ? "bg-white/10" : "bg-gray-200")} />
+
+          {/* Exportar — solo ícono */}
           {(role === 'admin' || role === 'financiero' || role === 'asistente' || role === 'gerencia') && (
             <button
               onClick={handleExportExcel}
               className={cn(
-                "px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all",
+                "p-2 rounded-xl transition-all duration-300",
                 darkMode
                   ? "bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/10"
-                  : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200/60"
+                  : "bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-transparent"
               )}
               title="Exportar a Excel"
             >
-              <Download className="w-3.5 h-3.5" />
-              Exportar
-            </button>
-          )}
-          {(role === 'admin' || role === 'financiero') && (
-            <button
-              onClick={() => setShowNCReport(true)}
-              className={cn("px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all",
-                darkMode ? "bg-purple-500/10 text-purple-400 hover:bg-purple-500/20 border border-purple-500/10" : "bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200/60"
-              )}
-              title="Reporte de Notas de Crédito"
-            >
-              <FileText className="w-3.5 h-3.5" />
-              Notas de Crédito
+              <Download className="w-4 h-4" />
             </button>
           )}
 
+          {/* Notas de Crédito — solo ícono */}
+          {(role === 'admin' || role === 'financiero') && (
+            <button
+              onClick={() => setShowNCReport(true)}
+              className={cn(
+                "p-2 rounded-xl transition-all duration-300",
+                darkMode ? "bg-purple-500/10 text-purple-400 hover:bg-purple-500/20 border border-purple-500/10" : "bg-purple-50 text-purple-600 hover:bg-purple-100 border border-transparent"
+              )}
+              title="Notas de Crédito"
+            >
+              <FileText className="w-4 h-4" />
+            </button>
+          )}
+
+          {/* Importar CSV — solo ícono */}
           {role === 'admin' && (
             <button
               onClick={handleOpenCsvImport}
               className={cn(
-                "px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all",
+                "p-2 rounded-xl transition-all duration-300",
                 darkMode
                   ? "bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 border border-blue-500/10"
-                  : "bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200/60"
+                  : "bg-blue-50 text-blue-600 hover:bg-blue-100 border border-transparent"
               )}
               title="Importar CSV"
             >
-              <Upload className="w-3.5 h-3.5" />
-              Importar CSV
+              <Upload className="w-4 h-4" />
             </button>
           )}
 
+          {/* Nuevo Cliente — único botón con texto, acción principal */}
           {(role === 'admin' || role === 'financiero') && (
             <button
               onClick={handleOpenNewClient}
-              className="bg-[#ED1C24] text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 hover:bg-[#D11920] shadow-md shadow-red-500/20 transition-all"
+              className="bg-[#ED1C24] text-white p-2 rounded-xl text-xs font-bold flex items-center gap-1.5 hover:bg-[#D11920] shadow-md shadow-red-500/20 transition-all"
+              title="Nuevo Cliente"
             >
-              <Plus className="w-3.5 h-3.5" /> Nuevo Cliente
+              <Plus className="w-4 h-4" />
             </button>
           )}
+
+          {/* Separador usuario */}
+          <div className={`h-5 w-px mx-1 ${darkMode ? 'bg-white/10' : 'bg-gray-200'}`} />
+
+          {/* User chip */}
+          <div className={cn(
+            "flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-semibold",
+            darkMode ? "bg-white/5 border-white/8 text-gray-400" : "bg-gray-100 border-gray-200 text-gray-500"
+          )}>
+            <span className="max-w-[80px] truncate">{appUser?.nombre}</span>
+            <span className={cn(
+              "px-1.5 py-0.5 rounded-md text-[9px] font-bold",
+              appUser?.role === 'admin' ? 'bg-[#ED1C24]/15 text-[#ED1C24]' :
+              appUser?.role === 'financiero' ? 'bg-emerald-500/15 text-emerald-500' :
+              appUser?.role === 'asistente' ? 'bg-violet-500/15 text-violet-500' :
+              appUser?.role === 'gerencia' ? 'bg-amber-500/15 text-amber-500' :
+              'bg-blue-500/15 text-blue-500'
+            )}>{appUser?.role}</span>
+          </div>
+          {/* Logout */}
+          <button
+            onClick={logout}
+            className={cn(
+              "p-2 rounded-xl transition-all duration-300",
+              darkMode
+                ? "bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/10"
+                : "bg-red-50 text-red-400 hover:bg-red-100 border border-transparent"
+            )}
+            title="Cerrar sesión"
+          >
+            <LogOut className="w-4 h-4" />
+          </button>
         </div>
       </header>
 
@@ -5860,7 +6380,7 @@ ${rows.map(r=>{
                       darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
                     )}>
                       <h3 className={cn("text-[10px] font-bold uppercase tracking-wider mb-5", darkMode ? "text-gray-500" : "text-gray-400")}>Tendencia de Pedidos</h3>
-                      <div className="h-44">
+                      <div className="h-44 min-w-0">
                         <ResponsiveContainer width="100%" height="100%">
                           <LineChart data={filteredClientConsumption.slice(0, 8).reverse()}>
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={darkMode ? "#222" : "#F0F0F0"} />
@@ -5882,7 +6402,7 @@ ${rows.map(r=>{
                       darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
                     )}>
                       <h3 className={cn("text-[10px] font-bold uppercase tracking-wider mb-5", darkMode ? "text-gray-500" : "text-gray-400")}>Stock por Medida (Cajas)</h3>
-                      <div className="h-44">
+                      <div className="h-44 min-w-0">
                         <ResponsiveContainer width="100%" height="100%">
                           <BarChart data={sizeDistribution} layout="vertical">
                             <XAxis type="number" hide />
@@ -5945,6 +6465,17 @@ ${rows.map(r=>{
                           >
                             {tab.label}
                           </button>
+                        ))}
+                      </div>
+                      {/* Size filter */}
+                      <div className={cn("flex items-center gap-0.5 p-0.5 rounded-lg", darkMode ? "bg-white/5" : "bg-gray-100")}>
+                        {['Todas','8x10','10x12','11x14','14x17'].map(size => (
+                          <button key={size} onClick={() => setClientSizeFilter(size)}
+                            className={cn("px-2.5 py-1 rounded-md text-[9px] font-black transition-all",
+                              clientSizeFilter === size
+                                ? (darkMode ? "bg-white/15 text-white" : "bg-white text-gray-800 shadow-sm")
+                                : (darkMode ? "text-gray-600 hover:text-gray-400" : "text-gray-400 hover:text-gray-600")
+                            )}>{size}</button>
                         ))}
                       </div>
                       <div className="flex items-center gap-3">
@@ -6430,7 +6961,7 @@ ${rows.map(r=>{
                     ))}
                   </div>
                 </div>
-                <div className="h-72">
+                <div className="h-72 min-w-0">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={(() => {
                       const filtered = globalFilmFilter === 'all' ? allConsumos
@@ -7079,6 +7610,7 @@ ${rows.map(r=>{
               <PurchasesDashboardView
                 darkMode={darkMode}
                 globalMetrics={globalMetrics}
+                allConsumos={allConsumos}
               />
             )}
           </div>
@@ -8293,13 +8825,35 @@ ${rows.map(r=>{
 
             {/* Header */}
             <div className="flex items-center justify-between flex-wrap gap-3">
-              <div>
-                <h2 className="text-xl font-black tracking-tight flex items-center gap-2">
-                  <Layers className="w-5 h-5 text-[#ED1C24]" /> Stock Imager
-                </h2>
-                <p className={cn("text-[10px] font-medium uppercase tracking-wider mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>
-                  Equipos Fujifilm · Planificación · Cobertura · Proyección
-                </p>
+              <div className="flex items-center gap-3">
+                <div>
+                  <h2 className="text-xl font-black tracking-tight flex items-center gap-2">
+                    <Layers className="w-5 h-5 text-[#ED1C24]" />
+                    {imagerView === 'stock' ? 'Stock Imager' : 'Análisis Impresoras 2024'}
+                  </h2>
+                  <p className={cn("text-[10px] font-medium uppercase tracking-wider mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>
+                    {imagerView === 'stock' ? 'Equipos Fujifilm · Planificación · Cobertura · Proyección' : 'Cruce consumo 2024 vs instalaciones actuales'}
+                  </p>
+                </div>
+                {/* View toggle */}
+                <div className={cn("flex items-center gap-0.5 p-0.5 rounded-xl ml-2", darkMode ? "bg-white/5" : "bg-gray-100")}>
+                  <button onClick={() => setImagerView('stock')}
+                    className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black transition-all",
+                      imagerView === 'stock'
+                        ? (darkMode ? "bg-[#ED1C24] text-white shadow-sm" : "bg-white text-[#ED1C24] shadow-sm border border-red-100")
+                        : (darkMode ? "text-gray-500 hover:text-gray-300" : "text-gray-400 hover:text-gray-600")
+                    )}>
+                    <Layers className="w-3 h-3" /> Stock
+                  </button>
+                  <button onClick={() => setImagerView('analisis2024')}
+                    className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black transition-all",
+                      imagerView === 'analisis2024'
+                        ? (darkMode ? "bg-[#1A3A5C] text-white shadow-sm" : "bg-white text-[#1A3A5C] shadow-sm border border-blue-100")
+                        : (darkMode ? "text-gray-500 hover:text-gray-300" : "text-gray-400 hover:text-gray-600")
+                    )}>
+                    <BarChart3 className="w-3 h-3" /> Análisis 2024
+                  </button>
+                </div>
               </div>
               <button
                 onClick={() => {
@@ -8326,6 +8880,7 @@ ${rows.map(r=>{
               )}
             </div>
 
+            <div className={imagerView === 'analisis2024' ? 'hidden' : undefined}>
             {/* KPI summary cards */}
             {(() => {
               const printers = IMAGER_PRODUCTS.filter(p => p.category === 'Impresora Principal');
@@ -8784,6 +9339,28 @@ ${rows.map(r=>{
                 </p>
               </div>
             </div>
+            </div>
+
+            {imagerView === 'analisis2024' && (
+              <ImagerAnalysis2024View
+                darkMode={darkMode}
+                allClients={allClients}
+                allConsumos={allConsumos}
+                setSelectedClient={setSelectedClient}
+                imager2024Tab={imager2024Tab}
+                setImager2024Tab={setImager2024Tab}
+                imager2024ManualMatch={imager2024ManualMatch}
+                setImager2024ManualMatch={setImager2024ManualMatch}
+                setImager2024MatchModal={setImager2024MatchModal}
+                setImager2024MatchSearch={setImager2024MatchSearch}
+                growthPotentialClients={growthPotentialClients}
+                globalFilmFilter={globalFilmFilter}
+                filteredConsumosForView={filteredConsumosForView}
+                getM2PerBox={getM2PerBox}
+                getTotalM2={getTotalM2}
+                effectiveQty={effectiveQty}
+              />
+            )}
 
           </div>
         )}
@@ -8836,7 +9413,6 @@ ${rows.map(r=>{
                 ['health',        'Salud',         Users      ],
                 ['profitability', 'Rentabilidad',  TrendingUp ],
                 ['seasonality',   'Estacionalidad',BarChart3  ],
-                ['potential',     'Potencial',     Zap        ],
                 ['provinces',     'Provincias',    MapPin     ],
                 ['anomalies',     'Anomalías',     AlertCircle],
               ] as const).map(([tab, label, Icon]) => (
@@ -9235,13 +9811,14 @@ ${rows.map(r=>{
                             <td className="px-5 py-3 text-center font-semibold">{item.trendScore}</td>
                             <td className="px-5 py-3 text-center">
                               <span className={cn("font-black text-sm", darkMode ? "text-cyan-400" : "text-cyan-600")}>
-                                {getTotalM2(item.avgMonthly, (() => {
-                                  // compute dominant size from consumos
-                                  const cs = filteredConsumosForView.filter((r: ConsumptionRecord) => r.client_id === item.client.id);
-                                  const sd = {} as Record<string,number>;
-                                  cs.forEach((r: ConsumptionRecord) => { sd[r.size] = (sd[r.size]||0) + r.quantity; });
-                                  return Object.entries(sd).sort((a,b)=>b[1]-a[1])[0]?.[0] || '14x17';
-                                })(), globalFilmFilter === 'DIHL' ? 'DIHL' : 'DIHT').toFixed(2)}
+                                {getTotalM2(item.avgMonthly,
+                                  filteredConsumosForView.filter((r: ConsumptionRecord) => r.client_id === item.client.id)
+                                    .reduce((best: string, _r: ConsumptionRecord, _i: number, arr: ConsumptionRecord[]) => {
+                                      const sd: Record<string,number> = {};
+                                      arr.forEach((r: ConsumptionRecord) => { sd[r.size]=(sd[r.size]||0)+r.quantity; });
+                                      return Object.entries(sd).sort((a,b)=>b[1]-a[1])[0]?.[0] || '14x17';
+                                    }, '14x17'),
+                                  globalFilmFilter === 'DIHL' ? 'DIHL' : 'DIHT').toFixed(2)}
                               </span>
                               <span className={cn("text-[9px] block", darkMode ? "text-gray-600" : "text-gray-400")}>m²</span>
                             </td>
@@ -9492,384 +10069,6 @@ ${rows.map(r=>{
             )}
 
             {/* ══ TAB: GROWTH POTENTIAL ══ */}
-            {intelligenceTab === 'potential' && (() => {
-              // ── Cross IMAGER_2024 with current clients ──
-              const normalize = (s: string) => s.toUpperCase().trim().replace(/\s+/g,' ');
-              const enriched = IMAGER_2024.map(row => {
-                const client = allClients.find(c => normalize(c.name) === normalize(row.nombre));
-                const currentPrinters = client?.printers?.length || 0;
-                const consumos2025 = client ? allConsumos.filter(r => r.client_id === client.id && new Date(r.order_date).getFullYear() >= 2025) : [];
-                const m2_2025 = consumos2025.reduce((s,r) => s + getTotalM2(effectiveQty(r), r.size, r.film_type), 0);
-                return { ...row, client, currentPrinters, m2_2025 };
-              });
-
-              // Sección 1: Calificaban (califica=1) — ¿ya tienen impresora?
-              const pending = enriched.filter(r => r.califica === 1).sort((a,b) => b.total_m2 - a.total_m2);
-              const pendingYes = pending.filter(r => r.currentPrinters > 0);
-              const pendingNo  = pending.filter(r => r.currentPrinters === 0);
-
-              // Sección 2: Instaladas — consumo 2024 vs recomendación
-              const installed = enriched.filter(r => r.printers > 0 && r.currentPrinters > 0).sort((a,b) => b.total_m2 - a.total_m2);
-
-              // Sección 3: No calificaban (califica=0) pero crecieron en 2025
-              const growth = enriched.filter(r => r.califica === 0 && r.m2_2025 > 100).sort((a,b) => b.m2_2025 - a.m2_2025);
-
-              const tabs = [
-                { key: 'pending', label: 'Pendientes de impresora', count: pendingNo.length, color: 'text-red-400', bg: 'bg-red-500/15', desc: `${pendingNo.length} clientes que califican pero no tienen impresora aún` },
-                { key: 'installed', label: 'Instaladas 2024', count: pendingYes.length, color: 'text-emerald-400', bg: 'bg-emerald-500/15', desc: `${pendingYes.length} clientes que ya cuentan con impresora` },
-                { key: 'growth', label: 'Nuevas oportunidades', count: growth.length, color: 'text-amber-400', bg: 'bg-amber-500/15', desc: `${growth.length} clientes que crecieron en 2025` },
-              ] as const;
-
-              return (
-                <div className="space-y-4">
-                  {/* Header card */}
-                  <div className={cn("rounded-xl border p-5", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
-                    <div className="flex items-start justify-between gap-4 flex-wrap">
-                      <div>
-                        <h3 className={cn("text-sm font-black", darkMode ? "text-white" : "text-gray-900")}>Análisis de Impresoras — Base 2024</h3>
-                        <p className={cn("text-[10px] mt-1", darkMode ? "text-gray-500" : "text-gray-400")}>
-                          Cruce entre el consumo 2024 y el estado actual de instalaciones. Fuente: planilla impresora_V_VENTA.
-                        </p>
-                      </div>
-                      <div className="flex gap-3 flex-wrap">
-                        {[
-                          { label: 'Califican', val: pending.length, color: darkMode ? 'text-red-400' : 'text-red-600' },
-                          { label: 'Ya instaladas', val: pendingYes.length, color: darkMode ? 'text-emerald-400' : 'text-emerald-600' },
-                          { label: 'Pendientes', val: pendingNo.length, color: darkMode ? 'text-amber-400' : 'text-amber-600' },
-                          { label: 'Nuevas oport.', val: growth.length, color: darkMode ? 'text-cyan-400' : 'text-cyan-600' },
-                        ].map((k,i) => (
-                          <div key={i} className={cn("px-4 py-2.5 rounded-xl border text-center min-w-[80px]", darkMode ? "bg-white/4 border-white/8" : "bg-gray-50 border-gray-100")}>
-                            <p className={cn("text-xl font-black leading-none", k.color)}>{k.val}</p>
-                            <p className={cn("text-[8px] font-bold uppercase tracking-wider mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>{k.label}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    {/* Tab selector */}
-                    <div className={cn("flex gap-1 mt-4 p-1 rounded-xl", darkMode ? "bg-white/5" : "bg-gray-100")}>
-                      {tabs.map(t => (
-                        <button key={t.key} onClick={() => setImager2024Tab(t.key as any)}
-                          className={cn("flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-[10px] font-black transition-all",
-                            imager2024Tab === t.key
-                              ? (darkMode ? "bg-[#16161A] text-white shadow-sm" : "bg-white text-gray-900 shadow-sm")
-                              : (darkMode ? "text-gray-600 hover:text-gray-400" : "text-gray-400 hover:text-gray-600")
-                          )}>
-                          <span className={cn("px-1.5 py-0.5 rounded-full text-[8px] font-black", imager2024Tab === t.key ? t.bg + ' ' + t.color : (darkMode ? "bg-white/5 text-gray-600" : "bg-gray-100 text-gray-400"))}>{t.count}</span>
-                          <span className="hidden sm:inline">{t.label}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* ── SECCIÓN 1: Pendientes ── */}
-                  {imager2024Tab === 'pending' && (
-                    <div className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
-                      <div className={cn("px-5 py-3 border-b", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
-                        <p className={cn("text-xs font-black", darkMode ? "text-white" : "text-gray-900")}>
-                          Clientes que califican para impresora pero aún no tienen instalada
-                        </p>
-                        <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-500" : "text-gray-400")}>
-                          Basado en consumo 2024 ≥ umbral de colocación. Ordenados por m² 2024.
-                        </p>
-                      </div>
-                      <div className="overflow-x-auto max-h-[500px] overflow-y-auto custom-scrollbar">
-                        <table className="w-full text-xs">
-                          <thead className={cn("text-[8px] font-bold uppercase tracking-wider sticky top-0", darkMode ? "text-gray-600 bg-[#16161A]" : "text-gray-400 bg-white")}>
-                            <tr className={cn("border-b", darkMode ? "border-white/6" : "border-gray-100")}>
-                              <th className="px-5 py-2.5 text-left">#</th>
-                              <th className="px-5 py-2.5 text-left">Cliente</th>
-                              <th className="px-4 py-2.5 text-right">m² 2024</th>
-                              <th className="px-4 py-2.5 text-center">Medidas</th>
-                              <th className="px-4 py-2.5 text-center">Impresoras rec.</th>
-                              <th className="px-4 py-2.5 text-center">Configuración</th>
-                              <th className="px-4 py-2.5 text-center">Estado</th>
-                              <th className="px-4 py-2.5 text-center">m² 2025</th>
-                            </tr>
-                          </thead>
-                          <tbody className={cn("divide-y", darkMode ? "divide-white/4" : "divide-gray-50")}>
-                            {pendingNo.map((row, i) => (
-                              <tr key={i} className={cn("transition-colors cursor-pointer", darkMode ? "hover:bg-white/4" : "hover:bg-gray-50")}
-                                onClick={() => row.client && setSelectedClient(row.client)}>
-                                <td className={cn("px-5 py-3 font-black text-[10px]", i<3 ? "text-red-400" : (darkMode ? "text-gray-700" : "text-gray-300"))}>{i+1}</td>
-                                <td className="px-5 py-3">
-                                  <p className={cn("font-semibold truncate max-w-[180px]", darkMode ? "text-gray-200" : "text-gray-800")}>{row.nombre}</p>
-                                  <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{row.client?.province || '—'} · {row.client?.salesperson || '—'}</p>
-                                </td>
-                                <td className={cn("px-4 py-3 text-right font-black", darkMode ? "text-cyan-400" : "text-cyan-600")}>{row.total_m2.toFixed(1)}</td>
-                                <td className="px-4 py-3 text-center">
-                                  <div className="flex gap-1 justify-center flex-wrap">
-                                    {row.m2_8x10 > 0 && <span className={cn("text-[8px] font-bold px-1.5 py-0.5 rounded", darkMode ? "bg-white/8 text-gray-300" : "bg-gray-100 text-gray-600")}>8x10</span>}
-                                    {row.m2_10x12 > 0 && <span className={cn("text-[8px] font-bold px-1.5 py-0.5 rounded", darkMode ? "bg-white/8 text-gray-300" : "bg-gray-100 text-gray-600")}>10x12</span>}
-                                    {row.m2_11x14 > 0 && <span className={cn("text-[8px] font-bold px-1.5 py-0.5 rounded", darkMode ? "bg-white/8 text-gray-300" : "bg-gray-100 text-gray-600")}>11x14</span>}
-                                    {row.m2_14x17 > 0 && <span className={cn("text-[8px] font-bold px-1.5 py-0.5 rounded", darkMode ? "bg-white/8 text-gray-300" : "bg-gray-100 text-gray-600")}>14x17</span>}
-                                  </div>
-                                </td>
-                                <td className="px-4 py-3 text-center">
-                                  <span className={cn("font-black text-sm", darkMode ? "text-red-400" : "text-red-600")}>{row.printers}</span>
-                                </td>
-                                <td className="px-4 py-3 text-center">
-                                  <div className="flex gap-1 justify-center flex-wrap">
-                                    {row.small_tray > 0 && <span className={cn("text-[8px] px-1.5 py-0.5 rounded font-bold", darkMode ? "bg-blue-500/15 text-blue-400" : "bg-blue-50 text-blue-600")}>S×{row.small_tray}</span>}
-                                    {row.large_tray > 0 && <span className={cn("text-[8px] px-1.5 py-0.5 rounded font-bold", darkMode ? "bg-purple-500/15 text-purple-400" : "bg-purple-50 text-purple-600")}>L×{row.large_tray}</span>}
-                                    {row.feeder > 0 && <span className={cn("text-[8px] px-1.5 py-0.5 rounded font-bold", darkMode ? "bg-amber-500/15 text-amber-400" : "bg-amber-50 text-amber-600")}>F×{row.feeder}</span>}
-                                  </div>
-                                </td>
-                                <td className="px-4 py-3 text-center">
-                                  {row.client ? (
-                                    <span className={cn("text-[8px] font-black px-2 py-0.5 rounded-full bg-red-500/15 text-red-400")}>Sin impresora</span>
-                                  ) : (
-                                    <span className={cn("text-[8px] font-black px-2 py-0.5 rounded-full", darkMode ? "bg-white/8 text-gray-600" : "bg-gray-100 text-gray-400")}>Sin registro</span>
-                                  )}
-                                </td>
-                                <td className={cn("px-4 py-3 text-center font-semibold text-[10px]", row.m2_2025 > row.total_m2 ? (darkMode ? "text-emerald-400" : "text-emerald-600") : (darkMode ? "text-gray-500" : "text-gray-400"))}>
-                                  {row.m2_2025 > 0 ? `${row.m2_2025.toFixed(1)}` : '—'}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* ── SECCIÓN 2: Instaladas ── */}
-                  {imager2024Tab === 'installed' && (
-                    <div className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
-                      <div className={cn("px-5 py-3 border-b", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
-                        <p className={cn("text-xs font-black", darkMode ? "text-white" : "text-gray-900")}>
-                          Clientes que calificaron y ya tienen impresora instalada
-                        </p>
-                        <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-500" : "text-gray-400")}>
-                          Comparando impresoras recomendadas vs instaladas actualmente.
-                        </p>
-                      </div>
-                      <div className="overflow-x-auto max-h-[500px] overflow-y-auto custom-scrollbar">
-                        <table className="w-full text-xs">
-                          <thead className={cn("text-[8px] font-bold uppercase tracking-wider sticky top-0", darkMode ? "text-gray-600 bg-[#16161A]" : "text-gray-400 bg-white")}>
-                            <tr className={cn("border-b", darkMode ? "border-white/6" : "border-gray-100")}>
-                              <th className="px-5 py-2.5 text-left">#</th>
-                              <th className="px-5 py-2.5 text-left">Cliente</th>
-                              <th className="px-4 py-2.5 text-right">m² 2024</th>
-                              <th className="px-4 py-2.5 text-center">Rec.</th>
-                              <th className="px-4 py-2.5 text-center">Actual</th>
-                              <th className="px-4 py-2.5 text-center">Diferencia</th>
-                              <th className="px-4 py-2.5 text-right">m² {new Date().getFullYear()} vs 2024</th>
-                            </tr>
-                          </thead>
-                          <tbody className={cn("divide-y", darkMode ? "divide-white/4" : "divide-gray-50")}>
-                            {pendingYes.map((row, i) => {
-                              const diff = row.currentPrinters - row.printers;
-                              const currentYear = new Date().getFullYear();
-                              const trend = row.total_m2 > 0 ? ((row.m2_2025 - row.total_m2) / row.total_m2 * 100) : 0;
-                              const isGrowing = row.m2_2025 > row.total_m2;
-                              const isEqual = Math.abs(trend) < 5;
-                              return (
-                                <tr key={i} className={cn("transition-colors cursor-pointer", darkMode ? "hover:bg-white/4" : "hover:bg-gray-50")}
-                                  onClick={() => row.client && setSelectedClient(row.client)}>
-                                  <td className={cn("px-5 py-3 font-black text-[10px]", darkMode ? "text-gray-700" : "text-gray-300")}>{i+1}</td>
-                                  <td className="px-5 py-3">
-                                    <p className={cn("font-semibold truncate max-w-[180px]", darkMode ? "text-gray-200" : "text-gray-800")}>{row.nombre}</p>
-                                    <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{row.client?.province || '—'}</p>
-                                  </td>
-                                  <td className={cn("px-4 py-3 text-right font-black", darkMode ? "text-cyan-400" : "text-cyan-600")}>{row.total_m2.toFixed(1)}</td>
-                                  <td className="px-4 py-3 text-center font-black text-amber-400">{row.printers}</td>
-                                  <td className="px-4 py-3 text-center font-black text-emerald-400">{row.currentPrinters}</td>
-                                  <td className="px-4 py-3 text-center">
-                                    <span className={cn("text-[9px] font-black px-2 py-0.5 rounded-full",
-                                      diff === 0 ? (darkMode ? "bg-emerald-500/15 text-emerald-400" : "bg-emerald-50 text-emerald-600") :
-                                      diff > 0 ? (darkMode ? "bg-cyan-500/15 text-cyan-400" : "bg-cyan-50 text-cyan-600") :
-                                      (darkMode ? "bg-red-500/15 text-red-400" : "bg-red-50 text-red-600")
-                                    )}>
-                                      {diff === 0 ? '✓ Exacto' : diff > 0 ? `+${diff} extra` : `${diff} faltan`}
-                                    </span>
-                                  </td>
-                                  {/* m² año actual vs 2024 — visual comparison */}
-                                  <td className="px-4 py-3">
-                                    {row.m2_2025 > 0 ? (
-                                      <div className="flex flex-col items-end gap-1 min-w-[120px]">
-                                        {/* Numbers */}
-                                        <div className="flex items-baseline gap-1.5">
-                                          <span className={cn("text-sm font-black",
-                                            isGrowing ? (darkMode ? "text-emerald-400" : "text-emerald-600") :
-                                            isEqual   ? (darkMode ? "text-gray-300"   : "text-gray-700") :
-                                                        (darkMode ? "text-red-400"     : "text-red-600")
-                                          )}>{row.m2_2025.toFixed(1)}</span>
-                                          <span className={cn("text-[8px] font-bold px-1.5 py-0.5 rounded-full",
-                                            isGrowing ? (darkMode ? "bg-emerald-500/15 text-emerald-400" : "bg-emerald-50 text-emerald-600") :
-                                            isEqual   ? (darkMode ? "bg-white/8 text-gray-500"           : "bg-gray-100 text-gray-500") :
-                                                        (darkMode ? "bg-red-500/15 text-red-400"          : "bg-red-50 text-red-600")
-                                          )}>
-                                            {isGrowing ? '▲' : isEqual ? '─' : '▼'} {Math.abs(trend).toFixed(0)}%
-                                          </span>
-                                        </div>
-                                        {/* Mini dual bar */}
-                                        <div className="flex items-center gap-1 w-full justify-end">
-                                          <span className={cn("text-[7px] font-bold", darkMode ? "text-gray-700" : "text-gray-300")}>2024</span>
-                                          <div className={cn("h-1 rounded-full overflow-hidden", darkMode ? "bg-white/8" : "bg-gray-200")} style={{width:'60px'}}>
-                                            <div className={cn("h-full rounded-full", darkMode ? "bg-white/20" : "bg-gray-300")}
-                                              style={{width:`${Math.min(100, (row.total_m2 / Math.max(row.total_m2, row.m2_2025)) * 100)}%`}} />
-                                          </div>
-                                          <div className={cn("h-1 rounded-full overflow-hidden", darkMode ? "bg-white/8" : "bg-gray-200")} style={{width:'60px'}}>
-                                            <div className={cn("h-full rounded-full", isGrowing ? "bg-emerald-500" : isEqual ? "bg-gray-400" : "bg-red-400")}
-                                              style={{width:`${Math.min(100, (row.m2_2025 / Math.max(row.total_m2, row.m2_2025)) * 100)}%`}} />
-                                          </div>
-                                          <span className={cn("text-[7px] font-bold", darkMode ? "text-gray-600" : "text-gray-400")}>{currentYear}</span>
-                                        </div>
-                                      </div>
-                                    ) : (
-                                      <span className={cn("text-[9px] text-right block", darkMode ? "text-gray-700" : "text-gray-300")}>Sin datos {currentYear}</span>
-                                    )}
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* ── SECCIÓN 3: Nuevas oportunidades ── */}
-                  {imager2024Tab === 'growth' && (
-                    <div className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
-                      <div className={cn("px-5 py-3 border-b", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
-                        <p className={cn("text-xs font-black", darkMode ? "text-white" : "text-gray-900")}>
-                          Clientes que no calificaban en 2024 pero han crecido en 2025
-                        </p>
-                        <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-500" : "text-gray-400")}>
-                          En 2024 no alcanzaban el umbral, pero su consumo en 2025 sugiere que ahora podrían justificar una impresora.
-                        </p>
-                      </div>
-                      <div className="overflow-x-auto max-h-[500px] overflow-y-auto custom-scrollbar">
-                        <table className="w-full text-xs">
-                          <thead className={cn("text-[8px] font-bold uppercase tracking-wider sticky top-0", darkMode ? "text-gray-600 bg-[#16161A]" : "text-gray-400 bg-white")}>
-                            <tr className={cn("border-b", darkMode ? "border-white/6" : "border-gray-100")}>
-                              <th className="px-5 py-2.5 text-left">#</th>
-                              <th className="px-5 py-2.5 text-left">Cliente</th>
-                              <th className="px-4 py-2.5 text-right">m² 2024</th>
-                              <th className="px-4 py-2.5 text-right">m² 2025</th>
-                              <th className="px-4 py-2.5 text-center">Crecimiento</th>
-                              <th className="px-4 py-2.5 text-center">Impresoras hoy</th>
-                            </tr>
-                          </thead>
-                          <tbody className={cn("divide-y", darkMode ? "divide-white/4" : "divide-gray-50")}>
-                            {growth.map((row, i) => {
-                              const pct = row.total_m2 > 0 ? ((row.m2_2025 - row.total_m2) / row.total_m2 * 100) : 0;
-                              return (
-                                <tr key={i} className={cn("transition-colors cursor-pointer", darkMode ? "hover:bg-white/4" : "hover:bg-gray-50")}
-                                  onClick={() => row.client && setSelectedClient(row.client)}>
-                                  <td className={cn("px-5 py-3 font-black text-[10px]", i<3 ? "text-amber-400" : (darkMode ? "text-gray-700" : "text-gray-300"))}>{i+1}</td>
-                                  <td className="px-5 py-3">
-                                    <p className={cn("font-semibold truncate max-w-[200px]", darkMode ? "text-gray-200" : "text-gray-800")}>{row.nombre}</p>
-                                    <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{row.client?.province || '—'} · {row.client?.salesperson || '—'}</p>
-                                  </td>
-                                  <td className={cn("px-4 py-3 text-right", darkMode ? "text-gray-500" : "text-gray-400")}>{row.total_m2.toFixed(1)}</td>
-                                  <td className={cn("px-4 py-3 text-right font-black", darkMode ? "text-amber-400" : "text-amber-600")}>{row.m2_2025.toFixed(1)}</td>
-                                  <td className="px-4 py-3 text-center">
-                                    <span className={cn("text-[9px] font-black px-2 py-0.5 rounded-full",
-                                      pct > 50 ? (darkMode ? "bg-emerald-500/15 text-emerald-400" : "bg-emerald-50 text-emerald-600") :
-                                      pct > 0  ? (darkMode ? "bg-amber-500/15 text-amber-400" : "bg-amber-50 text-amber-600") :
-                                      (darkMode ? "bg-red-500/15 text-red-400" : "bg-red-50 text-red-600")
-                                    )}>
-                                      {pct >= 0 ? '+' : ''}{pct.toFixed(0)}%
-                                    </span>
-                                  </td>
-                                  <td className="px-4 py-3 text-center">
-                                    {row.currentPrinters > 0
-                                      ? <span className={cn("text-[9px] font-black px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400")}>{row.currentPrinters} instalada{row.currentPrinters!==1?'s':''}</span>
-                                      : <span className={cn("text-[9px] font-black px-2 py-0.5 rounded-full bg-red-500/15 text-red-400")}>Sin impresora</span>
-                                    }
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                            {growth.length === 0 && (
-                              <tr><td colSpan={6} className={cn("px-5 py-10 text-center text-xs", darkMode ? "text-gray-600" : "text-gray-400")}>
-                                No hay clientes con crecimiento significativo identificado aún.
-                              </td></tr>
-                            )}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Existing growth potential section */}
-                  <div className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
-                    <div className={cn("px-6 py-4 border-b", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
-                      <h3 className={cn("text-[10px] font-bold uppercase tracking-wider flex items-center gap-2", darkMode ? "text-gray-400" : "text-gray-600")}>
-                        Clientes con Potencial de Crecimiento — tienen impresora pero compran menos de lo esperado
-                      </h3>
-                      <p className={cn("text-[9px] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>Benchmarck: ~2 cajas/impresora/mes. Oportunidad de captura = diferencia entre lo esperado y lo actual.</p>
-                    </div>
-                    <div className="overflow-x-auto max-h-[400px] overflow-y-auto custom-scrollbar">
-                      <table className="w-full text-left text-xs">
-                        <thead className={cn("text-[9px] font-bold uppercase tracking-wider sticky top-0", darkMode ? "text-gray-600 bg-[#16161A]" : "text-gray-400 bg-white")}>
-                          <tr>
-                            <th className="px-5 py-2.5">Cliente</th>
-                            <th className="px-5 py-2.5 text-center">Impresoras</th>
-                            <th className="px-5 py-2.5 text-center">m²/mes actual</th>
-                            <th className="px-5 py-2.5 text-center">m²/mes esperado</th>
-                            <th className="px-5 py-2.5 text-center">Captura %</th>
-                            <th className="px-5 py-2.5 text-center">Oportunidad</th>
-                            <th className="px-5 py-2.5 text-center">Acción</th>
-                          </tr>
-                        </thead>
-                        <tbody className={cn("divide-y", darkMode ? "divide-white/4" : "divide-gray-50")}>
-                          {growthPotentialClients.map((item: any, i: number) => (
-                            <tr key={i} className={cn("transition-colors", darkMode ? "hover:bg-white/3" : "hover:bg-gray-50/60")}>
-                              <td className="px-5 py-3">
-                                <p className="font-semibold truncate max-w-[200px]">{item.client.name}</p>
-                                <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{item.client.province} · {item.client.salesperson||'—'}</p>
-                              </td>
-                              <td className="px-5 py-3 text-center font-black">{item.printerCount}</td>
-                              <td className="px-5 py-3 text-center">
-                                <span className={cn("font-black", darkMode ? "text-cyan-400" : "text-cyan-600")}>
-                                  {(item.avgMonthly * (getM2PerBox((() => {
-                                    const cs = filteredConsumosForView.filter((r: ConsumptionRecord) => r.client_id === item.client.id);
-                                    const sd = {} as Record<string,number>;
-                                    cs.forEach((r: ConsumptionRecord) => { sd[r.size] = (sd[r.size]||0) + r.quantity; });
-                                    return Object.entries(sd).sort((a,b)=>b[1]-a[1])[0]?.[0] || '14x17';
-                                  })(), globalFilmFilter === 'DIHL' ? 'DIHL' : 'DIHT'))).toFixed(1)} m²
-                                </span>
-                                <span className={cn("text-[9px] block", darkMode ? "text-gray-600" : "text-gray-400")}>{item.avgMonthly} cj</span>
-                              </td>
-                              <td className="px-5 py-3 text-center">
-                                <span className={cn("font-semibold", darkMode ? "text-gray-400" : "text-gray-600")}>{(item.expectedMonthly * 9.03).toFixed(1)} m²</span>
-                                <span className={cn("text-[9px] block", darkMode ? "text-gray-600" : "text-gray-400")}>{item.expectedMonthly} cj</span>
-                              </td>
-                              <td className="px-5 py-3 text-center">
-                                <div className="flex items-center gap-2 justify-center">
-                                  <div className={cn("h-1.5 w-14 rounded-full overflow-hidden", darkMode ? "bg-white/8" : "bg-gray-200")}>
-                                    <div className="h-full rounded-full bg-amber-400" style={{ width: `${item.captureRate}%` }} />
-                                  </div>
-                                  <span className="font-black text-amber-400">{item.captureRate}%</span>
-                                </div>
-                              </td>
-                              <td className="px-5 py-3 text-center">
-                                <span className="font-black text-emerald-400">+{item.untappedBoxes.toFixed(1)} cj/mes</span>
-                              </td>
-                              <td className="px-5 py-3 text-center">
-                                <button onClick={() => { setSelectedClient(item.client); setView('clients'); }}
-                                  className="text-[9px] font-bold px-2.5 py-1 rounded-lg inline-flex items-center gap-1 bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 transition-colors">
-                                  <ArrowRight className="w-3 h-3" /> Visitar
-                                </button>
-                              </td>
-                            </tr>
-                          ))}
-                          {growthPotentialClients.length === 0 && (
-                            <tr><td colSpan={7} className={cn("px-5 py-10 text-center text-xs", darkMode ? "text-gray-600" : "text-gray-400")}>
-                              <Trophy className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                              No hay clientes con potencial de crecimiento identificado aún.
-                            </td></tr>
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-              );
-            })()}
 
             {/* ══ TAB: PROVINCES ══ */}
             {intelligenceTab === 'provinces' && (
@@ -13885,6 +14084,7 @@ ${rows.map(r=>{
         const displayList = topClientsLimit === 'all' ? allSorted : allSorted.slice(0, topClientsLimit);
         const maxM2 = allSorted[0]?.m2 || 1;
         const totalM2all = allSorted.reduce((s: number, c: any) => s + c.m2, 0);
+        const totalRevenueAll = displayList.reduce((s: number, c: any) => s + (c.revenue || 0), 0);
         const filmLabel = globalFilmFilter === 'all' ? 'Global' : globalFilmFilter === 'DIHT' ? 'DI-HT' : globalFilmFilter === 'DIHL' ? 'DI-HL' : 'DI-ML';
         const isCompact = topClientsLimit !== 'all'; // Top 5 / Top 10 → card layout; Todos → table
 
@@ -13912,6 +14112,7 @@ ${rows.map(r=>{
                       </p>
                       <p className={cn("text-[10px] mt-0.5", darkMode ? "text-gray-500" : "text-gray-400")}>
                         {displayList.length} de {allSorted.length} · {displayList.reduce((s:number,c:any)=>s+c.m2,0).toLocaleString('es-EC',{minimumFractionDigits:1,maximumFractionDigits:1})} m²
+                        {totalRevenueAll > 0 && <span className={cn("ml-2 font-bold", darkMode ? "text-emerald-400" : "text-emerald-600")}> · ${(totalRevenueAll/1000).toFixed(1)}k</span>}
                       </p>
                     </div>
                   </div>
@@ -13975,6 +14176,7 @@ ${rows.map(r=>{
                             </div>
                             <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>
                               {client.province} · {client.value} cj
+                              {client.revenue > 0 && <span className={cn("ml-2 font-bold", darkMode ? "text-emerald-400" : "text-emerald-600")}>${(client.revenue/1000).toFixed(1)}k</span>}
                             </p>
                           </div>
 
@@ -13999,6 +14201,7 @@ ${rows.map(r=>{
                         <th className="px-4 py-2.5 text-left">Vendedor</th>
                         <th className="px-4 py-2.5 text-right">Cajas</th>
                         <th className="px-4 py-2.5 text-right">m²</th>
+                        <th className="px-4 py-2.5 text-right">Venta $</th>
                         <th className="px-4 py-2.5 text-right">%</th>
                       </tr>
                     </thead>
@@ -14020,6 +14223,12 @@ ${rows.map(r=>{
                             <td className={cn("px-4 py-2.5 text-[10px]", darkMode ? "text-gray-500" : "text-gray-400")}>{client.salesperson}</td>
                             <td className={cn("px-4 py-2.5 text-right font-semibold", darkMode ? "text-gray-400" : "text-gray-600")}>{client.value}</td>
                             <td className={cn("px-4 py-2.5 text-right font-black", darkMode ? "text-cyan-400" : "text-cyan-600")}>{client.m2.toFixed(1)}</td>
+                            <td className={cn("px-4 py-2.5 text-right font-black", darkMode ? "text-emerald-400" : "text-emerald-600")}>
+                              {client.revenue > 0
+                                ? `$${client.revenue.toLocaleString('es-EC', {minimumFractionDigits:2,maximumFractionDigits:2})}`
+                                : <span className={cn(darkMode ? "text-gray-700" : "text-gray-300")}>Sin costo</span>
+                              }
+                            </td>
                             <td className={cn("px-4 py-2.5 text-right text-[10px] font-bold", darkMode ? "text-gray-600" : "text-gray-400")}>{pct}%</td>
                           </tr>
                         );
@@ -14463,6 +14672,99 @@ ${anulaciones.length > 0 ? `
           </div>
         );
       })()}
+
+      {/* ── IMAGER 2024 MANUAL MATCH MODAL ── */}
+      {imager2024MatchModal && (
+        <div className="fixed inset-0 z-[9996] flex items-center justify-center p-4" onClick={() => setImager2024MatchModal(null)}>
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+          <div className={cn("relative w-full max-w-lg rounded-2xl shadow-2xl border max-h-[85vh] flex flex-col",
+            darkMode ? "bg-[#16161A] border-white/12" : "bg-white border-gray-200"
+          )} onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div className={cn("px-5 py-4 border-b shrink-0", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className={cn("text-xs font-black", darkMode ? "text-white" : "text-gray-900")}>Asignar cliente manualmente</p>
+                  <p className={cn("text-[10px] mt-1 font-bold", darkMode ? "text-amber-400" : "text-amber-700")}>"{imager2024MatchModal.nombre}"</p>
+                  <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-500" : "text-gray-400")}>{imager2024MatchModal.total_m2.toFixed(1)} m² en 2024</p>
+                </div>
+                <button onClick={() => setImager2024MatchModal(null)}
+                  className={cn("p-1.5 rounded-lg", darkMode ? "hover:bg-white/8 text-gray-500" : "hover:bg-gray-100 text-gray-400")}>
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              {/* Search */}
+              <div className="relative mt-3">
+                <Search className={cn("absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5", darkMode ? "text-gray-500" : "text-gray-400")} />
+                <input
+                  autoFocus
+                  type="text"
+                  placeholder="Buscar cliente del sistema..."
+                  value={imager2024MatchSearch}
+                  onChange={e => setImager2024MatchSearch(e.target.value)}
+                  className={cn("w-full pl-9 pr-3 py-2 rounded-xl text-xs outline-none border focus:ring-2 focus:ring-amber-500/30",
+                    darkMode ? "bg-white/8 border-white/10 text-white placeholder:text-gray-600" : "bg-gray-50 border-gray-200 text-gray-800 placeholder:text-gray-400"
+                  )}
+                />
+              </div>
+            </div>
+            {/* Client list */}
+            <div className="overflow-y-auto custom-scrollbar flex-1">
+              {(() => {
+                const q = imager2024MatchSearch.toUpperCase().trim();
+                const filtered = q.length >= 2
+                  ? allClients.filter(c => c.name.toUpperCase().includes(q) || (c.ruc_id || '').includes(q))
+                  : allClients.slice(0, 30);
+                return (
+                  <div className={cn("divide-y", darkMode ? "divide-white/5" : "divide-gray-50")}>
+                    {filtered.map((c, i) => (
+                      <button key={i}
+                        className={cn("w-full px-5 py-3 text-left flex items-center gap-3 transition-colors",
+                          darkMode ? "hover:bg-white/5" : "hover:bg-gray-50"
+                        )}
+                        onClick={() => {
+                          setImager2024ManualMatch(prev => ({ ...prev, [imager2024MatchModal!.nombre]: c.id }));
+                          setImager2024MatchModal(null);
+                        }}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <p className={cn("text-xs font-semibold truncate", darkMode ? "text-gray-200" : "text-gray-800")}>{c.name}</p>
+                          <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>
+                            {c.province} · {c.salesperson || '—'}
+                            {c.ruc_id && <span className="ml-2 font-mono">{c.ruc_id}</span>}
+                          </p>
+                        </div>
+                        <ChevronRight className={cn("w-3.5 h-3.5 shrink-0", darkMode ? "text-gray-700" : "text-gray-300")} />
+                      </button>
+                    ))}
+                    {filtered.length === 0 && (
+                      <p className={cn("px-5 py-8 text-center text-xs", darkMode ? "text-gray-600" : "text-gray-400")}>No se encontraron clientes</p>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+            {/* Footer */}
+            <div className={cn("px-5 py-3 border-t shrink-0 flex items-center justify-between", darkMode ? "border-white/8" : "border-gray-100")}>
+              {imager2024ManualMatch[imager2024MatchModal.nombre] && (
+                <button
+                  onClick={() => {
+                    setImager2024ManualMatch(prev => { const n = {...prev}; delete n[imager2024MatchModal!.nombre]; return n; });
+                    setImager2024MatchModal(null);
+                  }}
+                  className={cn("text-[9px] font-bold px-3 py-1.5 rounded-lg", darkMode ? "bg-red-500/10 text-red-400 hover:bg-red-500/20" : "bg-red-50 text-red-600 hover:bg-red-100")}
+                >
+                  Quitar match manual
+                </button>
+              )}
+              <button onClick={() => setImager2024MatchModal(null)}
+                className={cn("ml-auto px-4 py-1.5 rounded-xl text-xs font-bold", darkMode ? "bg-white/5 text-gray-400 hover:bg-white/10" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}>
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── PROVINCE CLIENTS MODAL ── */}
       {provinceClientsModal && (() => {
@@ -15132,12 +15434,12 @@ ${sectionsHtml}
                             <span className={cn("text-[8px] font-bold px-2 py-0.5 rounded-full", darkMode ? "bg-white/8 text-gray-600" : "bg-gray-100 text-gray-400")}>{logs.length}</span>
                           </div>
                           {/* Events for this date */}
-                          {logs.map(log => {
+                          {logs.map((log, idx) => {
                             const d = new Date(log.timestamp);
                             const meta = ACTION_META[log.action] || { label: log.action, color: '#64748b', bg: 'bg-white/5', category: 'other' };
                             const hora = d.toLocaleTimeString('es-EC', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
                             return (
-                              <div key={log.id} onClick={() => setSelectedAuditLog(log)}
+                              <div key={`${log.id}-${idx}`} onClick={() => setSelectedAuditLog(log)}
                                 className={cn("px-5 py-3 flex items-start gap-3.5 border-b last:border-0 transition-colors cursor-pointer",
                                   darkMode ? "border-white/4 hover:bg-white/4" : "border-gray-50 hover:bg-gray-50"
                                 )}>
