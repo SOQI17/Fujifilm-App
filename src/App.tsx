@@ -1492,7 +1492,7 @@ function ImagerAnalysis2024View({
 
   const tabs = [
     { key: 'pending',   label: 'Pendientes de impresora',  count: pendingNo.length,  color: 'text-red-400',     bg: 'bg-red-500/15' },
-    { key: 'installed', label: 'Instaladas 2024',          count: pendingYes.length, color: 'text-emerald-400', bg: 'bg-emerald-500/15' },
+    { key: 'installed', label: 'Instaladas con impresora',          count: pendingYes.length, color: 'text-emerald-400', bg: 'bg-emerald-500/15' },
     { key: 'growth',    label: 'Nuevas oportunidades',     count: growth.length,     color: 'text-amber-400',   bg: 'bg-amber-500/15' },
   ] as const;
 
@@ -1502,8 +1502,8 @@ function ImagerAnalysis2024View({
       <div className={cn("rounded-xl border p-5", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <h3 className={cn("text-sm font-black", darkMode ? "text-white" : "text-gray-900")}>Análisis de Impresoras — Base 2024</h3>
-            <p className={cn("text-[10px] mt-1", darkMode ? "text-gray-500" : "text-gray-400")}>Cruce entre el consumo 2024 y el estado actual de instalaciones.</p>
+            <h3 className={cn("text-sm font-black", darkMode ? "text-white" : "text-gray-900")}>Análisis Imager</h3>
+            <p className={cn("text-[10px] mt-1", darkMode ? "text-gray-500" : "text-gray-400")}>Rentabilidad de instalaciones: ¿los clientes con impresora están consumiendo o se debe retirar el equipo?</p>
           </div>
           <div className="flex gap-3 flex-wrap">
             {[
@@ -1538,7 +1538,7 @@ function ImagerAnalysis2024View({
       {imager2024Tab === 'pending' && (
         <div className={cn("rounded-xl border overflow-hidden", darkMode?"bg-[#16161A] border-white/8":"bg-white border-gray-200/70 shadow-sm")}>
           <div className={cn("px-5 py-3 border-b", darkMode?"border-white/8 bg-white/3":"border-gray-100 bg-gray-50")}>
-            <p className={cn("text-xs font-black", darkMode?"text-white":"text-gray-900")}>Clientes que califican pero aún no tienen impresora</p>
+            <p className={cn("text-xs font-black", darkMode?"text-white":"text-gray-900")}>Clientes que califican para instalación pero aún no tienen impresora</p>
           </div>
           <div className="overflow-x-auto max-h-[500px] overflow-y-auto custom-scrollbar">
             <table className="w-full text-xs">
@@ -8834,10 +8834,10 @@ ${rows.map(r=>{
                 <div>
                   <h2 className="text-xl font-black tracking-tight flex items-center gap-2">
                     <Layers className="w-5 h-5 text-[#ED1C24]" />
-                    {imagerView === 'stock' ? 'Stock Imager' : 'Análisis Impresoras 2024'}
+                    {imagerView === 'stock' ? 'Stock Imager' : 'Análisis Imager'}
                   </h2>
                   <p className={cn("text-[10px] font-medium uppercase tracking-wider mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>
-                    {imagerView === 'stock' ? 'Equipos Fujifilm · Planificación · Cobertura · Proyección' : 'Cruce consumo 2024 vs instalaciones actuales'}
+                    {imagerView === 'stock' ? 'Equipos Fujifilm · Planificación · Cobertura · Proyección' : 'Rentabilidad de instalaciones · Consumo actual vs proyección 2024'}
                   </p>
                 </div>
                 {/* View toggle */}
@@ -8856,7 +8856,7 @@ ${rows.map(r=>{
                         ? (darkMode ? "bg-[#1A3A5C] text-white shadow-sm" : "bg-white text-[#1A3A5C] shadow-sm border border-blue-100")
                         : (darkMode ? "text-gray-500 hover:text-gray-300" : "text-gray-400 hover:text-gray-600")
                     )}>
-                    <BarChart3 className="w-3 h-3" /> Análisis 2024
+                    <BarChart3 className="w-3 h-3" /> Análisis Imager
                   </button>
                 </div>
               </div>
