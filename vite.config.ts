@@ -23,6 +23,10 @@ export default defineConfig(({ command, mode }) => {
           cleanupOutdatedCaches: true,
           clientsClaim: true,
           skipWaiting: true,
+
+          // Aumenta el límite para que Workbox pueda incluir el bundle principal.
+          // 5 MB = 5 * 1024 * 1024 bytes
+          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         },
 
         manifest: {
@@ -62,6 +66,16 @@ export default defineConfig(({ command, mode }) => {
 
     server: {
       hmr: process.env.DISABLE_HMR !== 'true',
+    },
+
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            vendor: ['react', 'react-dom'],
+          },
+        },
+      },
     },
   };
 });
