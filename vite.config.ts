@@ -4,11 +4,11 @@ import path from 'path';
 import { defineConfig, loadEnv } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
-export default defineConfig(({ command, mode }) => {
+export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
 
   return {
-    base: command === 'build' ? './' : '/',
+    base: '/',
 
     plugins: [
       react(),
@@ -16,6 +16,7 @@ export default defineConfig(({ command, mode }) => {
 
       VitePWA({
         registerType: 'autoUpdate',
+        injectRegister: 'auto',
 
         includeAssets: ['icon.svg'],
 
@@ -23,9 +24,6 @@ export default defineConfig(({ command, mode }) => {
           cleanupOutdatedCaches: true,
           clientsClaim: true,
           skipWaiting: true,
-
-          // Aumenta el límite para que Workbox pueda incluir el bundle principal.
-          // 5 MB = 5 * 1024 * 1024 bytes
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         },
 
@@ -35,7 +33,7 @@ export default defineConfig(({ command, mode }) => {
           description:
             'Sistema de gestión de inventario para películas radiográficas Fujifilm DI-HT.',
           theme_color: '#ED1C24',
-          background_color: '#121212',
+          background_color: '#ffffff',
           display: 'standalone',
           icons: [
             {
@@ -69,6 +67,7 @@ export default defineConfig(({ command, mode }) => {
     },
 
     build: {
+      sourcemap: false,
       rollupOptions: {
         output: {
           manualChunks: {
