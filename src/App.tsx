@@ -16,7 +16,7 @@ import { format, isAfter } from 'date-fns';
 import * as XLSX from 'xlsx';
 import { cn } from './lib/utils';
 import { db } from './firebase';
-import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from 'firebase/auth';
 import { 
   collection, 
   onSnapshot, 
@@ -2445,6 +2445,7 @@ function App() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [showPrinterStatsModal, setShowPrinterStatsModal] = useState(false);
   const [showNCReport, setShowNCReport] = useState(false);
+  const [showChangePassword, setShowChangePassword] = useState(false);
   const [ncReportStart, setNcReportStart] = useState('');
   const [ncReportEnd, setNcReportEnd] = useState('');
   const [dashboardView, setDashboardView] = useState<'ventas'|'compras'>('ventas');
@@ -5702,11 +5703,15 @@ ${rows.map(r=>{
           {/* Separador usuario */}
           <div className={`h-5 w-px mx-1 ${darkMode ? 'bg-white/10' : 'bg-gray-200'}`} />
 
-          {/* User chip */}
-          <div className={cn(
-            "flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-semibold",
-            darkMode ? "bg-white/5 border-white/8 text-gray-400" : "bg-gray-100 border-gray-200 text-gray-500"
-          )}>
+          {/* User chip — clic para cambiar contraseña */}
+          <button
+            onClick={() => setShowChangePassword(true)}
+            className={cn(
+              "flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all",
+              darkMode ? "bg-white/5 border-white/8 text-gray-400 hover:bg-white/10 hover:border-white/15" : "bg-gray-100 border-gray-200 text-gray-500 hover:bg-gray-200"
+            )}
+            title="Cambiar contraseña"
+          >
             <span className="max-w-[80px] truncate">{appUser?.nombre}</span>
             <span className={cn(
               "px-1.5 py-0.5 rounded-md text-[9px] font-bold",
@@ -5716,7 +5721,7 @@ ${rows.map(r=>{
               appUser?.role === 'gerencia' ? 'bg-amber-500/15 text-amber-500' :
               'bg-blue-500/15 text-blue-500'
             )}>{appUser?.role}</span>
-          </div>
+          </button>
           {/* Logout */}
           <button
             onClick={logout}
@@ -15707,6 +15712,190 @@ ${sectionsHtml}
         </div>
       )}
 
+      {/* ── Modal Cambiar Contraseña ── */}
+      {showChangePassword && (() => {
+        const auth = getAuth();
+        return (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4"
+            style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }}
+            onClick={(e) => { if (e.target === e.currentTarget) setShowChangePassword(false); }}
+          >
+            <div className={cn(
+              "w-full max-w-sm rounded-2xl border shadow-2xl overflow-hidden",
+              darkMode ? "bg-[#1A1A1E] border-white/10" : "bg-white border-gray-200"
+            )}>
+              {/* Header */}
+              <div className={cn("px-6 py-4 border-b flex items-center justify-between", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-[#ED1C24]/15 flex items-center justify-center">
+                    <Shield className="w-4 h-4 text-[#ED1C24]" />
+                  </div>
+                  <div>
+                    <p className={cn("text-sm font-black leading-none", darkMode ? "text-white" : "text-gray-900")}>Cambiar contraseña</p>
+                    <p className={cn("text-[10px] mt-0.5", darkMode ? "text-gray-500" : "text-gray-400")}>{appUser?.email}</p>
+                  </div>
+                </div>
+                <button onClick={() => setShowChangePassword(false)}
+                  className={cn("p-1.5 rounded-lg transition-colors", darkMode ? "hover:bg-white/8 text-gray-500" : "hover:bg-gray-100 text-gray-400")}>
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Form */}
+              <ChangePasswordForm
+                darkMode={darkMode}
+                email={appUser?.email || ''}
+                onClose={() => setShowChangePassword(false)}
+                showToast={showToast}
+              />
+            </div>
+          </div>
+        );
+      })()}
+
+    </div>
+  );
+}
+
+// ── Change Password Form component ────────────────────────────────────────────
+function ChangePasswordForm({ darkMode, email, onClose, showToast }: {
+  darkMode: boolean; email: string;
+  onClose: () => void; showToast: (msg: string, type?: any) => void;
+}) {
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword]         = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showCurrent, setShowCurrent]         = useState(false);
+  const [showNew, setShowNew]                 = useState(false);
+  const [showConfirm, setShowConfirm]         = useState(false);
+  const [loading, setLoading]                 = useState(false);
+
+  const strength = (() => {
+    if (newPassword.length === 0) return 0;
+    let s = 0;
+    if (newPassword.length >= 8)          s++;
+    if (/[A-Z]/.test(newPassword))        s++;
+    if (/[0-9]/.test(newPassword))        s++;
+    if (/[^A-Za-z0-9]/.test(newPassword)) s++;
+    return s;
+  })();
+  const strengthLabel = ['', 'Débil', 'Regular', 'Buena', 'Fuerte'][strength];
+  const strengthColor = ['', 'bg-red-500', 'bg-amber-500', 'bg-blue-500', 'bg-emerald-500'][strength];
+
+  const handleSubmit = async () => {
+    if (!currentPassword) { showToast('Ingresa tu contraseña actual', 'warning'); return; }
+    if (newPassword.length < 8) { showToast('La nueva contraseña debe tener al menos 8 caracteres', 'warning'); return; }
+    if (newPassword !== confirmPassword) { showToast('Las contraseñas no coinciden', 'error'); return; }
+    setLoading(true);
+    try {
+      const auth = getAuth();
+      const user = auth.currentUser;
+      if (!user || !user.email) throw new Error('No hay sesión activa');
+      const credential = EmailAuthProvider.credential(user.email, currentPassword);
+      await reauthenticateWithCredential(user, credential);
+      await updatePassword(user, newPassword);
+      showToast('Contraseña actualizada correctamente', 'success');
+      onClose();
+    } catch (err: any) {
+      if (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+        showToast('La contraseña actual es incorrecta', 'error');
+      } else if (err.code === 'auth/weak-password') {
+        showToast('La contraseña es demasiado débil', 'error');
+      } else {
+        showToast('Error al cambiar la contraseña', 'error');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const inputCls = cn(
+    "w-full px-3 py-2.5 rounded-xl text-sm border outline-none transition-all pr-10",
+    darkMode
+      ? "bg-white/5 border-white/10 text-white placeholder-gray-600 focus:border-[#ED1C24]/50 focus:bg-white/8"
+      : "bg-gray-50 border-gray-200 text-gray-900 placeholder-gray-400 focus:border-[#ED1C24]/50 focus:bg-white"
+  );
+
+  return (
+    <div className="p-6 space-y-4">
+      {/* Contraseña actual */}
+      <div>
+        <label className={cn("block text-[10px] font-bold uppercase tracking-wider mb-1.5", darkMode ? "text-gray-500" : "text-gray-400")}>
+          Contraseña actual
+        </label>
+        <div className="relative">
+          <input type={showCurrent ? 'text' : 'password'} value={currentPassword}
+            onChange={e => setCurrentPassword(e.target.value)} placeholder="••••••••"
+            className={inputCls} />
+          <button type="button" onClick={() => setShowCurrent(p => !p)}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-300">
+            <Eye className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* Nueva contraseña */}
+      <div>
+        <label className={cn("block text-[10px] font-bold uppercase tracking-wider mb-1.5", darkMode ? "text-gray-500" : "text-gray-400")}>
+          Nueva contraseña
+        </label>
+        <div className="relative">
+          <input type={showNew ? 'text' : 'password'} value={newPassword}
+            onChange={e => setNewPassword(e.target.value)} placeholder="Mínimo 8 caracteres"
+            className={inputCls} />
+          <button type="button" onClick={() => setShowNew(p => !p)}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-300">
+            <Eye className="w-4 h-4" />
+          </button>
+        </div>
+        {/* Barra de fortaleza */}
+        {newPassword.length > 0 && (
+          <div className="mt-2">
+            <div className="flex gap-1 mb-1">
+              {[1,2,3,4].map(i => (
+                <div key={i} className={cn("h-1 flex-1 rounded-full transition-all", i <= strength ? strengthColor : (darkMode ? 'bg-white/10' : 'bg-gray-200'))} />
+              ))}
+            </div>
+            <p className={cn("text-[9px] font-bold", strength === 1 ? 'text-red-400' : strength === 2 ? 'text-amber-400' : strength === 3 ? 'text-blue-400' : 'text-emerald-400')}>
+              {strengthLabel}
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Confirmar contraseña */}
+      <div>
+        <label className={cn("block text-[10px] font-bold uppercase tracking-wider mb-1.5", darkMode ? "text-gray-500" : "text-gray-400")}>
+          Confirmar nueva contraseña
+        </label>
+        <div className="relative">
+          <input type={showConfirm ? 'text' : 'password'} value={confirmPassword}
+            onChange={e => setConfirmPassword(e.target.value)} placeholder="Repite la nueva contraseña"
+            className={cn(inputCls, confirmPassword && newPassword && confirmPassword !== newPassword ? 'border-red-500/50' : '')}
+            onKeyDown={e => e.key === 'Enter' && handleSubmit()}
+          />
+          <button type="button" onClick={() => setShowConfirm(p => !p)}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-300">
+            <Eye className="w-4 h-4" />
+          </button>
+        </div>
+        {confirmPassword && newPassword && confirmPassword !== newPassword && (
+          <p className="text-[9px] text-red-400 font-bold mt-1">Las contraseñas no coinciden</p>
+        )}
+      </div>
+
+      {/* Acciones */}
+      <div className="flex gap-2 pt-2">
+        <button onClick={onClose}
+          className={cn("flex-1 py-2.5 rounded-xl text-xs font-bold border transition-all",
+            darkMode ? "border-white/10 text-gray-400 hover:bg-white/5" : "border-gray-200 text-gray-500 hover:bg-gray-50")}>
+          Cancelar
+        </button>
+        <button onClick={handleSubmit} disabled={loading}
+          className="flex-1 py-2.5 rounded-xl text-xs font-bold bg-[#ED1C24] text-white hover:bg-[#D11920] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-md shadow-red-500/20">
+          {loading ? <><div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Actualizando...</> : 'Actualizar contraseña'}
+        </button>
+      </div>
     </div>
   );
 }
