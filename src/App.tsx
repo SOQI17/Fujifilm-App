@@ -462,7 +462,7 @@ function LoginPage({ darkMode }: { darkMode: boolean }) {
             </div>
             <div className="text-center">
               <h1 className="text-base font-black tracking-tight">Recuperar contraseña</h1>
-              <p className={cn("text-[9px] font-semibold uppercase tracking-[0.15em] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>Orimec · Sistema de Gestión</p>
+              <p className={cn("text-[9px] font-semibold uppercase tracking-[0.15em] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>Sistema de Gestión</p>
             </div>
           </div>
 
@@ -516,8 +516,8 @@ function LoginPage({ darkMode }: { darkMode: boolean }) {
             <Package className="text-white w-6 h-6" />
           </div>
           <div className="text-center">
-            <h1 className="text-base font-black tracking-tight">FUJIFILM <span className="text-[#ED1C24]">DI-HT · DI-HL</span></h1>
-            <p className={cn("text-[9px] font-semibold uppercase tracking-[0.15em] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>Orimec · Sistema de Gestión</p>
+            <h1 className="text-base font-black tracking-tight">Orimec <span className="text-[#ED1C24]">Field Analytics</span></h1>
+            <p className={cn("text-[9px] font-semibold uppercase tracking-[0.15em] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>Sistema de Gestión</p>
           </div>
         </div>
         <div className="flex flex-col gap-3">
@@ -1502,8 +1502,8 @@ function ImagerAnalysis2024View({
       <div className={cn("rounded-xl border p-5", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <h3 className={cn("text-sm font-black", darkMode ? "text-white" : "text-gray-900")}>Análisis Imager</h3>
-            <p className={cn("text-[10px] mt-1", darkMode ? "text-gray-500" : "text-gray-400")}>Rentabilidad de instalaciones: ¿los clientes con impresora están consumiendo o se debe retirar el equipo?</p>
+            <h3 className={cn("text-sm font-black", darkMode ? "text-white" : "text-gray-900")}>Orimec Field Analytics</h3>
+            <p className={cn("text-[10px] mt-1", darkMode ? "text-gray-500" : "text-gray-400")}>Seguimiento de equipos Fujifilm instalados · Consumo actual vs proyección 2024</p>
           </div>
           <div className="flex gap-3 flex-wrap">
             {[
@@ -1942,6 +1942,10 @@ function App() {
   useEffect(() => {
     localStorage.setItem('orimec_theme', darkMode ? 'dark' : 'light');
   }, [darkMode]);
+
+  useEffect(() => {
+    document.title = 'Orimec Field Analytics';
+  }, []);
 
   useEffect(() => {
     const handleWheel = (e: WheelEvent) => {
@@ -3658,7 +3662,7 @@ function App() {
   </div>` : ''}
 
   <div class="footer">
-    <span>Orimec · Sistema de Gestión Fujifilm · Documento generado automáticamente</span>
+    <span>Sistema de Gestión Fujifilm · Documento generado automáticamente</span>
     <span>${selectedClient.name} · ${format(now, 'dd/MM/yyyy HH:mm')}</span>
   </div>
 </body>
@@ -3808,7 +3812,7 @@ ${rows.map(r=>{
 </tr>`;}).join('')}
 </tbody></table>
 <div class="footer">
-  <span>Orimec · Sistema de Gestión Fujifilm · Documento generado automáticamente</span>
+  <span>Sistema de Gestión Fujifilm · Documento generado automáticamente</span>
   <span>Período: ${PERIOD_LABELS[projectionPeriod]} · ${includeTransit?'Stock bodega + tránsito':'Solo stock en bodega'}</span>
 </div>
 </body></html>`;
@@ -5526,12 +5530,12 @@ ${rows.map(r=>{
             {/* Wordmark — only show on wider screens */}
             <div className="hidden lg:block">
               <h1 className="text-base font-black tracking-tight leading-none">
-                FUJIFILM <span className="text-[#ED1C24]">DI-HT · DI-HL</span>
+                Orimec <span className="text-[#ED1C24]">Field Analytics</span>
               </h1>
               <p className={cn(
                 "text-[9px] font-semibold uppercase tracking-[0.15em] mt-0.5",
                 darkMode ? "text-gray-600" : "text-gray-400"
-              )}>Orimec · Sistema de Gestión</p>
+              )}>Sistema de Gestión</p>
             </div>
           </div>
 
@@ -8834,10 +8838,10 @@ ${rows.map(r=>{
                 <div>
                   <h2 className="text-xl font-black tracking-tight flex items-center gap-2">
                     <Layers className="w-5 h-5 text-[#ED1C24]" />
-                    {imagerView === 'stock' ? 'Stock Imager' : 'Análisis Imager'}
+                    {imagerView === 'stock' ? 'Stock Imager' : 'Orimec Field Analytics'}
                   </h2>
                   <p className={cn("text-[10px] font-medium uppercase tracking-wider mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>
-                    {imagerView === 'stock' ? 'Equipos Fujifilm · Planificación · Cobertura · Proyección' : 'Rentabilidad de instalaciones · Consumo actual vs proyección 2024'}
+                    {imagerView === 'stock' ? 'Equipos Fujifilm · Planificación · Cobertura · Proyección' : 'Equipos Fujifilm instalados · Consumo actual vs proyección 2024'}
                   </p>
                 </div>
                 {/* View toggle */}
@@ -8856,7 +8860,7 @@ ${rows.map(r=>{
                         ? (darkMode ? "bg-[#1A3A5C] text-white shadow-sm" : "bg-white text-[#1A3A5C] shadow-sm border border-blue-100")
                         : (darkMode ? "text-gray-500 hover:text-gray-300" : "text-gray-400 hover:text-gray-600")
                     )}>
-                    <BarChart3 className="w-3 h-3" /> Análisis Imager
+                    <BarChart3 className="w-3 h-3" /> Orimec Field Analytics
                   </button>
                 </div>
               </div>
@@ -15313,7 +15317,7 @@ tbody td{padding:4px 7px;border-bottom:1px solid #f1f5f9;vertical-align:middle;}
 </div>
 ${sectionsHtml}
 <div class="footer">
-  <span>Orimec · Sistema de Gestión Fujifilm · Documento confidencial</span>
+  <span>Sistema de Gestión Fujifilm · Documento confidencial</span>
   <span>${auditLogs.length} eventos · ${format(now,'dd/MM/yyyy')}</span>
 </div>
 </body></html>`;
