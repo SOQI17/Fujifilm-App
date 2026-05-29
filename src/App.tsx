@@ -939,6 +939,7 @@ interface ConsumptionRecord {
   batch_number: string;
   expiry_date: string;
   unit_cost?: number;
+  sale_price?: number;   // precio de venta al cliente (columna PRECIO del CSV)
   film_type?: 'DIHT' | 'DIHL' | string;
   is_return?: boolean;
   adapted_to?: string;
@@ -2788,6 +2789,23 @@ function App() {
   // Normalize invoice numbers for comparison — strips leading zeros so "001001000071109" === "1001001000071109" === "71109"
   const normInvoice = (s: string) => (s || '').replace(/^0+/, '').trim();
 
+    // ── Duplicate detection: invoice match OR (date + size + qty + client) ───
+    const isExistingRecord = (tempRec: any, clientId: number): boolean => {
+      return allConsumos.some(r => {
+        // Primary: invoice number match (when both have invoice)
+        if (r.invoice_number && tempRec.invoice_number) {
+          const invMatch = normInvoice(r.invoice_number) === normInvoice(tempRec.invoice_number);
+          if (invMatch && r.size === tempRec.size && Math.abs(r.quantity) === Math.abs(tempRec.quantity)) return true;
+        }
+        // Secondary: date + client + size + quantity (catches invoice format mismatches)
+        if (clientId > 0 && r.client_id === clientId &&
+            r.order_date === tempRec.order_date &&
+            r.size === tempRec.size &&
+            Math.abs(r.quantity) === Math.abs(tempRec.quantity)) return true;
+        return false;
+      });
+    };
+
   // Fix scientific notation numbers (e.g. "1,001E+12" → "001001000071772")
   const fixInvoiceNumber = (raw: string): string => {
     if (!raw) return '';
@@ -2992,6 +3010,15 @@ function App() {
       batch_number: get(['lote', 'batch', 'batch_number', 'n° lote', 'nro lote']) || '',
       expiry_date: expiryDate,
       unit_cost: finalCost ?? null,
+      sale_price: (() => {
+        const rawSP = get(['precio', 'price', 'precio unitario', 'precio venta', 'pvp']);
+        if (!rawSP) return null;
+        let csp = rawSP.replace(/\s/g, '');
+        if (/\d\.\d{3},\d{2}/.test(csp)) csp = csp.replace(/\./g, '').replace(',', '.');
+        else csp = csp.replace(',', '.');
+        const vsp = parseFloat(csp);
+        return (!isNaN(vsp) && vsp > 0) ? Math.abs(vsp) : null;
+      })(),
       film_type: filmType || 'DIHT',
       is_return: isReturn || false,
     };
@@ -3030,8 +3057,22 @@ function App() {
       try {
       // Strip BOM if present
       const clean = text.replace(/^\uFEFF/, '');
-      const rows = parseCSV(clean);
-      if (!rows.length) { setCsvImportError('El archivo no tiene filas válidas o el separador no fue reconocido. Columnas detectadas: ' + (Object.keys(rows[0] ?? {}).join(', ') || 'ninguna')); setCsvImportStatus('error'); return; }
+      const allRows = parseCSV(clean);
+      if (!allRows.length) { setCsvImportError('El archivo no tiene filas válidas o el separador no fue reconocido. Columnas detectadas: ' + (Object.keys(allRows[0] ?? {}).join(', ') || 'ninguna')); setCsvImportStatus('error'); return; }
+
+      // ── Filtrar solo filas de PELICULAS si existe la columna CATEGORIA ──────
+      const hasCategoriaCol = allRows.length > 0 && Object.keys(allRows[0]).some(k => k.trim().toUpperCase() === 'CATEGORIA');
+      const rows = hasCategoriaCol
+        ? allRows.filter(row => {
+            const cat = Object.entries(row).find(([k]) => k.trim().toUpperCase() === 'CATEGORIA')?.[1] || '';
+            return String(cat).trim().toUpperCase() === 'PELICULAS';
+          })
+        : allRows;
+      if (hasCategoriaCol && rows.length === 0) {
+        setCsvImportError(`El archivo tiene la columna CATEGORIA pero ninguna fila contiene "PELICULAS". Categorías encontradas: ${[...new Set(allRows.map(r => Object.entries(r).find(([k]) => k.trim().toUpperCase() === 'CATEGORIA')?.[1] || '').filter(Boolean))].join(', ')}`);
+        setCsvImportStatus('error');
+        return;
+      }
       setCsvPreviewRows(rows.slice(0, 5));
 
       const matched: { row: any; clientName: string }[] = [];
@@ -3053,18 +3094,17 @@ function App() {
           const clientName = resolvedCodes.get(normCode)!;
           const client = allClients.find(c => c.name === clientName)!;
           const tempRecord = mapRowToRecord(row, client.id, 0);
-          const existingRec = allConsumos.find(r =>
-            r.client_id === client.id &&
-            r.invoice_number && tempRecord.invoice_number &&
-            normInvoice(r.invoice_number) === normInvoice(tempRecord.invoice_number) &&
-            r.size === tempRecord.size &&
-            r.quantity === tempRecord.quantity
-          );
-          const isDup = !!existingRec;
+          const isDup = isExistingRecord(tempRecord, client.id);
           if (isDup) {
             // If existing record lacks film_type but new import has it → queue for update
-            if (tempRecord.film_type && !existingRec!.film_type) {
-              matched.push({ row, clientName, _updateId: existingRec!.id } as any);
+            const existingRec = allConsumos.find(r =>
+              r.client_id === client.id &&
+              r.order_date === tempRecord.order_date &&
+              r.size === tempRecord.size &&
+              Math.abs(r.quantity) === Math.abs(tempRecord.quantity)
+            );
+            if (tempRecord.film_type && existingRec && !existingRec.film_type) {
+              matched.push({ row, clientName, _updateId: existingRec.id } as any);
             } else {
               duplicates.push({ row, clientName });
             }
@@ -3096,17 +3136,16 @@ function App() {
         if (normCode) resolvedCodes.set(normCode, client.name);
 
         const tempRecord2 = mapRowToRecord(row, client.id, 0);
-        const existingRec2 = allConsumos.find(r =>
-          r.client_id === client.id &&
-          r.invoice_number && tempRecord2.invoice_number &&
-          normInvoice(r.invoice_number) === normInvoice(tempRecord2.invoice_number) &&
-          r.size === tempRecord2.size &&
-          r.quantity === tempRecord2.quantity
-        );
-        const isDup2 = !!existingRec2;
+        const isDup2 = isExistingRecord(tempRecord2, client.id);
         if (isDup2) {
-          if (tempRecord2.film_type && !existingRec2!.film_type) {
-            matched.push({ row, clientName: client.name, _updateId: existingRec2!.id } as any);
+          const existingRec2 = allConsumos.find(r =>
+            r.client_id === client.id &&
+            r.order_date === tempRecord2.order_date &&
+            r.size === tempRecord2.size &&
+            Math.abs(r.quantity) === Math.abs(tempRecord2.quantity)
+          );
+          if (tempRecord2.film_type && existingRec2 && !existingRec2.film_type) {
+            matched.push({ row, clientName: client.name, _updateId: existingRec2.id } as any);
           } else {
             duplicates.push({ row, clientName: client.name });
           }
@@ -3127,13 +3166,8 @@ function App() {
         const trueDuplicates: any[] = [];
         duplicates.forEach(item => {
           const temp = mapRowToRecord(item.row, 0, 0);
-          const existing = allConsumos.find(r =>
-            r.invoice_number && temp.invoice_number &&
-            normInvoice(r.invoice_number) === normInvoice(temp.invoice_number) &&
-            r.size === temp.size &&
-            r.quantity === temp.quantity
-          );
-          if (existing && existing.film_type !== 'DIHL') {
+          const existingForRescue = allConsumos.find(r => r.invoice_number && temp.invoice_number && normInvoice(r.invoice_number) === normInvoice(temp.invoice_number) && r.size === temp.size && Math.abs(r.quantity) === Math.abs(temp.quantity));
+          if (existingForRescue && existingForRescue.film_type !== 'DIHL') {
             // Was incorrectly classified as duplicate — it's a DIHT to replace
             rescuedFromDuplicates.push({ row: item.row, clientName: item.clientName, _replaceId: existing.id });
           } else {
@@ -3146,13 +3180,8 @@ function App() {
         const stillNew: any[] = [];
         toCreate.forEach(item => {
           const temp = mapRowToRecord(item.row, 0, 0);
-          const existing = allConsumos.find(r =>
-            r.invoice_number && temp.invoice_number &&
-            normInvoice(r.invoice_number) === normInvoice(temp.invoice_number) &&
-            r.size === temp.size &&
-            r.quantity === temp.quantity
-          );
-          if (existing && existing.film_type === 'DIHL') {
+          const existingForNew = allConsumos.find(r => r.invoice_number && temp.invoice_number && normInvoice(r.invoice_number) === normInvoice(temp.invoice_number) && r.size === temp.size && Math.abs(r.quantity) === Math.abs(temp.quantity));
+          if (existingForNew && existingForNew.film_type === 'DIHL') {
             trueDuplicates.push({ row: item.row, clientName: item.clientName });
           } else if (existing && existing.film_type !== 'DIHL') {
             reMatched.push({ row: item.row, clientName: item.clientName, _replaceId: existing.id });
@@ -3166,13 +3195,13 @@ function App() {
         matched.forEach(item => {
           if ((item as any)._updateId) { finalMatched.push(item); return; }
           const temp = mapRowToRecord(item.row, 0, 0);
-          const existing = allConsumos.find(r =>
+          const existingFinal = allConsumos.find(r =>
             r.invoice_number && temp.invoice_number &&
             normInvoice(r.invoice_number) === normInvoice(temp.invoice_number) &&
             r.size === temp.size &&
-            r.quantity === temp.quantity
+            Math.abs(r.quantity) === Math.abs(temp.quantity)
           );
-          if (existing && existing.film_type === 'DIHL') {
+          if (existingFinal && existingFinal.film_type === 'DIHL') {
             trueDuplicates.push({ row: item.row, clientName: item.clientName });
           } else if (existing && existing.film_type !== 'DIHL') {
             finalMatched.push({ ...item, _replaceId: existing.id });
@@ -3496,7 +3525,8 @@ function App() {
 
     const totalM2 = parseFloat(consumos.reduce((s, r) => s + getTotalM2(effectiveQty(r), r.size, r.film_type), 0).toFixed(2));
     const totalCajas = consumos.reduce((s, r) => s + effectiveQty(r), 0);
-    const totalRevenue = consumos.reduce((s, r) => s + (r.unit_cost ? r.unit_cost * r.quantity : 0), 0);
+    const totalRevenue = consumos.reduce((s, r) => s + (((r as any).sale_price || r.unit_cost || 0) * r.quantity), 0);
+    const totalCostClient = consumos.reduce((s, r) => s + (r.unit_cost ? r.unit_cost * r.quantity : 0), 0);
     const altName = altNames[selectedClient.id] || '';
 
     const MONTH_NAMES_ES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
@@ -4292,7 +4322,9 @@ ${rows.map(r=>{
     }
 
     const totalConsumption = filteredConsumos.reduce((acc, curr) => acc + effectiveQty(curr), 0);
-    const totalRevenue = filteredConsumos.reduce((acc, curr) => acc + (effectiveQty(curr) * (curr.unit_cost || 0)), 0);
+    const totalRevenue = filteredConsumos.reduce((acc, curr) => acc + (effectiveQty(curr) * ((curr as any).sale_price || curr.unit_cost || 0)), 0);
+    const totalCost = filteredConsumos.reduce((acc, curr) => acc + (effectiveQty(curr) * (curr.unit_cost || 0)), 0);
+    const totalUtility = totalRevenue - totalCost;
     // Clients with activity in the filtered period
     // Note: film filter excluded — client count always based on dates only
     const dateFilteredConsumos = allConsumos.filter(r => {
@@ -4345,7 +4377,7 @@ ${rows.map(r=>{
       }
       salespersonDist[salesperson].quantity += qty;
       salespersonDist[salesperson].m2 = parseFloat((salespersonDist[salesperson].m2 + m2).toFixed(2));
-      salespersonDist[salesperson].revenue += qty * (r.unit_cost || 0);
+      salespersonDist[salesperson].revenue += qty * ((r as any).sale_price || r.unit_cost || 0);
     });
 
     const allClientsSorted = Object.entries(clientDistM2)
@@ -4392,6 +4424,8 @@ ${rows.map(r=>{
     return {
       totalConsumption,
       totalRevenue,
+      totalCost,
+      totalUtility,
       totalClients,
       totalM2,
       topClients,
@@ -6527,7 +6561,8 @@ ${rows.map(r=>{
                             <th className="px-6 py-3 text-center whitespace-nowrap">Cajas</th>
                             <th className="px-6 py-3 text-center whitespace-nowrap">m²</th>
                             <th className="px-6 py-3 text-right whitespace-nowrap">Costo Unit.</th>
-                            <th className="px-6 py-3 text-right whitespace-nowrap">Costo Total</th>
+                            <th className="px-6 py-3 text-right whitespace-nowrap">Precio Venta</th>
+                            <th className="px-6 py-3 text-right whitespace-nowrap">Total Venta</th>
                             <th className="px-6 py-3 whitespace-nowrap">Lote</th>
                             <th className="px-6 py-3 text-right whitespace-nowrap">Acciones</th>
                           </tr>
@@ -6594,8 +6629,13 @@ ${rows.map(r=>{
                               <td className={cn("px-6 py-3.5 text-right font-mono text-xs whitespace-nowrap", record.is_return ? "text-amber-400" : (darkMode ? "text-gray-500" : "text-gray-400"))}>
                                 {record.unit_cost ? `${record.is_return ? '-' : ''}$${Math.abs(record.unit_cost).toFixed(2)}` : '—'}
                               </td>
+                              <td className={cn("px-6 py-3.5 text-right font-mono text-xs whitespace-nowrap", (record as any).sale_price ? (darkMode ? "text-emerald-400" : "text-emerald-600") : (darkMode ? "text-gray-700" : "text-gray-300"))}>
+                                {(record as any).sale_price ? `$${((record as any).sale_price as number).toFixed(2)}` : '—'}
+                              </td>
                               <td className={cn("px-6 py-3.5 text-right font-bold text-sm whitespace-nowrap", record.is_return ? "text-amber-400" : "text-[#ED1C24]")}>
-                                {record.unit_cost ? `${record.is_return ? '-' : ''}$${(record.quantity * Math.abs(record.unit_cost)).toFixed(2)}` : '—'}
+                                {(record as any).sale_price
+                                  ? `${record.is_return ? '-' : ''}$${(record.quantity * Math.abs((record as any).sale_price as number)).toFixed(2)}`
+                                  : record.unit_cost ? `${record.is_return ? '-' : ''}$${(record.quantity * Math.abs(record.unit_cost)).toFixed(2)}` : '—'}
                               </td>
                               <td className={cn("px-6 py-3.5 text-xs font-mono whitespace-nowrap", darkMode ? "text-gray-600" : "text-gray-400")}>#{record.batch_number}</td>
                               <td className="px-6 py-3.5 text-right whitespace-nowrap">
@@ -6899,12 +6939,17 @@ ${rows.map(r=>{
                 "p-5 rounded-xl border transition-colors duration-300",
                 darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
               )}>
-                <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-2", darkMode ? "text-gray-600" : "text-gray-400")}>Ingresos Totales</p>
-                <p className="text-3xl font-black leading-none text-emerald-500">${globalMetrics.totalRevenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-                <p className={cn("text-[10px] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>USD facturado</p>
-                {globalMetrics.totalM2 > 0 && (
+                <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-2", darkMode ? "text-gray-600" : "text-gray-400")}>Ingresos (Venta)</p>
+                <p className="text-3xl font-black leading-none text-emerald-500">${(globalMetrics as any).totalRevenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                <p className={cn("text-[10px] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>USD precio de venta al cliente</p>
+                {(globalMetrics as any).totalM2 > 0 && (
                   <p className={cn("text-[9px] mt-0.5 font-semibold", darkMode ? "text-gray-500" : "text-gray-400")}>
-                    ${(globalMetrics.totalRevenue / globalMetrics.totalM2).toFixed(2)}/m²
+                    ${((globalMetrics as any).totalRevenue / (globalMetrics as any).totalM2).toFixed(2)}/m²
+                  </p>
+                )}
+                {(globalMetrics as any).totalCost > 0 && (
+                  <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>
+                    Costo: ${(globalMetrics as any).totalCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </p>
                 )}
               </div>
@@ -6925,11 +6970,23 @@ ${rows.map(r=>{
               </div>
               <div className={cn(
                 "p-5 rounded-xl border transition-colors duration-300",
-                darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
+                (globalMetrics as any).totalUtility > 0
+                  ? (darkMode ? "bg-emerald-500/8 border-emerald-500/20" : "bg-emerald-50 border-emerald-200 shadow-sm")
+                  : (darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")
               )}>
-                <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-2", darkMode ? "text-gray-600" : "text-gray-400")}>Última Actualización</p>
-                <p className={cn("text-xl font-black leading-none uppercase", darkMode ? "text-white" : "text-gray-900")}>{format(new Date(), 'dd MMM yyyy')}</p>
-                <p className={cn("text-[10px] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>datos en tiempo real</p>
+                <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-2", darkMode ? "text-gray-600" : "text-gray-400")}>Utilidad Bruta</p>
+                <p className={cn("text-3xl font-black leading-none", (globalMetrics as any).totalUtility > 0 ? "text-emerald-500" : (darkMode ? "text-gray-700" : "text-gray-300"))}>
+                  {(globalMetrics as any).totalUtility > 0
+                    ? '$' + (globalMetrics as any).totalUtility.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                    : '—'}
+                </p>
+                <p className={cn("text-[10px] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>precio venta − costo</p>
+                {(globalMetrics as any).totalRevenue > 0 && (globalMetrics as any).totalUtility > 0 && (
+                  <p className="text-[9px] mt-0.5 font-black text-emerald-500">
+                    {(((globalMetrics as any).totalUtility / (globalMetrics as any).totalRevenue) * 100).toFixed(1)}% margen
+                  </p>
+                )}
+                <p className={cn("text-[9px] mt-1", darkMode ? "text-gray-700" : "text-gray-400")}>{format(new Date(), 'dd MMM yyyy')}</p>
               </div>
               </>)}
             </div>
