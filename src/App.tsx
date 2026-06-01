@@ -6,7 +6,7 @@ import {
   Sun, Moon, Printer, Download, Upload, FileText, CheckCircle2, AlertTriangle,
   Bell, Target, Brain, ShieldAlert, Zap, Trophy, ChevronDown, ChevronUp,
   Clock, PhoneCall, ArrowRight, Boxes, Layers, LogOut, Shield, Eye, UserCheck,
-  Check as CheckIcon, BarChart2
+  Check as CheckIcon, BarChart2, Sparkles, X as XIcon, Info
 } from 'lucide-react';
 import { 
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, 
@@ -1014,7 +1014,7 @@ function PurchasesDashboardView({ darkMode, globalMetrics, allConsumos }: {
   globalMetrics: any;
   allConsumos: any[];
 }) {
-  const orders = PURCHASE_ORDERS_2025 as any[];
+  const orders = PURCHASE_ORDERS_2025 as unknown as any[];
   const M2_PER_BOX: Record<string, number> = {
     '20x25': 9.03, '25x30': 13.55, '26x36': 16.77, '35x43': 25.55,
   };
@@ -1813,6 +1813,22 @@ function ImagerAnalysis2024View({
   );
 }
 
+// ── Markdown renderer for AI analysis ────────────────────────────────────────
+const renderAnalysisMarkdown = (text: string, darkMode: boolean): React.ReactNode[] => {
+  if (!text) return [];
+  const lines = text.split('\n');
+  return lines.map((line, i) => {
+    if (line.startsWith('## ')) {
+      return React.createElement('h3', { key: i, className: 'text-sm font-black mt-5 mb-2 ' + (darkMode ? 'text-white' : 'text-gray-900') }, line.replace('## ', ''));
+    }
+    if (line.trim() === '') return React.createElement('div', { key: i, className: 'h-1' });
+    const isBullet = line.startsWith('- ') || line.startsWith('• ');
+    const html = line.replace(/^[-•] /, '').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    const cls = 'text-xs mb-1 ' + (isBullet ? 'pl-3 ' : '') + (darkMode ? 'text-gray-300' : 'text-gray-700');
+    return React.createElement('p', { key: i, className: cls, dangerouslySetInnerHTML: { __html: (isBullet ? '• ' : '') + html } });
+  });
+};
+
 
 function App() {
   const { appUser, role, logout } = useAuth();
@@ -2451,6 +2467,12 @@ function App() {
   const [showPrinterStatsModal, setShowPrinterStatsModal] = useState(false);
   const [showNCReport, setShowNCReport] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
+  const [showFinancialAnalysis, setShowFinancialAnalysis] = useState(false);
+  const [showFinancialInfoModal, setShowFinancialInfoModal] = useState(false);
+  const [showReturnsAuditDetail, setShowReturnsAuditDetail] = useState(false);
+  const [showSalesAuditDetail, setShowSalesAuditDetail] = useState(false);
+  const [financialAnalysisText, setFinancialAnalysisText] = useState('');
+  const [financialAnalysisLoading, setFinancialAnalysisLoading] = useState(false);
   const [ncReportStart, setNcReportStart] = useState('');
   const [ncReportEnd, setNcReportEnd] = useState('');
   const [dashboardView, setDashboardView] = useState<'ventas'|'compras'>('ventas');
@@ -2796,12 +2818,17 @@ function App() {
         if (r.invoice_number && tempRec.invoice_number) {
           const invMatch = normInvoice(r.invoice_number) === normInvoice(tempRec.invoice_number);
           if (invMatch && r.size === tempRec.size && Math.abs(r.quantity) === Math.abs(tempRec.quantity)) return true;
+          // If invoice numbers are different, they are different sales!
+          if (normInvoice(r.invoice_number) !== normInvoice(tempRec.invoice_number)) return false;
         }
         // Secondary: date + client + size + quantity (catches invoice format mismatches)
         if (clientId > 0 && r.client_id === clientId &&
             r.order_date === tempRec.order_date &&
             r.size === tempRec.size &&
-            Math.abs(r.quantity) === Math.abs(tempRec.quantity)) return true;
+            Math.abs(r.quantity) === Math.abs(tempRec.quantity)) {
+          if (r.invoice_number && tempRec.invoice_number && normInvoice(r.invoice_number) !== normInvoice(tempRec.invoice_number)) return false;
+          return true;
+        }
         return false;
       });
     };
@@ -2905,11 +2932,44 @@ function App() {
   const mapRowToRecord = (row: any, clientId: number, nextId: number): ConsumptionRecord => {
     const rowKeys = Object.keys(row);
     const get = (candidates: string[]) => {
+      // Pass 1: exact matching
       for (const c of candidates) {
-        const key = rowKeys.find(k => norm(k) === norm(c) || norm(k).includes(norm(c)));
+        const key = rowKeys.find(k => norm(k) === norm(c));
+        if (key && row[key] !== undefined && row[key] !== '') return String(row[key]);
+      }
+      // Pass 2: partial matching
+      for (const c of candidates) {
+        const key = rowKeys.find(k => norm(k).includes(norm(c)));
         if (key && row[key] !== undefined && row[key] !== '') return String(row[key]);
       }
       return '';
+    };
+
+    const parseNumber = (valStr: string): number | undefined => {
+      if (!valStr) return undefined;
+      let cleaned = valStr.trim();
+      if (cleaned === '-' || cleaned === '—' || cleaned === '–') {
+        return 0;
+      }
+      cleaned = cleaned.replace(/\s/g, '');
+      // Handle standard European number format (e.g. 1.237,00 or 1237,00 or standard 1237.00)
+      if (/\d\.\d{3},\d{2}/.test(cleaned)) {
+        cleaned = cleaned.replace(/\./g, '').replace(',', '.');
+      } else {
+        if (cleaned.includes('.') && cleaned.includes(',')) {
+          const dotIdx = cleaned.indexOf('.');
+          const commaIdx = cleaned.indexOf(',');
+          if (dotIdx < commaIdx) {
+            cleaned = cleaned.replace(/\./g, '').replace(',', '.');
+          } else {
+            cleaned = cleaned.replace(/,/g, '');
+          }
+        } else {
+          cleaned = cleaned.replace(',', '.');
+        }
+      }
+      const parsed = parseFloat(cleaned);
+      return (!isNaN(parsed)) ? parsed : undefined;
     };
 
     // Date parsing
@@ -2949,35 +3009,39 @@ function App() {
       size = extractSizeFromArticulo(articulo);
     }
 
-    // Cost: handle "1.237,00" (European) and "1237.00" (US) formats
-    // Check if we have an explicit unit cost column
-    const unitCostRaw = get(['costo unitario', 'costo_unitario', 'unit_cost', 'c/u', 'precio unitario', 'valor unitario']);
-    const totalCostRaw = get(['costo total', 'costo_total', 'total']);
-    const costRaw = unitCostRaw || totalCostRaw;
-    const isUnitCost = !!unitCostRaw;
-    let unitCost: number | undefined;
-    if (costRaw) {
-      let cleaned = costRaw.replace(/\s/g, '');
-      // European format: 1.237,00 → remove dots, replace comma
-      if (/\d\.\d{3},\d{2}/.test(cleaned)) {
-        cleaned = cleaned.replace(/\./g, '').replace(',', '.');
-      } else {
-        cleaned = cleaned.replace(',', '.');
-      }
-      const parsed = parseFloat(cleaned);
-      if (!isNaN(parsed)) unitCost = parsed;
-    }
-
     // Quantity — negative = return
     const qtyRaw = get(['cantidad', 'quantity', 'qty', 'cajas', 'boxes']);
-    const qtyParsed = parseInt(qtyRaw) || 1;
+    const qtyParsed = (qtyRaw !== '' && !isNaN(parseInt(qtyRaw))) ? parseInt(qtyRaw) : 1;
     const isReturn = qtyParsed < 0;
-    const qty = Math.abs(qtyParsed) || 1;
+    const qty = Math.abs(qtyParsed);
 
-    // If we got total cost (not unit cost), divide by qty to get unit cost
-    const finalCost = unitCost
-      ? (isUnitCost ? Math.abs(unitCost) : (qty > 1 ? parseFloat((Math.abs(unitCost) / qty).toFixed(4)) : Math.abs(unitCost)))
-      : undefined;
+    // Cost parsing using the new parseNumber helper
+    const unitCostRaw = get(['costo', 'costo unitario', 'costo_unitario', 'unit_cost', 'c/u', 'precio unitario', 'valor unitario']);
+    const totalCostRaw = get(['costo total', 'costo_total', 'total']);
+    
+    const uCost = parseNumber(unitCostRaw);
+    const tCost = parseNumber(totalCostRaw);
+    
+    let finalCost: number | null = null;
+    if (uCost !== undefined) {
+      finalCost = Math.abs(uCost);
+    } else if (tCost !== undefined) {
+      finalCost = qty > 0 ? parseFloat((Math.abs(tCost) / qty).toFixed(4)) : Math.abs(tCost);
+    }
+
+    // Sale Price parsing using the new parseNumber helper
+    const unitPriceRaw = get(['precio', 'price', 'precio unitario', 'precio venta', 'pvp', 'valor venta']);
+    const totalRevenueRaw = get(['vta total', 'venta total', 'venta_total', 'total venta', 'valor total venta', 'ingresos']);
+
+    const uPrice = parseNumber(unitPriceRaw);
+    const tRevenue = parseNumber(totalRevenueRaw);
+
+    let finalSalePrice: number | null = null;
+    if (uPrice !== undefined) {
+      finalSalePrice = Math.abs(uPrice);
+    } else if (tRevenue !== undefined) {
+      finalSalePrice = qty > 0 ? parseFloat((Math.abs(tRevenue) / qty).toFixed(4)) : Math.abs(tRevenue);
+    }
 
     // Invoice: fix scientific notation
     const rawInvoice = get(['factura', 'invoice', 'invoice_number', 'n° factura', 'numero factura', 'nro factura', 'nro. factura']);
@@ -3010,15 +3074,7 @@ function App() {
       batch_number: get(['lote', 'batch', 'batch_number', 'n° lote', 'nro lote']) || '',
       expiry_date: expiryDate,
       unit_cost: finalCost ?? null,
-      sale_price: (() => {
-        const rawSP = get(['precio', 'price', 'precio unitario', 'precio venta', 'pvp']);
-        if (!rawSP) return null;
-        let csp = rawSP.replace(/\s/g, '');
-        if (/\d\.\d{3},\d{2}/.test(csp)) csp = csp.replace(/\./g, '').replace(',', '.');
-        else csp = csp.replace(',', '.');
-        const vsp = parseFloat(csp);
-        return (!isNaN(vsp) && vsp > 0) ? Math.abs(vsp) : null;
-      })(),
+      sale_price: finalSalePrice ?? null,
       film_type: filmType || 'DIHT',
       is_return: isReturn || false,
     };
@@ -3047,6 +3103,49 @@ function App() {
       clientCode: getExact(['cod cliente', 'codigo2', 'codigo cliente', 'código cliente', 'client_code', 'cod', 'codigo']) || '',
       salesperson: getExact(['vendedor', 'salesperson', 'asesor', 'representante']) || '',
     };
+  };
+
+  const [purgeYear, setPurgeYear] = useState<string>('2026');
+
+  const handlePurgeYearData = async () => {
+    const recordsToDelete = allConsumos.filter(r => r.order_date && r.order_date.startsWith(purgeYear));
+    
+    if (recordsToDelete.length === 0) {
+      showToast(`No se encontraron registros del año ${purgeYear} para eliminar.`, "info");
+      return;
+    }
+
+    if (!window.confirm(`⚠️ ATENCIÓN: ¿Está seguro de eliminar TODOS los registros de consumo del año ${purgeYear}? Se detectaron ${recordsToDelete.length} registros. Esta acción es irreversible.`)) {
+      return;
+    }
+    
+    if (!window.confirm(`¿Confirmar eliminación definitiva? Todos los datos del ${purgeYear} se borrarán de la base de datos.`)) {
+      return;
+    }
+
+    try {
+      setCsvImportStatus('importing');
+      
+      const totalToDelete = recordsToDelete.length;
+      
+      // Delete in batches of 400
+      for (let i = 0; i < recordsToDelete.length; i += 400) {
+        const chunk = recordsToDelete.slice(i, i + 400);
+        const batch = writeBatch(db);
+        chunk.forEach(record => {
+          batch.delete(doc(db, 'consumos', record.id.toString()));
+        });
+        await batch.commit();
+      }
+
+      addAuditLog('delete_record', `Eliminó todos los registros del año ${purgeYear} (${totalToDelete} consumos)`);
+      showToast(`Se eliminaron con éxito ${totalToDelete} registros del año ${purgeYear}.`, "success");
+      setCsvImportStatus('idle');
+    } catch (error: any) {
+      console.error(`Error purging ${purgeYear} data:`, error);
+      showToast(`Error al eliminar: ${error.message || error}`, "error");
+      setCsvImportStatus('idle');
+    }
   };
 
   const handleCsvFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -3096,15 +3195,33 @@ function App() {
           const tempRecord = mapRowToRecord(row, client.id, 0);
           const isDup = isExistingRecord(tempRecord, client.id);
           if (isDup) {
-            // If existing record lacks film_type but new import has it → queue for update
-            const existingRec = allConsumos.find(r =>
-              r.client_id === client.id &&
-              r.order_date === tempRecord.order_date &&
-              r.size === tempRecord.size &&
-              Math.abs(r.quantity) === Math.abs(tempRecord.quantity)
-            );
-            if (tempRecord.film_type && existingRec && !existingRec.film_type) {
-              matched.push({ row, clientName, _updateId: existingRec.id } as any);
+            const existingRec = allConsumos.find(r => {
+              if (r.invoice_number && tempRecord.invoice_number) {
+                const invMatch = normInvoice(r.invoice_number) === normInvoice(tempRecord.invoice_number);
+                if (invMatch && r.size === tempRecord.size && Math.abs(r.quantity) === Math.abs(tempRecord.quantity)) return true;
+                if (normInvoice(r.invoice_number) !== normInvoice(tempRecord.invoice_number)) return false;
+              }
+              if (r.client_id === client.id &&
+                  r.order_date === tempRecord.order_date &&
+                  r.size === tempRecord.size &&
+                  Math.abs(r.quantity) === Math.abs(tempRecord.quantity)) {
+                if (r.invoice_number && tempRecord.invoice_number && normInvoice(r.invoice_number) !== normInvoice(tempRecord.invoice_number)) return false;
+                return true;
+              }
+              return false;
+            });
+            if (existingRec) {
+              const hasDiff = 
+                (tempRecord.unit_cost !== undefined && tempRecord.unit_cost !== existingRec.unit_cost) ||
+                (tempRecord.batch_number !== '' && tempRecord.batch_number !== existingRec.batch_number) ||
+                (tempRecord.expiry_date !== '2099-12-31' && tempRecord.expiry_date !== existingRec.expiry_date) ||
+                (tempRecord.film_type !== undefined && tempRecord.film_type !== existingRec.film_type) ||
+                (tempRecord.order_date !== existingRec.order_date);
+              if (hasDiff) {
+                matched.push({ row, clientName, _updateId: existingRec.id } as any);
+              } else {
+                duplicates.push({ row, clientName });
+              }
             } else {
               duplicates.push({ row, clientName });
             }
@@ -3138,14 +3255,33 @@ function App() {
         const tempRecord2 = mapRowToRecord(row, client.id, 0);
         const isDup2 = isExistingRecord(tempRecord2, client.id);
         if (isDup2) {
-          const existingRec2 = allConsumos.find(r =>
-            r.client_id === client.id &&
-            r.order_date === tempRecord2.order_date &&
-            r.size === tempRecord2.size &&
-            Math.abs(r.quantity) === Math.abs(tempRecord2.quantity)
-          );
-          if (tempRecord2.film_type && existingRec2 && !existingRec2.film_type) {
-            matched.push({ row, clientName: client.name, _updateId: existingRec2.id } as any);
+          const existingRec2 = allConsumos.find(r => {
+            if (r.invoice_number && tempRecord2.invoice_number) {
+              const invMatch = normInvoice(r.invoice_number) === normInvoice(tempRecord2.invoice_number);
+              if (invMatch && r.size === tempRecord2.size && Math.abs(r.quantity) === Math.abs(tempRecord2.quantity)) return true;
+              if (normInvoice(r.invoice_number) !== normInvoice(tempRecord2.invoice_number)) return false;
+            }
+            if (r.client_id === client.id &&
+                r.order_date === tempRecord2.order_date &&
+                r.size === tempRecord2.size &&
+                Math.abs(r.quantity) === Math.abs(tempRecord2.quantity)) {
+              if (r.invoice_number && tempRecord2.invoice_number && normInvoice(r.invoice_number) !== normInvoice(tempRecord2.invoice_number)) return false;
+              return true;
+            }
+            return false;
+          });
+          if (existingRec2) {
+            const hasDiff2 = 
+              (tempRecord2.unit_cost !== undefined && tempRecord2.unit_cost !== existingRec2.unit_cost) ||
+              (tempRecord2.batch_number !== '' && tempRecord2.batch_number !== existingRec2.batch_number) ||
+              (tempRecord2.expiry_date !== '2099-12-31' && tempRecord2.expiry_date !== existingRec2.expiry_date) ||
+              (tempRecord2.film_type !== undefined && tempRecord2.film_type !== existingRec2.film_type) ||
+              (tempRecord2.order_date !== existingRec2.order_date);
+            if (hasDiff2) {
+              matched.push({ row, clientName: client.name, _updateId: existingRec2.id } as any);
+            } else {
+              duplicates.push({ row, clientName: client.name });
+            }
           } else {
             duplicates.push({ row, clientName: client.name });
           }
@@ -3169,7 +3305,7 @@ function App() {
           const existingForRescue = allConsumos.find(r => r.invoice_number && temp.invoice_number && normInvoice(r.invoice_number) === normInvoice(temp.invoice_number) && r.size === temp.size && Math.abs(r.quantity) === Math.abs(temp.quantity));
           if (existingForRescue && existingForRescue.film_type !== 'DIHL') {
             // Was incorrectly classified as duplicate — it's a DIHT to replace
-            rescuedFromDuplicates.push({ row: item.row, clientName: item.clientName, _replaceId: existing.id });
+            rescuedFromDuplicates.push({ row: item.row, clientName: item.clientName, _replaceId: existingForRescue.id });
           } else {
             trueDuplicates.push(item);
           }
@@ -3182,9 +3318,18 @@ function App() {
           const temp = mapRowToRecord(item.row, 0, 0);
           const existingForNew = allConsumos.find(r => r.invoice_number && temp.invoice_number && normInvoice(r.invoice_number) === normInvoice(temp.invoice_number) && r.size === temp.size && Math.abs(r.quantity) === Math.abs(temp.quantity));
           if (existingForNew && existingForNew.film_type === 'DIHL') {
-            trueDuplicates.push({ row: item.row, clientName: item.clientName });
-          } else if (existing && existing.film_type !== 'DIHL') {
-            reMatched.push({ row: item.row, clientName: item.clientName, _replaceId: existing.id });
+            const hasDiff = 
+              (temp.unit_cost !== undefined && temp.unit_cost !== existingForNew.unit_cost) ||
+              (temp.batch_number !== '' && temp.batch_number !== existingForNew.batch_number) ||
+              (temp.expiry_date !== '2099-12-31' && temp.expiry_date !== existingForNew.expiry_date) ||
+              (temp.order_date !== existingForNew.order_date);
+            if (hasDiff) {
+              reMatched.push({ row: item.row, clientName: item.clientName, _updateId: existingForNew.id });
+            } else {
+              trueDuplicates.push({ row: item.row, clientName: item.clientName });
+            }
+          } else if (existingForNew && existingForNew.film_type !== 'DIHL') {
+            reMatched.push({ row: item.row, clientName: item.clientName, _replaceId: existingForNew.id });
           } else {
             stillNew.push(item);
           }
@@ -3202,9 +3347,18 @@ function App() {
             Math.abs(r.quantity) === Math.abs(temp.quantity)
           );
           if (existingFinal && existingFinal.film_type === 'DIHL') {
-            trueDuplicates.push({ row: item.row, clientName: item.clientName });
-          } else if (existing && existing.film_type !== 'DIHL') {
-            finalMatched.push({ ...item, _replaceId: existing.id });
+            const hasDiff = 
+              (temp.unit_cost !== undefined && temp.unit_cost !== existingFinal.unit_cost) ||
+              (temp.batch_number !== '' && temp.batch_number !== existingFinal.batch_number) ||
+              (temp.expiry_date !== '2099-12-31' && temp.expiry_date !== existingFinal.expiry_date) ||
+              (temp.order_date !== existingFinal.order_date);
+            if (hasDiff) {
+              finalMatched.push({ ...item, _updateId: existingFinal.id });
+            } else {
+              trueDuplicates.push({ row: item.row, clientName: item.clientName });
+            }
+          } else if (existingFinal && existingFinal.film_type !== 'DIHL') {
+            finalMatched.push({ ...item, _replaceId: existingFinal.id });
           } else {
             finalMatched.push(item);
           }
@@ -3274,12 +3428,20 @@ function App() {
           await batch.commit();
         }
 
-        // Update film_type on records that were already untagged (no film_type set)
+        // Update film_type and other fields on existing records in batches
         for (let i = 0; i < toUpdateOnly.length; i += 400) {
           const chunk = toUpdateOnly.slice(i, i + 400);
           const batch = writeBatch(db);
-          chunk.forEach(({ _updateId }: any) => {
-            batch.update(doc(db, 'consumos', (_updateId as number).toString()), { film_type: 'DIHL' });
+          chunk.forEach(({ row, clientName, _updateId }: any) => {
+            const clientId = allClients.find(c => c.name === clientName)?.id || 0;
+            const record = mapRowToRecord(row, clientId, 0);
+            const updateData: any = { film_type: 'DIHL' };
+            if (record.unit_cost !== undefined) updateData.unit_cost = record.unit_cost;
+            if (record.batch_number !== undefined && record.batch_number !== '') updateData.batch_number = record.batch_number;
+            if (record.expiry_date !== undefined && record.expiry_date !== '2099-12-31') updateData.expiry_date = record.expiry_date;
+            if (record.order_date !== undefined) updateData.order_date = record.order_date;
+            
+            batch.update(doc(db, 'consumos', (_updateId as number).toString()), updateData);
           });
           await batch.commit();
         }
@@ -3388,11 +3550,18 @@ function App() {
         if (clientId) toInsert.push({ row, clientId });
       });
 
-      // Update film_type on existing records
+      // Update existing records with differences
       for (const { row, clientId, _updateId } of toUpdateFilmType) {
         const record = mapRowToRecord(row, clientId, 0);
-        if (record.film_type) {
-          await updateDoc(doc(db, 'consumos', _updateId.toString()), { film_type: record.film_type });
+        const updateData: any = {};
+        if (record.unit_cost !== undefined) updateData.unit_cost = record.unit_cost;
+        if (record.batch_number !== undefined && record.batch_number !== '') updateData.batch_number = record.batch_number;
+        if (record.expiry_date !== undefined && record.expiry_date !== '2099-12-31') updateData.expiry_date = record.expiry_date;
+        if (record.film_type !== undefined && record.film_type !== '') updateData.film_type = record.film_type;
+        if (record.order_date !== undefined) updateData.order_date = record.order_date;
+
+        if (Object.keys(updateData).length > 0) {
+          await updateDoc(doc(db, 'consumos', _updateId.toString()), updateData);
         }
         processed++;
         setCsvImportProgress(Math.round((processed / totalOps) * 100));
@@ -3441,6 +3610,73 @@ function App() {
     setCsvImportStatus('idle');
     setCsvImportError('');
     if (csvFileInputRef.current) csvFileInputRef.current.value = '';
+  };
+
+  const runFinancialAnalysis = async () => {
+    setShowFinancialAnalysis(true);
+    setFinancialAnalysisLoading(true);
+    setFinancialAnalysisText('');
+    const gm = globalMetrics as any;
+    const margin = gm.totalRevenue > 0 ? ((gm.totalUtility / gm.totalRevenue) * 100).toFixed(2) : '0';
+    const costRatio = gm.totalRevenue > 0 ? ((gm.totalCost / gm.totalRevenue) * 100).toFixed(2) : '0';
+    const perM2Rev = gm.totalM2 > 0 ? (gm.totalRevenue / gm.totalM2).toFixed(2) : '0';
+    const perM2Cost = gm.totalM2 > 0 ? (gm.totalCost / gm.totalM2).toFixed(2) : '0';
+    const topClientNames = gm.topClients?.slice(0, 3).map((c: any) => c.name).join(', ') || 'N/A';
+    const filterLabel = !dashboardStartDate && !dashboardEndDate ? 'todo el período disponible'
+      : `${dashboardStartDate || '...'} → ${dashboardEndDate || '...'}`;
+
+    const prompt = `Eres un analista financiero senior especializado en distribución de insumos médicos en Ecuador. Analiza los siguientes datos de ventas de Orimec (distribuidor exclusivo de película radiológica Fujifilm DI-HT y DI-HL) y proporciona un análisis ejecutivo detallado, profesional y accionable.
+
+DATOS DEL PERÍODO: ${filterLabel}
+- Metros cuadrados vendidos: ${gm.totalM2?.toFixed(2)} m²
+- Cajas vendidas: ${gm.totalConsumption} cajas
+- Centros médicos activos: ${gm.totalClients}
+- Costo total (compra a Fujifilm): $${gm.totalCost?.toLocaleString('en-US', {minimumFractionDigits:2})}
+- Venta total (precio al cliente): $${gm.totalRevenue?.toLocaleString('en-US', {minimumFractionDigits:2})}
+- Utilidad bruta: $${gm.totalUtility?.toLocaleString('en-US', {minimumFractionDigits:2})}
+- Margen bruto: ${margin}%
+- Ratio costo/venta: ${costRatio}%
+- Ingreso por m²: $${perM2Rev}
+- Costo por m²: $${perM2Cost}
+- Top 3 clientes por m²: ${topClientNames}
+
+Proporciona tu análisis en las siguientes secciones usando markdown:
+
+## 📊 Diagnóstico del Período
+Explica el comportamiento financiero general.
+
+## 🔍 Análisis de Rentabilidad
+Desglosa el margen del ${margin}%. Compara con benchmarks de distribución médica (típicamente 15-25% para distribuidores exclusivos).
+
+## ⚠️ Factores de Riesgo
+Identifica los riesgos basados en los datos: concentración de clientes, presión de márgenes, volumen vs. precio.
+
+## 🎯 Recomendaciones Ejecutivas
+Da 3-4 acciones concretas y específicas para mejorar la rentabilidad en el siguiente período.
+
+## 📈 Proyección
+Con base en estos datos, proyecta qué ajustes en precio o volumen se necesitarían para alcanzar un margen del 15%.
+
+Sé específico con los números. Usa un tono ejecutivo y directo.`;
+
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1500,
+          messages: [{ role: 'user', content: prompt }]
+        })
+      });
+      const data = await response.json();
+      const text = data.content?.map((b: any) => b.text || '').join('') || 'No se pudo generar el análisis.';
+      setFinancialAnalysisText(text);
+    } catch (e) {
+      setFinancialAnalysisText('Error al conectar con el servicio de análisis. Intenta de nuevo.');
+    } finally {
+      setFinancialAnalysisLoading(false);
+    }
   };
 
   const handleExportExcel = () => {
@@ -3525,7 +3761,10 @@ function App() {
 
     const totalM2 = parseFloat(consumos.reduce((s, r) => s + getTotalM2(effectiveQty(r), r.size, r.film_type), 0).toFixed(2));
     const totalCajas = consumos.reduce((s, r) => s + effectiveQty(r), 0);
-    const totalRevenue = consumos.reduce((s, r) => s + (((r as any).sale_price || r.unit_cost || 0) * r.quantity), 0);
+    const totalRevenue = consumos.reduce((s, r) => {
+      const price = ((r as any).sale_price !== null && (r as any).sale_price !== undefined) ? (r as any).sale_price : (r.unit_cost || 0);
+      return s + (price * r.quantity);
+    }, 0);
     const totalCostClient = consumos.reduce((s, r) => s + (r.unit_cost ? r.unit_cost * r.quantity : 0), 0);
     const altName = altNames[selectedClient.id] || '';
 
@@ -3750,7 +3989,7 @@ function App() {
           running = running + inB - outB;
         });
         const stock = Math.max(0,running);
-        const realTransit = Object.values(stockFilmTransit[String(cy)]?.[`${ft}_${size}`]||{}).reduce((s:number,v:any)=>s+(v||0),0);
+        const realTransit = Object.values(stockFilmTransit[String(cy)]?.[`${ft}_${size}`]||{}).reduce((s:number,v:any)=>s+(v||0),0) as number;
         const totalW = stock + (includeTransit ? realTransit : 0);
         const avgMonthly = (() => {
           let t=0;
@@ -4322,8 +4561,31 @@ ${rows.map(r=>{
     }
 
     const totalConsumption = filteredConsumos.reduce((acc, curr) => acc + effectiveQty(curr), 0);
-    const totalRevenue = filteredConsumos.reduce((acc, curr) => acc + (effectiveQty(curr) * ((curr as any).sale_price || curr.unit_cost || 0)), 0);
-    const totalCost = filteredConsumos.reduce((acc, curr) => acc + (effectiveQty(curr) * (curr.unit_cost || 0)), 0);
+    
+    const totalRevenue = filteredConsumos.reduce((acc, curr) => {
+      const salePrice = (curr.sale_price !== null && curr.sale_price !== undefined)
+        ? curr.sale_price
+        : (curr.unit_cost || (() => {
+            const ft = (!curr.film_type || curr.film_type === 'DIHT') ? 'DIHT' : curr.film_type;
+            const key = `${ft}_${curr.size}`;
+            const ref = FILM_PRICE_REF[key];
+            return ref ? ref.precio : 0;
+          })());
+      return acc + (effectiveQty(curr) * salePrice);
+    }, 0);
+
+    const totalCost = filteredConsumos.reduce((acc, curr) => {
+      const unitCost = (curr.unit_cost !== null && curr.unit_cost !== undefined && curr.unit_cost > 0)
+        ? curr.unit_cost
+        : (() => {
+            const ft = (!curr.film_type || curr.film_type === 'DIHT') ? 'DIHT' : curr.film_type;
+            const key = `${ft}_${curr.size}`;
+            const ref = FILM_PRICE_REF[key];
+            return ref ? ref.costo : 0;
+          })();
+      return acc + (effectiveQty(curr) * unitCost);
+    }, 0);
+
     const totalUtility = totalRevenue - totalCost;
     // Clients with activity in the filtered period
     // Note: film filter excluded — client count always based on dates only
@@ -4377,7 +4639,8 @@ ${rows.map(r=>{
       }
       salespersonDist[salesperson].quantity += qty;
       salespersonDist[salesperson].m2 = parseFloat((salespersonDist[salesperson].m2 + m2).toFixed(2));
-      salespersonDist[salesperson].revenue += qty * ((r as any).sale_price || r.unit_cost || 0);
+      const spPrice = (r.sale_price !== null && r.sale_price !== undefined) ? r.sale_price : (r.unit_cost || 0);
+      salespersonDist[salesperson].revenue += qty * spPrice;
     });
 
     const allClientsSorted = Object.entries(clientDistM2)
@@ -4391,7 +4654,10 @@ ${rows.map(r=>{
           if (dashboardEndDate && new Date(r.order_date) > new Date(dashboardEndDate)) return false;
           return true;
         });
-        const revenue = revenueConsumos.reduce((s, r) => s + r.quantity * (r.unit_cost || 0), 0);
+        const revenue = revenueConsumos.reduce((s, r) => {
+          const price = (r.sale_price !== null && r.sale_price !== undefined) ? r.sale_price : (r.unit_cost || 0);
+          return s + r.quantity * price;
+        }, 0);
         return {
           id: cId,
           name: c?.name || 'Desconocido',
@@ -5489,7 +5755,7 @@ ${rows.map(r=>{
       const entryYear = new Date(entryDate).getFullYear();
       const filmKey = `${ft}_${size}`;
       const transitByMonth = stockFilmTransit[String(entryYear)]?.[filmKey] || {};
-      const totalTransit = Object.values(transitByMonth).reduce((s: number, v: any) => s + (v || 0), 0);
+      const totalTransit = Object.values(transitByMonth).reduce((s: number, v: any) => s + (v || 0), 0) as number;
 
       if (totalTransit > 0) {
         // Show transit deduction modal
@@ -6939,19 +7205,65 @@ ${rows.map(r=>{
                 "p-5 rounded-xl border transition-colors duration-300",
                 darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm"
               )}>
-                <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-2", darkMode ? "text-gray-600" : "text-gray-400")}>Ingresos (Venta)</p>
-                <p className="text-3xl font-black leading-none text-emerald-500">${(globalMetrics as any).totalRevenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-                <p className={cn("text-[10px] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>USD precio de venta al cliente</p>
-                {(globalMetrics as any).totalM2 > 0 && (
-                  <p className={cn("text-[9px] mt-0.5 font-semibold", darkMode ? "text-gray-500" : "text-gray-400")}>
-                    ${((globalMetrics as any).totalRevenue / (globalMetrics as any).totalM2).toFixed(2)}/m²
-                  </p>
-                )}
-                {(globalMetrics as any).totalCost > 0 && (
-                  <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>
-                    Costo: ${(globalMetrics as any).totalCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </p>
-                )}
+                <div className="flex items-center justify-between mb-3">
+                  <p className={cn("text-[9px] font-bold uppercase tracking-wider", darkMode ? "text-gray-600" : "text-gray-400")}>Resumen Financiero</p>
+                  <button
+                    onClick={() => setShowFinancialInfoModal(true)}
+                    className={cn(
+                      "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[9px] font-bold transition-all duration-200 hover:scale-105 border",
+                      darkMode
+                        ? "bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 border-cyan-500/20"
+                        : "bg-cyan-50 text-cyan-700 hover:bg-cyan-100 border-cyan-200"
+                    )}
+                  >
+                    <Info size={10} />
+                    Info
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {/* Costo Total */}
+                  <div className="flex items-center justify-between">
+                    <span className={cn("text-[9px] font-bold uppercase tracking-wider", darkMode ? "text-gray-600" : "text-gray-400")}>Costo Total</span>
+                    <span className={cn("text-sm font-black font-mono", darkMode ? "text-gray-300" : "text-gray-700")}>
+                      ${(globalMetrics as any).totalCost > 0 ? (globalMetrics as any).totalCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}
+                    </span>
+                  </div>
+                  {/* Divider */}
+                  <div className={cn("h-px", darkMode ? "bg-white/6" : "bg-gray-100")} />
+                  {/* Venta Total */}
+                  <div className="flex items-center justify-between">
+                    <span className={cn("text-[9px] font-bold uppercase tracking-wider", darkMode ? "text-gray-600" : "text-gray-400")}>Venta Total</span>
+                    <span className="text-sm font-black font-mono text-emerald-500">
+                      ${(globalMetrics as any).totalRevenue > 0 ? (globalMetrics as any).totalRevenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}
+                    </span>
+                  </div>
+                  {/* Divider */}
+                  <div className={cn("h-px", darkMode ? "bg-white/6" : "bg-gray-100")} />
+                  {/* Utilidad */}
+                  <div className="flex items-center justify-between">
+                    <span className={cn("text-[9px] font-bold uppercase tracking-wider", darkMode ? "text-gray-600" : "text-gray-400")}>Utilidad</span>
+                    <div className="flex items-center gap-1.5">
+                      {(globalMetrics as any).totalRevenue > 0 && (globalMetrics as any).totalUtility !== 0 && (
+                        <span className={cn("text-[8px] font-black px-1 py-0.5 rounded",
+                          (globalMetrics as any).totalUtility > 0
+                            ? (darkMode ? "bg-emerald-500/15 text-emerald-400" : "bg-emerald-100 text-emerald-700")
+                            : (darkMode ? "bg-red-500/15 text-red-400" : "bg-red-100 text-red-700")
+                        )}>
+                          {(((globalMetrics as any).totalUtility / (globalMetrics as any).totalRevenue) * 100).toFixed(1)}%
+                        </span>
+                      )}
+                      <span className={cn("text-sm font-black font-mono",
+                        (globalMetrics as any).totalUtility > 0
+                          ? "text-emerald-500"
+                          : (globalMetrics as any).totalUtility < 0
+                          ? "text-red-500"
+                          : (darkMode ? "text-gray-600" : "text-gray-400")
+                      )}>
+                        {(globalMetrics as any).totalUtility < 0 ? '-' : ''}${(globalMetrics as any).totalUtility !== undefined ? Math.abs((globalMetrics as any).totalUtility).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
               </div>
               <div className={cn(
                 "p-5 rounded-xl border transition-colors duration-300",
@@ -6968,26 +7280,7 @@ ${rows.map(r=>{
                   </p>
                 )}
               </div>
-              <div className={cn(
-                "p-5 rounded-xl border transition-colors duration-300",
-                (globalMetrics as any).totalUtility > 0
-                  ? (darkMode ? "bg-emerald-500/8 border-emerald-500/20" : "bg-emerald-50 border-emerald-200 shadow-sm")
-                  : (darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")
-              )}>
-                <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-2", darkMode ? "text-gray-600" : "text-gray-400")}>Utilidad Bruta</p>
-                <p className={cn("text-3xl font-black leading-none", (globalMetrics as any).totalUtility > 0 ? "text-emerald-500" : (darkMode ? "text-gray-700" : "text-gray-300"))}>
-                  {(globalMetrics as any).totalUtility > 0
-                    ? '$' + (globalMetrics as any).totalUtility.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                    : '—'}
-                </p>
-                <p className={cn("text-[10px] mt-1", darkMode ? "text-gray-600" : "text-gray-400")}>precio venta − costo</p>
-                {(globalMetrics as any).totalRevenue > 0 && (globalMetrics as any).totalUtility > 0 && (
-                  <p className="text-[9px] mt-0.5 font-black text-emerald-500">
-                    {(((globalMetrics as any).totalUtility / (globalMetrics as any).totalRevenue) * 100).toFixed(1)}% margen
-                  </p>
-                )}
-                <p className={cn("text-[9px] mt-1", darkMode ? "text-gray-700" : "text-gray-400")}>{format(new Date(), 'dd MMM yyyy')}</p>
-              </div>
+
               </>)}
             </div>
 
@@ -8985,7 +9278,7 @@ ${rows.map(r=>{
                   const currentYear = new Date().getFullYear();
                   // Years that have install data
                   const yearsWithData = new Set<number>();
-                  Object.values(imagerFromClients).forEach(prod => {
+                  Object.values(imagerFromClients).forEach((prod: any) => {
                     Object.keys(prod.outByYearMonth).forEach(y => yearsWithData.add(Number(y)));
                   });
                   // Always include current year and next year
@@ -13006,13 +13299,60 @@ ${rows.map(r=>{
                         ['Cantidad / Qty', 'Número de cajas'],
                         ['Factura / Invoice', 'Número de factura'],
                         ['Lote / Batch', 'Número de lote'],
-                        ['Costo Unitario', 'Precio por caja'],
+                        ['Costo / Costo Unitario', 'Costo unitario por caja'],
+                        ['Costo Total', 'Costo acumulado de la fila'],
+                        ['Precio / PVP', 'Precio de venta unitario'],
+                        ['Vta Total / Venta Total', 'Ingresos totales de la fila'],
+                        ['Utilidad', 'Margen de ganancia acumulado'],
                       ].map(([col, desc]) => (
                         <div key={col} className="flex gap-1.5">
                           <span className={cn("font-semibold shrink-0", darkMode ? "text-gray-300" : "text-gray-700")}>{col}:</span>
                           <span className="opacity-70">{desc}</span>
                         </div>
                       ))}
+                    </div>
+                  </div>
+
+                  {/* Purge Selected Year Data Box */}
+                  <div className={cn(
+                    "mt-4 p-4 rounded-xl border flex flex-col sm:flex-row items-center justify-between gap-3 text-xs",
+                    darkMode ? "bg-red-500/5 border-red-500/15" : "bg-red-50 border-red-100"
+                  )}>
+                    <div className="flex gap-2.5 items-start">
+                      <span className="text-base shrink-0">⚠️</span>
+                      <div>
+                        <p className={cn("font-bold text-[11px] uppercase tracking-wider", darkMode ? "text-red-400" : "text-red-700")}>Limpiar datos por año</p>
+                        <p className={cn("text-[10px] mt-0.5", darkMode ? "text-gray-400" : "text-gray-600")}>
+                          ¿Quieres subir datos limpios? Elimina primero todos los consumos existentes del año seleccionado para evitar duplicados.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto justify-end">
+                      <select
+                        value={purgeYear}
+                        onChange={(e) => setPurgeYear(e.target.value)}
+                        className={cn(
+                          "px-2.5 py-1.5 rounded-lg font-bold text-xs outline-none transition-all cursor-pointer",
+                          darkMode 
+                            ? "bg-[#16161A] border border-white/10 text-white focus:border-red-500/50" 
+                            : "bg-white border border-gray-200 text-gray-800 focus:border-red-500/50"
+                        )}
+                      >
+                        <option value="2024">Año 2024</option>
+                        <option value="2025">Año 2025</option>
+                        <option value="2026">Año 2026</option>
+                      </select>
+                      <button
+                        onClick={handlePurgeYearData}
+                        className={cn(
+                          "px-3 py-1.5 rounded-lg font-black uppercase tracking-wider text-[9px] transition-all whitespace-nowrap shrink-0",
+                          darkMode 
+                            ? "bg-red-500/20 text-red-300 hover:bg-red-500/30 border border-red-500/30" 
+                            : "bg-red-600 text-white hover:bg-red-500"
+                        )}
+                      >
+                        Borrar consumos {purgeYear}
+                      </button>
                     </div>
                   </div>
 
@@ -13089,7 +13429,7 @@ ${rows.map(r=>{
                         csvImportResults.replaceCount > 0 ? (darkMode ? "text-red-400" : "text-red-600")
                         : csvImportResults.matched.some((x: any) => x._updateId) ? (darkMode ? "text-amber-400" : "text-amber-600")
                         : (darkMode ? "text-gray-600" : "text-gray-400"))}>
-                        {csvImportResults.replaceCount > 0 ? "DIHT → reemplazar por DIHL" : "Tipo actualizado (DI-HT/HL)"}
+                        {csvImportResults.replaceCount > 0 ? "DIHT → reemplazar por DIHL" : "Registros actualizados (costo/datos)"}
                       </p>
                     </div>
                     <div className={cn(
@@ -13320,7 +13660,7 @@ ${rows.map(r=>{
                       ? `Importar DI-HL: ${csvImportResults.matched.filter((x: any) => !x._updateId).length + csvImportResults.toCreate.length} nuevos + ${csvImportResults.matched.filter((x: any) => x._updateId).length} actualizados →`
                       : `Importar ${csvImportResults.matched.filter((x: any) => !x._updateId).length + csvImportResults.toCreate.length} registros`
                         + (csvImportResults.toCreate.length > 0 ? ` + ${[...new Map(csvImportResults.toCreate.map((x: any) => [norm(x.clientCode) || norm(x.clientName), true])).keys()].length} clientes nuevos` : '')
-                        + (csvImportResults.matched.some((x: any) => x._updateId) ? ` + ${csvImportResults.matched.filter((x: any) => x._updateId).length} tipo actualizado` : '')
+                        + (csvImportResults.matched.some((x: any) => x._updateId) ? ` + ${csvImportResults.matched.filter((x: any) => x._updateId).length} actualizados` : '')
                         + ' →'
                     }
                   </button>
@@ -14139,6 +14479,517 @@ ${rows.map(r=>{
                   Ver ficha completa <ArrowRight className="w-3.5 h-3.5" />
                 </button>
               </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── FINANCIAL INFO EXPLANATION MODAL ── */}
+      {showFinancialInfoModal && (() => {
+        const hasLoss = (globalMetrics as any).totalUtility < 0;
+        const formattedCost = (globalMetrics as any).totalCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const formattedRevenue = (globalMetrics as any).totalRevenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const formattedUtility = Math.abs((globalMetrics as any).totalUtility).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const marginPct = (globalMetrics as any).totalRevenue > 0
+          ? (((globalMetrics as any).totalUtility / (globalMetrics as any).totalRevenue) * 100).toFixed(1)
+          : '0.0';
+
+        // Dynamic audit of the selected period's transactions
+        const datedConsumos = allConsumos.filter(r => {
+          const d = new Date(r.order_date);
+          if (dashboardStartDate && d < new Date(dashboardStartDate)) return false;
+          if (dashboardEndDate && d > new Date(dashboardEndDate)) return false;
+          return true;
+        });
+
+        const totalConsumosCount = datedConsumos.length;
+        const totalReturnsCount = datedConsumos.filter(r => r.is_return).length;
+
+        // Group by client to find top contributors
+        const clientSummaries = {} as Record<number, { name: string; revenue: number; cost: number; qty: number }>;
+        datedConsumos.forEach(r => {
+          const qty = effectiveQty(r);
+          const price = (r.sale_price !== null && r.sale_price !== undefined) ? r.sale_price : (r.unit_cost || 0);
+          
+          let cost = 0;
+          if (r.sale_price !== null && r.sale_price !== undefined) {
+            cost = r.unit_cost || 0;
+          } else {
+            const ft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type;
+            const key = `${ft}_${r.size}`;
+            const ref = FILM_PRICE_REF[key];
+            cost = ref ? ref.costo : (r.unit_cost ? r.unit_cost / 2 : 0);
+          }
+
+          if (!clientSummaries[r.client_id]) {
+            const clientName = allClients.find(c => c.id === r.client_id)?.name || 'Cliente Desconocido';
+            clientSummaries[r.client_id] = { name: clientName, revenue: 0, cost: 0, qty: 0 };
+          }
+          
+          clientSummaries[r.client_id].revenue += qty * price;
+          clientSummaries[r.client_id].cost += qty * cost;
+          clientSummaries[r.client_id].qty += qty;
+        });
+
+        const topClientsList = Object.values(clientSummaries)
+          .sort((a, b) => b.revenue - a.revenue)
+          .slice(0, 3);
+
+        // Group by product (size + type) to analyze margin contributors
+        const productSummaries = {} as Record<string, { size: string; type: string; qty: number; revenue: number; cost: number }>;
+        datedConsumos.forEach(r => {
+          const key = `${r.film_type || 'DIHT'}_${r.size}`;
+          const qty = effectiveQty(r);
+          const price = (r.sale_price !== null && r.sale_price !== undefined) ? r.sale_price : (r.unit_cost || 0);
+          
+          let cost = 0;
+          if (r.sale_price !== null && r.sale_price !== undefined) {
+            cost = r.unit_cost || 0;
+          } else {
+            const ft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type;
+            const key = `${ft}_${r.size}`;
+            const ref = FILM_PRICE_REF[key];
+            cost = ref ? ref.costo : (r.unit_cost ? r.unit_cost / 2 : 0);
+          }
+
+          if (!productSummaries[key]) {
+            productSummaries[key] = { size: r.size, type: r.film_type || 'DIHT', qty: 0, revenue: 0, cost: 0 };
+          }
+          productSummaries[key].qty += qty;
+          productSummaries[key].revenue += qty * price;
+          productSummaries[key].cost += qty * cost;
+        });
+
+        const productList = Object.values(productSummaries)
+          .sort((a, b) => b.qty - a.qty);
+
+        return (
+          <div className="fixed inset-0 z-[9997] flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans','Inter',system-ui,sans-serif" }}>
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowFinancialInfoModal(false)} />
+            <div className={cn(
+              "relative w-full max-w-xl rounded-3xl shadow-2xl border overflow-hidden transition-all duration-300 transform scale-100 flex flex-col max-h-[85vh]",
+              darkMode ? "bg-[#16161A] border-white/10" : "bg-white border-gray-200"
+            )}>
+              {/* Header */}
+              <div className={cn("px-6 py-5 border-b flex items-center justify-between shrink-0", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+                <div className="flex items-center gap-2.5">
+                  <div className={cn("w-8 h-8 rounded-xl flex items-center justify-center border", darkMode ? "bg-cyan-500/10 border-cyan-500/20 text-cyan-400" : "bg-cyan-50 border-cyan-200 text-cyan-700")}>
+                    <BarChart2 size={16} />
+                  </div>
+                  <div>
+                    <h3 className={cn("text-sm font-black", darkMode ? "text-white" : "text-gray-900")}>Auditoría de Ventas y Márgenes</h3>
+                    <p className={cn("text-[9px] font-bold uppercase tracking-wider mt-0.5", darkMode ? "text-cyan-400" : "text-cyan-600")}>Análisis Operativo del Periodo</p>
+                  </div>
+                </div>
+                <button onClick={() => setShowFinancialInfoModal(false)}
+                  className={cn("p-1.5 rounded-xl transition-colors", darkMode ? "hover:bg-white/8 text-gray-500 hover:text-gray-300" : "hover:bg-gray-100 text-gray-400 hover:text-gray-600")}>
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Content */}
+              <div className="p-6 overflow-y-auto custom-scrollbar space-y-6">
+                
+                {/* Visual Summary Card */}
+                <div className={cn("p-5 rounded-2xl border space-y-3.5", darkMode ? "bg-white/2 border-white/5" : "bg-gray-50 border-gray-100")}>
+                  <div className="flex items-center justify-between mb-1">
+                    <p className={cn("text-[9px] font-black uppercase tracking-wider", darkMode ? "text-gray-500" : "text-gray-400")}>Consolidado de Periodo</p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setShowSalesAuditDetail(true)}
+                        title="Haz clic para ver el detalle de las ventas"
+                        className={cn(
+                          "text-[8px] font-bold px-2 py-0.5 rounded-md border active:scale-95 transition-all cursor-pointer flex items-center gap-1",
+                          darkMode
+                            ? "bg-white/5 text-gray-400 border-white/10 hover:bg-white/10"
+                            : "bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200"
+                        )}
+                      >
+                        {totalConsumosCount} Ventas ➜
+                      </button>
+                      {totalReturnsCount > 0 && (
+                        <button
+                          onClick={() => setShowReturnsAuditDetail(true)}
+                          title="Haz clic para ver el detalle de las devoluciones"
+                          className="text-[8px] font-bold px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-500 border border-amber-500/20 hover:bg-amber-500/20 active:scale-95 transition-all cursor-pointer flex items-center gap-1"
+                        >
+                          {totalReturnsCount} Devoluciones ➜
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>Ingresos (Venta Total)</p>
+                      <p className="text-2xl font-black font-mono text-emerald-500">${formattedRevenue}</p>
+                    </div>
+                    <div>
+                      <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>Costo de Adquisición</p>
+                      <p className="text-2xl font-black font-mono text-gray-400">${formattedCost}</p>
+                    </div>
+                  </div>
+
+                  <div className={cn("h-px", darkMode ? "bg-white/6" : "bg-gray-200/60")} />
+
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>Utilidad Operativa</p>
+                      <p className={cn("text-xl font-black font-mono", hasLoss ? "text-red-500" : "text-emerald-500")}>
+                        {hasLoss ? '-' : ''}${formattedUtility}
+                      </p>
+                    </div>
+                    <div className={cn("px-4 py-2 rounded-xl border flex flex-col items-center",
+                      hasLoss 
+                        ? (darkMode ? "bg-red-500/10 border-red-500/20 text-red-400" : "bg-red-50 border-red-200 text-red-700")
+                        : (darkMode ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" : "bg-emerald-50 border-emerald-200 text-emerald-700")
+                    )}>
+                      <span className="text-[9px] font-bold uppercase tracking-wider">Margen Bruto</span>
+                      <span className="text-sm font-black font-mono">{marginPct}%</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 1. TOP CLIENTES DEL PERIODO */}
+                <div className="space-y-2.5">
+                  <p className={cn("text-[9.5px] font-black uppercase tracking-wider", darkMode ? "text-gray-500" : "text-gray-400")}>📊 Impacto por Cliente (Top 3 Ventas)</p>
+                  <div className="space-y-2">
+                    {topClientsList.map((c, i) => {
+                      const cMargin = c.revenue > 0 ? ((c.revenue - c.cost) / c.revenue * 100).toFixed(1) : '0.0';
+                      const isLoss = c.revenue - c.cost < 0;
+                      return (
+                        <div key={i} className={cn("p-3 rounded-xl border flex items-center justify-between text-xs", darkMode ? "bg-white/3 border-white/5" : "bg-white border-gray-100 shadow-sm")}>
+                          <div className="min-w-0 flex-1 pr-4">
+                            <p className={cn("font-bold truncate", darkMode ? "text-gray-200" : "text-gray-800")}>{c.name}</p>
+                            <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{c.qty} cajas operadas</p>
+                          </div>
+                          <div className="text-right shrink-0 flex items-center gap-3">
+                            <div>
+                              <p className="font-semibold font-mono text-emerald-500">${c.revenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                              <p className={cn("text-[8px] font-bold uppercase", darkMode ? "text-gray-600" : "text-gray-400")}>VTA Total</p>
+                            </div>
+                            <div className={cn("px-2 py-1 rounded-lg text-[9px] font-black font-mono min-w-[50px] text-center",
+                              isLoss 
+                                ? (darkMode ? "bg-red-500/10 text-red-400" : "bg-red-50 text-red-700")
+                                : (darkMode ? "bg-emerald-500/10 text-emerald-400" : "bg-emerald-50 text-emerald-700")
+                            )}>
+                              {cMargin}%
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {topClientsList.length === 0 && (
+                      <p className={cn("text-xs text-center py-4", darkMode ? "text-gray-600" : "text-gray-400")}>Sin transacciones en este periodo</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* 2. DYNAMIC COST VS REVENUE PER FILM SIZE */}
+                <div className="space-y-2.5">
+                  <p className={cn("text-[9.5px] font-black uppercase tracking-wider", darkMode ? "text-gray-500" : "text-gray-400")}>📦 Márgenes y Costos por Medida y Tipo</p>
+                  <div className="overflow-x-auto rounded-xl border border-white/5">
+                    <table className="w-full text-xs text-left">
+                      <thead className={cn("text-[9px] font-black uppercase tracking-wider border-b", darkMode ? "bg-white/4 border-white/8 text-gray-500" : "bg-gray-50 border-gray-100 text-gray-400")}>
+                        <tr>
+                          <th className="px-3 py-2">Peligula / Medida</th>
+                          <th className="px-3 py-2 text-center">Cajas</th>
+                          <th className="px-3 py-2 text-right">VTA Prom.</th>
+                          <th className="px-3 py-2 text-right">Costo Prom.</th>
+                          <th className="px-3 py-2 text-center">Margen</th>
+                        </tr>
+                      </thead>
+                      <tbody className={cn("divide-y", darkMode ? "divide-white/5" : "divide-gray-100")}>
+                        {productList.map((p, i) => {
+                          const avgVta = p.qty > 0 ? (p.revenue / p.qty) : 0;
+                          const avgCost = p.qty > 0 ? (p.cost / p.qty) : 0;
+                          const pMargin = p.revenue > 0 ? ((p.revenue - p.cost) / p.revenue * 100).toFixed(1) : '0.0';
+                          const isLoss = p.revenue - p.cost < 0;
+
+                          return (
+                            <tr key={i} className={darkMode ? "bg-white/1" : "bg-white"}>
+                              <td className="px-3 py-2.5 font-bold">
+                                <span className={cn("px-1.5 py-0.5 rounded text-[8.5px] uppercase font-black mr-1.5", 
+                                  p.type === 'DIHL' ? (darkMode ? "bg-blue-500/20 text-blue-400" : "bg-blue-100 text-blue-700") :
+                                  p.type === 'DIML' ? (darkMode ? "bg-purple-500/20 text-purple-400" : "bg-purple-100 text-purple-700") :
+                                  (darkMode ? "bg-[#ED1C24]/20 text-[#ED1C24]" : "bg-red-100 text-red-700")
+                                )}>
+                                  {p.type}
+                                </span>
+                                {p.size}
+                              </td>
+                              <td className="px-3 py-2.5 text-center font-bold">{p.qty}</td>
+                              <td className="px-3 py-2.5 text-right font-mono text-emerald-500 font-semibold">${avgVta.toFixed(2)}</td>
+                              <td className="px-3 py-2.5 text-right font-mono text-gray-500">${avgCost.toFixed(2)}</td>
+                              <td className={cn("px-3 py-2.5 text-center font-black font-mono", isLoss ? "text-red-500" : "text-emerald-500")}>
+                                {pMargin}%
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        {productList.length === 0 && (
+                          <tr>
+                            <td colSpan={5} className={cn("text-center py-4", darkMode ? "text-gray-600" : "text-gray-400")}>No hay productos registrados</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* 3. EXPERT CONCLUSION */}
+                <div className="space-y-2">
+                  <p className={cn("text-[9.5px] font-black uppercase tracking-wider", darkMode ? "text-gray-500" : "text-gray-400")}>🔍 Conclusión de Auditoría</p>
+                  <div className={cn("p-4 rounded-xl border text-[11px] leading-relaxed font-semibold",
+                    hasLoss 
+                      ? (darkMode ? "bg-red-500/5 border-red-500/15 text-red-400" : "bg-red-50/50 border-red-200 text-red-800")
+                      : (darkMode ? "bg-emerald-500/5 border-emerald-500/15 text-emerald-400" : "bg-emerald-50/50 border-red-200 text-emerald-800")
+                  )}>
+                    {hasLoss ? (
+                      <p>
+                        ⚠️ **Pérdida Operativa del {marginPct}%**: En este período, el margen consolidado es negativo debido a que el costo promedio de adquisición general superó a los ingresos promedio facturados. Revise en la tabla de arriba qué productos tienen margen negativo; comúnmente esto se debe a devoluciones o a precios de venta pactados muy bajos en comparación con el costo de compra FOB/CIF real.
+                      </p>
+                    ) : (
+                      <p>
+                        📈 **Ganancia Bruta Saludable del {marginPct}%**: Las operaciones demuestran una excelente rentabilidad. La medida con mayor rotación mantiene un diferencial positivo constante frente al costo de adquisición base, asegurando la sostenibilidad del negocio y los márgenes planificados.
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Footer */}
+              <div className={cn("px-6 py-4 border-t flex items-center justify-end shrink-0 bg-white/2", darkMode ? "border-white/8 bg-white/2" : "border-gray-100 bg-gray-50")}>
+                <button onClick={() => setShowFinancialInfoModal(false)}
+                  className="px-5 py-2.5 rounded-2xl text-xs font-bold bg-[#1A3A5C] text-white hover:bg-[#22487A] transition-colors shadow-md">
+                  Entendido
+                </button>
+              </div>
+
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── RETURNS AUDIT DETAIL MODAL ── */}
+      {showReturnsAuditDetail && (() => {
+        const datedReturns = allConsumos.filter(r => {
+          if (!r.is_return) return false;
+          const d = new Date(r.order_date);
+          if (dashboardStartDate && d < new Date(dashboardStartDate)) return false;
+          if (dashboardEndDate && d > new Date(dashboardEndDate)) return false;
+          return true;
+        }).sort((a, b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime());
+
+        return (
+          <div className="fixed inset-0 z-[9998] flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans','Inter',system-ui,sans-serif" }} onClick={() => setShowReturnsAuditDetail(false)}>
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+            <div className={cn(
+              "relative w-full max-w-2xl rounded-3xl shadow-2xl border overflow-hidden transition-all duration-300 transform scale-100 flex flex-col max-h-[80vh]",
+              darkMode ? "bg-[#16161A] border-white/10" : "bg-white border-gray-200"
+            )} onClick={e => e.stopPropagation()}>
+              {/* Header */}
+              <div className={cn("px-6 py-5 border-b flex items-center justify-between shrink-0", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+                <div className="flex items-center gap-2.5">
+                  <div className={cn("w-8 h-8 rounded-xl flex items-center justify-center border", darkMode ? "bg-amber-500/10 border-amber-500/20 text-amber-400" : "bg-amber-50 border-amber-200 text-amber-700")}>
+                    <TrendingDown size={16} />
+                  </div>
+                  <div>
+                    <h3 className={cn("text-sm font-black", darkMode ? "text-white" : "text-gray-900")}>Detalle de Devoluciones</h3>
+                    <p className={cn("text-[9px] font-bold uppercase tracking-wider mt-0.5", darkMode ? "text-amber-400" : "text-amber-600")}>Historial de Retornos en el Periodo Seleccionado</p>
+                  </div>
+                </div>
+                <button onClick={() => setShowReturnsAuditDetail(false)}
+                  className={cn("p-1.5 rounded-xl transition-colors", darkMode ? "hover:bg-white/8 text-gray-500 hover:text-gray-300" : "hover:bg-gray-100 text-gray-400 hover:text-gray-600")}>
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Content */}
+              <div className="overflow-x-auto overflow-y-auto custom-scrollbar flex-1">
+                <table className="w-full text-left text-xs">
+                  <thead className={cn("text-[9px] font-bold uppercase tracking-wider sticky top-0 z-10", darkMode ? "text-gray-600 bg-[#16161A]" : "text-gray-400 bg-white")}>
+                    <tr>
+                      <th className="px-5 py-3">Fecha</th>
+                      <th className="px-5 py-3">Cliente</th>
+                      <th className="px-5 py-3">Vendedor</th>
+                      <th className="px-5 py-3">Factura</th>
+                      <th className="px-5 py-3 text-center">Medida</th>
+                      <th className="px-5 py-3 text-center">Cajas</th>
+                      <th className="px-5 py-3 text-right">Valor</th>
+                      <th className="px-5 py-3 text-center">Acción</th>
+                    </tr>
+                  </thead>
+                  <tbody className={cn("divide-y", darkMode ? "divide-white/4" : "divide-gray-50")}>
+                    {datedReturns.map((r, i) => {
+                      const client = allClients.find(c => c.id === r.client_id);
+                      return (
+                        <tr key={i} className={cn("transition-colors", darkMode ? "hover:bg-white/3" : "hover:bg-amber-50/40")}>
+                          <td className={cn("px-5 py-3 font-medium", darkMode ? "text-gray-400" : "text-gray-600")}>{r.order_date}</td>
+                          <td className="px-5 py-3">
+                            <p className="font-semibold truncate max-w-[150px]">{client?.name || '—'}</p>
+                            <p className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>{client?.province || '—'}</p>
+                          </td>
+                          <td className={cn("px-5 py-3 text-[10px]", darkMode ? "text-gray-500" : "text-gray-400")}>{client?.salesperson || '—'}</td>
+                          <td className={cn("px-5 py-3 font-mono text-[10px]", darkMode ? "text-gray-500" : "text-gray-400")}>{r.invoice_number || '—'}</td>
+                          <td className="px-5 py-3 text-center">
+                            {r.size && <span className={cn("px-1.5 py-0.5 rounded text-[9px] font-black uppercase", darkMode ? "bg-white/10 text-gray-300" : "bg-gray-800 text-white")}>{r.size}</span>}
+                          </td>
+                          <td className="px-5 py-3 text-center">
+                            <span className="font-black text-amber-400">{r.quantity}</span>
+                          </td>
+                          <td className="px-5 py-3 text-right font-bold text-red-400">
+                            ${Math.abs(r.quantity * (r.unit_cost || 0)).toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+                          <td className="px-5 py-3 text-center">
+                            <button onClick={() => { if (client) { setSelectedClient(client); setView('clients'); setShowReturnsAuditDetail(false); setShowFinancialInfoModal(false); } }}
+                              className={cn("text-[9px] font-bold px-2.5 py-1 rounded-lg transition-colors inline-flex items-center gap-1",
+                                darkMode ? "bg-white/8 text-gray-400 hover:bg-white/12" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                              )}>
+                              <ArrowRight className="w-3 h-3" /> Ver
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {datedReturns.length === 0 && (
+                      <tr>
+                        <td colSpan={8} className={cn("px-5 py-10 text-center text-xs font-medium", darkMode ? "text-gray-600" : "text-gray-400")}>
+                          No hay devoluciones en este período
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Footer */}
+              <div className={cn("px-6 py-4 border-t flex items-center justify-end shrink-0 bg-white/2", darkMode ? "border-white/8 bg-white/2" : "border-gray-100 bg-gray-50")}>
+                <button onClick={() => setShowReturnsAuditDetail(false)}
+                  className="px-5 py-2.5 rounded-2xl text-xs font-bold bg-[#1A3A5C] text-white hover:bg-[#22487A] transition-colors shadow-md">
+                  Volver a Auditoría
+                </button>
+              </div>
+
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── SALES AUDIT DETAIL MODAL ── */}
+      {showSalesAuditDetail && (() => {
+        const datedSales = allConsumos.filter(r => {
+          if (r.is_return) return false;
+          const d = new Date(r.order_date);
+          if (dashboardStartDate && d < new Date(dashboardStartDate)) return false;
+          if (dashboardEndDate && d > new Date(dashboardEndDate)) return false;
+          return true;
+        }).sort((a, b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime());
+
+        return (
+          <div className="fixed inset-0 z-[9998] flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans','Inter',system-ui,sans-serif" }} onClick={() => setShowSalesAuditDetail(false)}>
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+            <div className={cn(
+              "relative w-full max-w-3xl rounded-3xl shadow-2xl border overflow-hidden transition-all duration-300 transform scale-100 flex flex-col max-h-[80vh]",
+              darkMode ? "bg-[#16161A] border-white/10" : "bg-white border-gray-200"
+            )} onClick={e => e.stopPropagation()}>
+              {/* Header */}
+              <div className={cn("px-6 py-5 border-b flex items-center justify-between shrink-0", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
+                <div className="flex items-center gap-2.5">
+                  <div className={cn("w-8 h-8 rounded-xl flex items-center justify-center border", darkMode ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" : "bg-emerald-50 border-emerald-200 text-emerald-700")}>
+                    <TrendingUp size={16} />
+                  </div>
+                  <div>
+                    <h3 className={cn("text-sm font-black", darkMode ? "text-white" : "text-gray-900")}>Detalle de Ventas</h3>
+                    <p className={cn("text-[9px] font-bold uppercase tracking-wider mt-0.5", darkMode ? "text-emerald-400" : "text-emerald-600")}>Historial de Transacciones en el Periodo Seleccionado</p>
+                  </div>
+                </div>
+                <button onClick={() => setShowSalesAuditDetail(false)}
+                  className={cn("p-1.5 rounded-xl transition-colors", darkMode ? "hover:bg-white/8 text-gray-500 hover:text-gray-300" : "hover:bg-gray-100 text-gray-400 hover:text-gray-600")}>
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Content */}
+              <div className="overflow-x-auto overflow-y-auto custom-scrollbar flex-1">
+                <table className="w-full text-left text-xs">
+                  <thead className={cn("text-[9px] font-bold uppercase tracking-wider sticky top-0 z-10", darkMode ? "text-gray-600 bg-[#16161A]" : "text-gray-400 bg-white")}>
+                    <tr>
+                      <th className="px-5 py-3">Fecha</th>
+                      <th className="px-5 py-3">Cliente</th>
+                      <th className="px-5 py-3">Vendedor</th>
+                      <th className="px-5 py-3">Factura</th>
+                      <th className="px-5 py-3 text-center">Medida</th>
+                      <th className="px-5 py-3 text-center">Cajas</th>
+                      <th className="px-5 py-3 text-right">P. Unitario</th>
+                      <th className="px-5 py-3 text-right">Total</th>
+                      <th className="px-5 py-3 text-center">Acción</th>
+                    </tr>
+                  </thead>
+                  <tbody className={cn("divide-y", darkMode ? "divide-white/4" : "divide-gray-50")}>
+                    {datedSales.map((r, i) => {
+                      const client = allClients.find(c => c.id === r.client_id);
+                      const price = (r.sale_price !== null && r.sale_price !== undefined) ? r.sale_price : (r.unit_cost || 0);
+                      return (
+                        <tr key={i} className={cn("transition-colors", darkMode ? "hover:bg-white/3" : "hover:bg-gray-50/60")}>
+                          <td className={cn("px-5 py-3 font-medium", darkMode ? "text-gray-400" : "text-gray-600")}>{r.order_date}</td>
+                          <td className="px-5 py-3">
+                            <p className="font-semibold truncate max-w-[150px]">{client?.name || '—'}</p>
+                            <p className={cn("text-[9px]", darkMode ? "text-gray-600" : "text-gray-400")}>{client?.province || '—'}</p>
+                          </td>
+                          <td className={cn("px-5 py-3 text-[10px]", darkMode ? "text-gray-500" : "text-gray-400")}>{client?.salesperson || '—'}</td>
+                          <td className={cn("px-5 py-3 font-mono text-[10px]", darkMode ? "text-gray-500" : "text-gray-400")}>{r.invoice_number || '—'}</td>
+                          <td className="px-5 py-3 text-center">
+                            {r.size && (
+                              <span className={cn("px-1.5 py-0.5 rounded text-[8.5px] uppercase font-black", 
+                                r.film_type === 'DIHL' ? (darkMode ? "bg-blue-500/20 text-blue-400" : "bg-blue-100 text-blue-700") :
+                                r.film_type === 'DIML' ? (darkMode ? "bg-purple-500/20 text-purple-400" : "bg-purple-100 text-purple-700") :
+                                (darkMode ? "bg-[#ED1C24]/20 text-[#ED1C24]" : "bg-red-100 text-red-700")
+                              )}>
+                                {r.film_type || 'DIHT'} {r.size}
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-5 py-3 text-center">
+                            <span className="font-black text-emerald-500">{r.quantity}</span>
+                          </td>
+                          <td className="px-5 py-3 text-right font-mono text-gray-500">
+                            ${price.toFixed(2)}
+                          </td>
+                          <td className="px-5 py-3 text-right font-bold text-emerald-500">
+                            ${(r.quantity * price).toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+                          <td className="px-5 py-3 text-center">
+                            <button onClick={() => { if (client) { setSelectedClient(client); setView('clients'); setShowSalesAuditDetail(false); setShowFinancialInfoModal(false); } }}
+                              className={cn("text-[9px] font-bold px-2.5 py-1 rounded-lg transition-colors inline-flex items-center gap-1",
+                                darkMode ? "bg-white/8 text-gray-400 hover:bg-white/12" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                              )}>
+                              <ArrowRight className="w-3 h-3" /> Ver
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {datedSales.length === 0 && (
+                      <tr>
+                        <td colSpan={9} className={cn("px-5 py-10 text-center text-xs font-medium", darkMode ? "text-gray-600" : "text-gray-400")}>
+                          No hay ventas en este período
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Footer */}
+              <div className={cn("px-6 py-4 border-t flex items-center justify-end shrink-0 bg-white/2", darkMode ? "border-white/8 bg-white/2" : "border-gray-100 bg-gray-50")}>
+                <button onClick={() => setShowSalesAuditDetail(false)}
+                  className="px-5 py-2.5 rounded-2xl text-xs font-bold bg-[#1A3A5C] text-white hover:bg-[#22487A] transition-colors shadow-md">
+                  Volver a Auditoría
+                </button>
+              </div>
+
             </div>
           </div>
         );
@@ -15604,7 +16455,7 @@ ${sectionsHtml}
               </button>
               <button onClick={() => {
                 const ng: Record<string,number> = {};
-                Object.entries(goalsEditForm).forEach(([k,v]) => { ng[k] = parseInt(v) || 0; });
+                Object.entries(goalsEditForm).forEach(([k,v]) => { ng[k] = parseInt(v as string) || 0; });
                 setSalespersonGoals(ng);
                 localStorage.setItem('sp_goals', JSON.stringify(ng));
                 setShowGoalsModal(false);
@@ -15813,6 +16664,84 @@ ${sectionsHtml}
           </div>
         );
       })()}
+
+      {/* ── AI Financial Analysis Modal ─────────────────────────────────────── */}
+      {showFinancialAnalysis && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4" style={{backdropFilter:'blur(8px)', backgroundColor:'rgba(0,0,0,0.6)'}}>
+          <div className={cn(
+            "relative w-full max-w-2xl max-h-[85vh] rounded-2xl border flex flex-col shadow-2xl",
+            darkMode ? "bg-[#0F0F13] border-white/10" : "bg-white border-gray-200"
+          )}>
+            {/* Header */}
+            <div className={cn("flex items-center justify-between px-6 py-4 border-b shrink-0", darkMode ? "border-white/8" : "border-gray-100")}>
+              <div className="flex items-center gap-3">
+                <div className={cn("w-8 h-8 rounded-xl flex items-center justify-center", darkMode ? "bg-violet-500/15" : "bg-violet-100")}>
+                  <Sparkles size={16} className="text-violet-400" />
+                </div>
+                <div>
+                  <p className={cn("text-sm font-black", darkMode ? "text-white" : "text-gray-900")}>Análisis Financiero IA</p>
+                  <p className={cn("text-[9px] font-medium uppercase tracking-wider", darkMode ? "text-gray-600" : "text-gray-400")}>
+                    {!dashboardStartDate && !dashboardEndDate ? 'Todo el período' : `${dashboardStartDate || '...'} → ${dashboardEndDate || '...'}`} · Powered by Claude
+                  </p>
+                </div>
+              </div>
+              <button onClick={() => setShowFinancialAnalysis(false)}
+                className={cn("w-8 h-8 rounded-xl flex items-center justify-center transition-colors", darkMode ? "hover:bg-white/8 text-gray-500" : "hover:bg-gray-100 text-gray-400")}>
+                <XIcon size={16} />
+              </button>
+            </div>
+
+            {/* KPI summary strip */}
+            <div className={cn("flex shrink-0 border-b", darkMode ? "border-white/8" : "border-gray-100")}>
+              {[
+                { label: 'Costo Total', value: '$' + ((globalMetrics as any).totalCost || 0).toLocaleString('en-US', {minimumFractionDigits:2}), color: darkMode ? 'text-gray-300' : 'text-gray-700' },
+                { label: 'Venta Total', value: '$' + ((globalMetrics as any).totalRevenue || 0).toLocaleString('en-US', {minimumFractionDigits:2}), color: 'text-emerald-500' },
+                { label: 'Utilidad', value: '$' + ((globalMetrics as any).totalUtility || 0).toLocaleString('en-US', {minimumFractionDigits:2}), color: (globalMetrics as any).totalUtility > 0 ? 'text-emerald-500' : 'text-red-400' },
+                { label: 'Margen', value: (globalMetrics as any).totalRevenue > 0 ? (((globalMetrics as any).totalUtility / (globalMetrics as any).totalRevenue) * 100).toFixed(2) + '%' : '—', color: (globalMetrics as any).totalUtility > 0 ? 'text-violet-400' : 'text-red-400' },
+              ].map((kpi, i) => (
+                <div key={i} className={cn("flex-1 px-4 py-3 text-center", i < 3 ? (darkMode ? "border-r border-white/8" : "border-r border-gray-100") : "")}>
+                  <p className={cn("text-[8px] font-bold uppercase tracking-wider mb-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{kpi.label}</p>
+                  <p className={cn("text-xs font-black font-mono", kpi.color)}>{kpi.value}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto px-6 py-4 custom-scrollbar">
+              {financialAnalysisLoading ? (
+                <div className="flex flex-col items-center justify-center h-48 gap-4">
+                  <div className="relative w-12 h-12">
+                    <div className="absolute inset-0 rounded-full border-2 border-violet-500/20" />
+                    <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-violet-500 animate-spin" />
+                    <div className="absolute inset-2 rounded-full border border-violet-400/30 border-t-violet-400 animate-spin" style={{animationDuration:'1.5s',animationDirection:'reverse'}} />
+                  </div>
+                  <div className="text-center">
+                    <p className={cn("text-xs font-bold", darkMode ? "text-gray-300" : "text-gray-700")}>Analizando datos financieros...</p>
+                    <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>Claude está procesando el período</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="pb-2">
+                  {renderAnalysisMarkdown(financialAnalysisText, darkMode)}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            {!financialAnalysisLoading && financialAnalysisText && (
+              <div className={cn("px-6 py-3 border-t shrink-0 flex items-center justify-between", darkMode ? "border-white/8" : "border-gray-100")}>
+                <p className={cn("text-[8px] font-medium", darkMode ? "text-gray-700" : "text-gray-400")}>Análisis generado por IA · No constituye asesoría financiera profesional</p>
+                <button onClick={runFinancialAnalysis}
+                  className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[9px] font-bold transition-all hover:scale-105",
+                    darkMode ? "bg-violet-500/15 text-violet-400 hover:bg-violet-500/25 border border-violet-500/20" : "bg-violet-50 text-violet-600 hover:bg-violet-100 border border-violet-200")}>
+                  <Sparkles size={9} />
+                  Regenerar
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
     </div>
   );
