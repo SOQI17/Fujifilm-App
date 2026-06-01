@@ -7174,9 +7174,9 @@ ${rows.map(r=>{
               </div>
             </div>
               <div className={dashboardView === 'compras' ? 'hidden' : undefined}>
-              <div className="grid grid-cols-5 gap-4">
+              <div className="grid grid-cols-3 gap-6 mb-8">
               {loading ? (
-                Array.from({ length: 5 }).map((_, i) => (
+                Array.from({ length: 3 }).map((_, i) => (
                   <React.Fragment key={i}><SkeletonDashboardCard darkMode={darkMode} /></React.Fragment>
                 ))
               ) : (<>
