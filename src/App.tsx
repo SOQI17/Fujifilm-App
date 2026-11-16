@@ -56,6 +56,17 @@ const normFilmType = (ft?: string | null): string => {
 };
 // Etiqueta visible del tipo de película
 const filmLabel = (ft?: string | null): string => ({ DIHT: 'DI-HT', DIHL: 'DI-HL', DIML: 'DI-ML' } as Record<string, string>)[normFilmType(ft)] || String(ft || '');
+// Aplica operaciones de Firestore en lotes de 450 (límite de 500 por lote).
+// Cada lote es atómico; si uno falla, la promesa se rechaza y el llamador se detiene.
+const commitInChunks = async (items: any[], op: (b: ReturnType<typeof writeBatch>, item: any) => void) => {
+  for (let i = 0; i < items.length; i += 450) {
+    const b = writeBatch(db);
+    items.slice(i, i + 450).forEach(item => op(b, item));
+    await b.commit();
+  }
+};
+// Nombre para ventas cuyo cliente ya no existe en /clientes (se muestra el ID para poder rastrearlo)
+const missingClientLabel = (clientId: unknown) => `Cliente no encontrado (ID ${clientId ?? '—'})`;
 // Cantidad neta: las devoluciones restan.
 const effectiveQty = (r: { quantity: number; is_return?: boolean }) => r.is_return ? -r.quantity : r.quantity;
 // m² por caja según medida y tipo de película (datos de Fujifilm DI-HT/DI-HL/DI-ML)
@@ -2933,21 +2944,20 @@ function App() {
     const clientNameCols = ['cliente', 'client', 'nombre cliente', 'nombre_cliente', 'razón social', 'razon social', 'name', 'nombre'];
     const rucCols = ['ruc', 'ruc/id', 'ruc_id', 'cedula', 'identificacion'];
     // COD CLIENTE is the primary deduplication key — match exact column names first
-    const codeCols = ['cod cliente', 'codigo2', 'codigo cliente', 'código cliente', 'codcliente', 'client_code', 'client code', 'cod', 'codigo', 'código'];
+    const codeCols = ['cod cliente', 'codigo2', 'codigo cliente', 'código cliente', 'codcliente', 'client_code', 'client code'];  // "CODIGO" solo = código de producto, no de cliente
 
     let clientNameVal = '';
     let rucVal = '';
     let codeVal = '';
 
+    // Código de cliente: se recorre la lista en orden de prioridad, así "COD CLIENTE"/"CODIGO2"
+    // ganan a "CODIGO" (que en los reportes de ventas es el código del PRODUCTO).
+    for (const c of codeCols) {
+      const k = rowKeys.find(key => norm(key) === norm(c) && String(row[key] ?? '').trim() !== '');
+      if (k) { codeVal = norm(row[k]); break; }
+    }
     rowKeys.forEach(k => {
       const kn = norm(k);
-      // Prioritize exact matches for code columns (avoid false positives from "codigo" matching "codigo2")
-      if (!codeVal) {
-        // Try exact match first
-        if (codeCols.some(c => kn === norm(c))) codeVal = norm(row[k]);
-        // Then partial match if still empty
-        else if (codeCols.some(c => kn.includes(norm(c)))) codeVal = norm(row[k]);
-      }
       if (!rucVal && rucCols.some(c => kn === norm(c))) rucVal = norm(row[k]);
       if (!clientNameVal && clientNameCols.some(c => kn === norm(c) || kn.includes(norm(c)))) clientNameVal = norm(row[k]);
     });
@@ -3184,7 +3194,7 @@ function App() {
       }
       // Fallback: partial match
       for (const c of candidates) {
-        const key = rowKeys.find(k => norm(k).includes(norm(c)) || norm(c).includes(norm(k)));
+        const key = rowKeys.find(k => norm(k).includes(norm(c)));
         if (key && row[key] !== undefined && row[key] !== '') return String(row[key]).trim();
       }
       return '';
@@ -3193,7 +3203,7 @@ function App() {
       name: getExact(['cliente', 'client', 'nombre cliente', 'nombre', 'name']) || 'Sin nombre',
       province: getExact(['provincia', 'province', 'ciudad', 'city']) || '',
       // COD CLIENTE is the exact column name in our CSV; CODIGO2 is the raw Excel column name
-      clientCode: getExact(['cod cliente', 'codigo2', 'codigo cliente', 'código cliente', 'client_code', 'cod', 'codigo']) || '',
+      clientCode: getExact(['cod cliente', 'codigo2', 'codigo cliente', 'código cliente', 'client_code']) || '',
       salesperson: getExact(['vendedor', 'salesperson', 'asesor', 'representante']) || '',
     };
   };
@@ -3322,7 +3332,8 @@ function App() {
             });
             if (existingRec) {
               const hasDiff = 
-                (tempRecord.unit_cost !== undefined && tempRecord.unit_cost !== existingRec.unit_cost) ||
+                (tempRecord.unit_cost != null && tempRecord.unit_cost !== existingRec.unit_cost) ||
+              (tempRecord.sale_price != null && tempRecord.sale_price !== existingRec.sale_price) ||
                 (tempRecord.batch_number !== '' && tempRecord.batch_number !== existingRec.batch_number) ||
                 (tempRecord.expiry_date !== '2099-12-31' && tempRecord.expiry_date !== existingRec.expiry_date) ||
                 (tempRecord.film_type !== undefined && tempRecord.film_type !== existingRec.film_type) ||
@@ -3382,7 +3393,8 @@ function App() {
           });
           if (existingRec2) {
             const hasDiff2 = 
-              (tempRecord2.unit_cost !== undefined && tempRecord2.unit_cost !== existingRec2.unit_cost) ||
+              (tempRecord2.unit_cost != null && tempRecord2.unit_cost !== existingRec2.unit_cost) ||
+              (tempRecord2.sale_price != null && tempRecord2.sale_price !== existingRec2.sale_price) ||
               (tempRecord2.batch_number !== '' && tempRecord2.batch_number !== existingRec2.batch_number) ||
               (tempRecord2.expiry_date !== '2099-12-31' && tempRecord2.expiry_date !== existingRec2.expiry_date) ||
               (tempRecord2.film_type !== undefined && tempRecord2.film_type !== existingRec2.film_type) ||
@@ -3429,7 +3441,8 @@ function App() {
           const existingForNew = allConsumos.find(r => r.invoice_number && temp.invoice_number && normInvoice(r.invoice_number) === normInvoice(temp.invoice_number) && r.size === temp.size && Math.abs(r.quantity) === Math.abs(temp.quantity));
           if (existingForNew && existingForNew.film_type === 'DIHL') {
             const hasDiff = 
-              (temp.unit_cost !== undefined && temp.unit_cost !== existingForNew.unit_cost) ||
+              (temp.unit_cost != null && temp.unit_cost !== existingForNew.unit_cost) ||
+              (temp.sale_price != null && temp.sale_price !== existingForNew.sale_price) ||
               (temp.batch_number !== '' && temp.batch_number !== existingForNew.batch_number) ||
               (temp.expiry_date !== '2099-12-31' && temp.expiry_date !== existingForNew.expiry_date) ||
               (temp.order_date !== existingForNew.order_date);
@@ -3458,7 +3471,8 @@ function App() {
           );
           if (existingFinal && existingFinal.film_type === 'DIHL') {
             const hasDiff = 
-              (temp.unit_cost !== undefined && temp.unit_cost !== existingFinal.unit_cost) ||
+              (temp.unit_cost != null && temp.unit_cost !== existingFinal.unit_cost) ||
+              (temp.sale_price != null && temp.sale_price !== existingFinal.sale_price) ||
               (temp.batch_number !== '' && temp.batch_number !== existingFinal.batch_number) ||
               (temp.expiry_date !== '2099-12-31' && temp.expiry_date !== existingFinal.expiry_date) ||
               (temp.order_date !== existingFinal.order_date);
@@ -3546,7 +3560,8 @@ function App() {
             const clientId = allClients.find(c => c.name === clientName)?.id || 0;
             const record = mapRowToRecord(row, clientId, 0);
             const updateData: any = { film_type: 'DIHL' };
-            if (record.unit_cost !== undefined) updateData.unit_cost = record.unit_cost;
+            if (record.unit_cost != null) updateData.unit_cost = record.unit_cost;
+            if (record.sale_price != null) updateData.sale_price = record.sale_price;
             if (record.batch_number !== undefined && record.batch_number !== '') updateData.batch_number = record.batch_number;
             if (record.expiry_date !== undefined && record.expiry_date !== '2099-12-31') updateData.expiry_date = record.expiry_date;
             if (record.order_date !== undefined) updateData.order_date = record.order_date;
@@ -3664,7 +3679,8 @@ function App() {
       for (const { row, clientId, _updateId } of toUpdateFilmType) {
         const record = mapRowToRecord(row, clientId, 0);
         const updateData: any = {};
-        if (record.unit_cost !== undefined) updateData.unit_cost = record.unit_cost;
+        if (record.unit_cost != null) updateData.unit_cost = record.unit_cost;
+            if (record.sale_price != null) updateData.sale_price = record.sale_price;
         if (record.batch_number !== undefined && record.batch_number !== '') updateData.batch_number = record.batch_number;
         if (record.expiry_date !== undefined && record.expiry_date !== '2099-12-31') updateData.expiry_date = record.expiry_date;
         if (record.film_type !== undefined && record.film_type !== '') updateData.film_type = record.film_type;
@@ -3809,7 +3825,7 @@ Sé específico con los números. Usa un tono ejecutivo y directo.`;
       return {
         ID: record.id,
         'ID Cliente': record.client_id,
-        'Nombre Cliente': client?.name || 'Desconocido',
+        'Nombre Cliente': client?.name || missingClientLabel(record.client_id),
         'Fecha Pedido': record.order_date,
         Factura: record.invoice_number || '',
         Medida: record.size,
@@ -4322,9 +4338,12 @@ ${rows.map(r=>{
     if (!clientToDelete) return;
 
     try {
-      // 1. Delete client document
-      await deleteDoc(doc(db, "clientes", clientToDelete.id.toString()));
-      
+      // 1. Primero borrar TODAS las ventas del cliente en lotes atómicos.
+      //    Si algo falla se detiene aquí y el cliente NO se borra (antes quedaban
+      //    ventas huérfanas que aparecían como "Desconocido").
+      const recordsToDelete = allConsumos.filter(r => Number(r.client_id) === Number(clientToDelete.id));
+      await commitInChunks(recordsToDelete, (b, record) => b.delete(doc(db, "consumos", record.id.toString())));
+
       // 2. Delete associated altName if exists
       if (altNames[clientToDelete.id]) {
         try {
@@ -4334,16 +4353,8 @@ ${rows.map(r=>{
         }
       }
 
-      // 3. Delete all consumption records for this client
-      const recordsToDelete = allConsumos.filter(r => r.client_id === clientToDelete.id);
-      
-      // Delete records in parallel for better performance
-      await Promise.all(
-        recordsToDelete.map(record => 
-          deleteDoc(doc(db, "consumos", record.id.toString()))
-            .catch(e => console.warn(`Failed to delete record ${record.id}`, e))
-        )
-      );
+      // 3. Delete client document
+      await deleteDoc(doc(db, "clientes", clientToDelete.id.toString()));
 
       // 4. Update local state
       const deletedName = clientToDelete.name;
@@ -4390,13 +4401,11 @@ ${rows.map(r=>{
     setIsMerging(true);
     try {
       // 1. Move all consumos from mergeTarget → selectedClient
-      const targetConsumos = allConsumos.filter(r => r.client_id === mergeTarget.id);
-      await Promise.all(
-        targetConsumos.map(record =>
-          updateDoc(doc(db, 'consumos', record.id.toString()), { client_id: selectedClient.id })
-            .catch(e => console.warn(`Failed to move record ${record.id}`, e))
-        )
-      );
+      // Lotes atómicos: si falla, se detiene y el duplicado NO se borra
+      // (antes los errores se ignoraban y quedaban ventas huérfanas).
+      const targetConsumos = allConsumos.filter(r => Number(r.client_id) === Number(mergeTarget.id));
+      await commitInChunks(targetConsumos, (b, record) =>
+        b.update(doc(db, 'consumos', record.id.toString()), { client_id: selectedClient.id }));
 
       // 2. Merge alt_codes: accumulate both codes
       const existingAltCodes: string[] = selectedClient.alt_codes || [];
@@ -4717,7 +4726,7 @@ ${rows.map(r=>{
         }, 0);
         return {
           id: cId,
-          name: c?.name || 'Desconocido',
+          name: c?.name || missingClientLabel(cId),
           province: c?.province || '—',
           salesperson: c?.salesperson || '—',
           value: clientDist[cId] || 0,
@@ -5462,7 +5471,7 @@ ${rows.map(r=>{
     const byClient: Record<number, { name: string; units: number; value: number; records: typeof returns }> = {};
     returns.forEach(r => {
       const client = allClients.find(c => c.id === r.client_id);
-      if (!byClient[r.client_id]) byClient[r.client_id] = { name: client?.name || 'Desconocido', units: 0, value: 0, records: [] };
+      if (!byClient[r.client_id]) byClient[r.client_id] = { name: client?.name || missingClientLabel(r.client_id), units: 0, value: 0, records: [] };
       byClient[r.client_id].units += Math.abs(r.quantity);
       byClient[r.client_id].value += Math.abs(r.quantity * unitSalePrice(r));
       byClient[r.client_id].records.push(r);
@@ -8389,7 +8398,7 @@ ${rows.map(r=>{
                           batch: r.batch_number,
                           qty: r.quantity,
                           ref: r.invoice_number || '—',
-                          detail: allClients.find(c => c.id === r.client_id)?.name || 'Desconocido',
+                          detail: allClients.find(c => c.id === r.client_id)?.name || missingClientLabel(r.client_id),
                           ft: r.film_type || 'DIHT'
                         }))
                       ].sort((a, b) => parseDate(b.date).getTime() - parseDate(a.date).getTime()).map((mv, i) => (
@@ -10101,7 +10110,7 @@ ${rows.map(r=>{
                                   if (rft !== ft) return;
                                   const qty = r.is_return ? -r.quantity : r.quantity;
                                   const client = allClients.find(c => c.id === r.client_id);
-                                  const name = client?.name || 'Desconocido';
+                                  const name = client?.name || missingClientLabel(r.client_id);
                                   if (!clientMap[name]) clientMap[name] = { name, salesperson: client?.salesperson || '', province: client?.province || '', boxes: 0, m2: 0, invoices: [] };
                                   clientMap[name].boxes += qty;
                                   clientMap[name].m2 = parseFloat((clientMap[name].m2 + getTotalM2(qty, sz, ft)).toFixed(2));
