@@ -13303,32 +13303,34 @@ ${rows.map(r=>{
                     </div>
                   </div>
 
-                  {/* Datos de ejemplo cargados automáticamente (no son ventas reales) */}
-                  {role === 'admin' && allConsumos.some(isSeedRecord) && (() => {
-                    const seeds = allConsumos.filter(isSeedRecord);
-                    const cajas = seeds.reduce((s, r) => s + effectiveQty(r), 0);
+                  {/* Ventas sin número de factura (incluye los 247 de ejemplo que cargaba src/data.js) */}
+                  {role === 'admin' && allConsumos.some(r => !String(r.invoice_number || '').trim()) && (() => {
+                    const noInvoice = allConsumos.filter(r => !String(r.invoice_number || '').trim());
+                    const cajas = noInvoice.reduce((s, r) => s + effectiveQty(r), 0);
+                    const seedCount = noInvoice.filter(isSeedRecord).length;
                     return (
                       <div className={cn("mt-4 p-4 rounded-xl border", darkMode ? "bg-red-500/8 border-red-500/20" : "bg-red-50 border-red-200")}>
-                        <p className="text-[11px] font-black uppercase tracking-wider text-red-500 mb-1">Datos de ejemplo en la base</p>
+                        <p className="text-[11px] font-black uppercase tracking-wider text-red-500 mb-1">Ventas sin factura</p>
                         <p className={cn("text-[10px] mb-3", darkMode ? "text-gray-400" : "text-gray-500")}>
-                          Hay <strong>{seeds.length} registros ({cajas} cajas)</strong> que no son ventas reales: los cargó la app como ejemplo
-                          (sin factura, fecha 01-01-2025, lotes "B-…"). Inflan 2025 y aparecen como "Cliente no encontrado". Bórralos antes de importar tus CSV.
+                          Hay <strong>{noInvoice.length} ventas ({cajas} cajas)</strong> sin número de factura
+                          {seedCount > 0 && <> — <strong>{seedCount}</strong> son los datos de ejemplo (fecha 01-01-2025, lotes "B-…")</>}.
+                          Bórralas antes de importar tus CSV. Clientes, impresoras e inventario no se tocan.
                         </p>
                         <button
                           onClick={async () => {
-                            if (!window.confirm(`¿Borrar ${seeds.length} registros de ejemplo (${cajas} cajas)? Las ventas reales no se tocan.`)) return;
+                            if (!window.confirm(`¿Borrar ${noInvoice.length} ventas SIN factura (${cajas} cajas)?\n\nNo se tocan las ventas con factura, los clientes, las impresoras ni el inventario. No se puede deshacer.`)) return;
                             try {
-                              await commitInChunks(seeds, (b, r) => b.delete(doc(db, 'consumos', String(r.id))));
-                              showToast(`Se borraron ${seeds.length} registros de ejemplo`, 'success');
-                              addAuditLog('delete_record', `Borró ${seeds.length} registros de ejemplo (${cajas} cj) cargados por src/data.js`);
+                              await commitInChunks(noInvoice, (b, r) => b.delete(doc(db, 'consumos', String(r.id))));
+                              showToast(`Se borraron ${noInvoice.length} ventas sin factura`, 'success');
+                              addAuditLog('delete_record', `Borró ${noInvoice.length} ventas sin factura (${cajas} cj)`);
                             } catch (e) {
-                              console.error('Error borrando datos de ejemplo:', e);
-                              showToast('No se pudieron borrar los datos de ejemplo. No se cambió nada.', 'error');
+                              console.error('Error borrando ventas sin factura:', e);
+                              showToast('No se pudieron borrar todas. Revisa los permisos e inténtalo de nuevo.', 'error');
                             }
                           }}
                           className="text-[10px] font-black uppercase tracking-wider bg-red-600 text-white px-3 py-1.5 rounded-lg hover:bg-red-500 transition-all"
                         >
-                          Borrar {seeds.length} registros de ejemplo →
+                          Borrar {noInvoice.length} ventas sin factura →
                         </button>
                       </div>
                     );
