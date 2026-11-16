@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, createContext, useContext, useCallback, useRef } from 'react';
-import { 
-  Search, Plus, Hospital, History, TrendingDown, TrendingUp, 
+import {
+  Search, Plus, Hospital, History, TrendingDown, TrendingUp,
   AlertCircle, Package, Calendar, MapPin, User, ChevronRight, Filter,
   Edit2, X, Save, Trash2, LayoutDashboard, Users, BarChart3, PieChart,
   Sun, Moon, Printer, Download, Upload, FileText, CheckCircle2, AlertTriangle,
@@ -8,8 +8,8 @@ import {
   Clock, PhoneCall, ArrowRight, Boxes, Layers, LogOut, Shield, Eye, UserCheck,
   Check as CheckIcon, BarChart2, Sparkles, X as XIcon, Info
 } from 'lucide-react';
-import { 
-  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, 
+import {
+  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Cell, AreaChart, Area, Legend,
 } from 'recharts';
 import { format, isAfter } from 'date-fns';
@@ -17,19 +17,86 @@ import * as XLSX from 'xlsx';
 import { cn } from './lib/utils';
 import { db } from './firebase';
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from 'firebase/auth';
-import { 
-  collection, 
-  onSnapshot, 
-  setDoc, 
+import {
+  collection,
+  onSnapshot,
+  setDoc,
   addDoc,
-  doc, 
-  deleteDoc, 
-  query, 
+  doc,
+  deleteDoc,
+  query,
   getDocs,
   writeBatch,
   updateDoc,
-  getDoc
+  getDoc,
+  orderBy,
+  limit
 } from 'firebase/firestore';
+
+// ── HELPERS COMUNES (fuente única de verdad para todas las vistas) ─────────
+// Las fechas se guardan como 'YYYY-MM-DD'. `new Date('YYYY-MM-DD')` las
+// interpreta en UTC, y en Ecuador (UTC-5) eso las corre al día anterior:
+// una venta del 1 de mes caía en el mes previo. parseDate usa hora local.
+const parseDate = (s?: string | null): Date => {
+  if (!s) return new Date(NaN);
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s).trim());
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return new Date(s);
+};
+// Fecha de hoy en hora local como 'YYYY-MM-DD' (toISOString usa UTC y después
+// de las 19:00 en Ecuador devolvía el día siguiente).
+const todayStr = (): string => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+// Tipo de película normalizado: vacío → 'DIHT'; 'DI-HL' → 'DIHL'; etc.
+const normFilmType = (ft?: string | null): string => {
+  const u = String(ft || '').toUpperCase().replace(/[^A-Z]/g, '');
+  return u || 'DIHT';
+};
+// Nombre comparable de cliente: sin tildes ni puntuación ("CIMEDLAB S.A." = "CIMEDLAB SA")
+const nameKey = (s: string) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  .toUpperCase().replace(/[.,;:'"()\-]/g, ' ').replace(/\s+/g, ' ').trim();
+// Ventas de ejemplo que cargaba src/data.js: sin factura, fecha 2025-01-01, lote "B-<cliente>-<medida>"
+const isSeedRecord = (r: { invoice_number?: string; order_date?: string; batch_number?: string; expiry_date?: string }) =>
+  !r.invoice_number && r.order_date === '2025-01-01' && /^B-\d+-\d+$/.test(String(r.batch_number || '')) && r.expiry_date === '2026-12-31';
+// Etiqueta visible del tipo de película
+const filmLabel = (ft?: string | null): string => ({ DIHT: 'DI-HT', DIHL: 'DI-HL', DIML: 'DI-ML' } as Record<string, string>)[normFilmType(ft)] || String(ft || '');
+// Aplica operaciones de Firestore en lotes de 450 (límite de 500 por lote).
+// Cada lote es atómico; si uno falla, la promesa se rechaza y el llamador se detiene.
+const commitInChunks = async (items: any[], op: (b: ReturnType<typeof writeBatch>, item: any) => void) => {
+  for (let i = 0; i < items.length; i += 450) {
+    const b = writeBatch(db);
+    items.slice(i, i + 450).forEach(item => op(b, item));
+    await b.commit();
+  }
+};
+// Nombre para ventas cuyo cliente ya no existe en /clientes (se muestra el ID para poder rastrearlo)
+const missingClientLabel = (clientId: unknown) => `Cliente no encontrado (ID ${clientId ?? '—'})`;
+// Cantidad neta: las devoluciones restan.
+const effectiveQty = (r: { quantity: number; is_return?: boolean }) => r.is_return ? -r.quantity : r.quantity;
+// m² por caja según medida y tipo de película (datos de Fujifilm DI-HT/DI-HL/DI-ML)
+// DI-HT: 100 hojas/caja | DI-HL y DI-ML: 150 hojas/caja (14x17 DI-HL: 100)
+const FILM_M2_PER_BOX: Record<string, Record<string, number>> = {
+  'DIHT': { '8x10': 5.16, '10x12': 7.50, '10x14': 9.03, '14x17': 15.38 },
+  'DIHL': { '8x10': 7.74, '10x12': 7.50, '10x14': 13.55, '14x17': 15.38 },
+  'DIML': { '8x10': 7.74, '10x14': 13.55 },
+};
+const getM2PerBox = (size: string, filmType?: string | null): number => {
+  const ft = normFilmType(filmType);
+  return FILM_M2_PER_BOX[ft]?.[size] ?? FILM_M2_PER_BOX.DIHT[size] ?? 0;
+};
+const getTotalM2 = (quantity: number, size: string, filmType?: string | null): number =>
+  parseFloat((quantity * getM2PerBox(size, filmType)).toFixed(2));
+
+// Ajustes compartidos entre usuarios: se guardan en Firestore (settings/<clave>)
+// y en localStorage como caché. Antes solo vivían en el navegador de cada PC.
+const SHARED_SETTING_KEYS = ['sp_goals', 'stock_minimums', 'imager_data'] as const;
+const saveSharedSetting = (key: typeof SHARED_SETTING_KEYS[number], value: unknown) => {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+  setDoc(doc(db, 'settings', key), { data: JSON.stringify(value), updatedAt: new Date().toISOString() })
+    .catch(e => console.warn(`No se pudo guardar settings/${key} en Firestore:`, e));
+};
 
 // ── TOAST SYSTEM ─────────────────────────────────────────────────────────────
 type ToastType = 'success' | 'error' | 'warning' | 'info';
@@ -217,7 +284,7 @@ function GlobalSearch({ darkMode, allClients, allConsumos, altNames, onSelectCli
       .map(c => {
         const totalM2 = allConsumos
           .filter(r => r.client_id === c.id)
-          .reduce((s: number, r: any) => s + (r.quantity * (r.size === '14x17' ? 19.19 : r.size === '10x14' ? 11.57 : r.size === '10x12' ? 9.77 : 5.16)), 0);
+          .reduce((s: number, r: any) => s + getTotalM2(effectiveQty(r), r.size, r.film_type), 0);
 
         // Reason — what matched
         let matchHint = '';
@@ -873,7 +940,6 @@ function UsersPanel({ darkMode }: { darkMode: boolean }) {
 }
 
 // Importación de la base de datos local
-import fujifilmData from './data.js';
 
 // --- TIPOS ---
 interface PrinterInfo {
@@ -1001,13 +1067,26 @@ const PURCHASE_ORDERS_2025 = [
 const FILM_PRICE_REF: Record<string, {costo: number; precio: number; margen: number}> = {
   'DIHT_8x10':  {costo: 31.29, precio: 62.58,  margen: 50.0},
   'DIHT_10x12': {costo: 39.07, precio: 78.14,  margen: 50.0},
-  'DIHT_11x14': {costo: 48.76, precio: 97.53,  margen: 50.0},
+  'DIHT_10x14': {costo: 48.76, precio: 97.53,  margen: 50.0},
   'DIHT_14x17': {costo: 78.41, precio: 156.82, margen: 50.0},
   'DIHL_8x10':  {costo: 61.18, precio: 122.35, margen: 50.0},
-  'DIHL_11x14': {costo: 115.28,precio: 230.57, margen: 50.0},
+  'DIHL_10x14': {costo: 115.28,precio: 230.57, margen: 50.0},
   'DIHL_14x17': {costo: 122.89,precio: 245.78, margen: 50.0},
   'DIML_8x10':  {costo: 68.33, precio: 136.65, margen: 50.0},
 };
+
+// ── Precio y costo por registro (misma regla en TODAS las vistas) ──────────
+// Precio de venta: sale_price del CSV → si falta, unit_cost → si falta, precio de referencia.
+const unitSalePrice = (r: { sale_price?: number | null; unit_cost?: number | null; film_type?: string | null; size: string }): number =>
+  (r.sale_price !== null && r.sale_price !== undefined)
+    ? r.sale_price
+    : (r.unit_cost || FILM_PRICE_REF[`${normFilmType(r.film_type)}_${r.size}`]?.precio || 0);
+// Costo: unit_cost (> 0) → si falta, costo de referencia.
+const unitCostOf = (r: { unit_cost?: number | null; film_type?: string | null; size: string }): number =>
+  (r.unit_cost && r.unit_cost > 0) ? r.unit_cost : (FILM_PRICE_REF[`${normFilmType(r.film_type)}_${r.size}`]?.costo || 0);
+// Ingreso neto del registro (las devoluciones restan)
+const recordRevenue = (r: { quantity: number; is_return?: boolean; sale_price?: number | null; unit_cost?: number | null; film_type?: string | null; size: string }): number =>
+  effectiveQty(r) * unitSalePrice(r);
 
 function PurchasesDashboardView({ darkMode, globalMetrics, allConsumos }: {
   darkMode: boolean;
@@ -1015,12 +1094,10 @@ function PurchasesDashboardView({ darkMode, globalMetrics, allConsumos }: {
   allConsumos: any[];
 }) {
   const orders = PURCHASE_ORDERS_2025 as unknown as any[];
-  const M2_PER_BOX: Record<string, number> = {
-    '20x25': 9.03, '25x30': 13.55, '26x36': 16.77, '35x43': 25.55,
-  };
-  const SIZE_PURCHASE_TO_SALES: Record<string,string> = { '20x25':'8x10','25x30':'10x12','26x36':'11x14','35x43':'14x17' };
-  const SIZE_SALES_TO_PURCHASE: Record<string,string> = { '8x10':'20x25','10x12':'25x30','11x14':'26x36','14x17':'35x43' };
-  const getM2Film = (qty: number, size: string) => qty * (M2_PER_BOX[size] || 9.03);
+  // Medidas de compra (cm) → medidas de venta (pulgadas), igual que el importador CSV.
+  const SIZE_PURCHASE_TO_SALES: Record<string,string> = { '20x25':'8x10','25x30':'10x12','26x36':'10x14','35x43':'14x17' };
+  // m² con la misma tabla canónica (FILM_M2_PER_BOX) que usa el resto de la app
+  const getM2Film = (qty: number, size: string, film?: string) => getTotalM2(qty, SIZE_PURCHASE_TO_SALES[size] || size, film);
 
   // Film items only
   const filmItems: any[] = orders.flatMap((o: any) =>
@@ -1036,7 +1113,7 @@ function PurchasesDashboardView({ darkMode, globalMetrics, allConsumos }: {
     if (!bySize[k]) bySize[k] = { qty: 0, costo: 0, m2: 0, film: i.cat.replace('film_','').toUpperCase() };
     bySize[k].qty += i.qty;
     bySize[k].costo += i.costo_total;
-    bySize[k].m2 += getM2Film(i.qty, i.size || '20x25');
+    bySize[k].m2 += getM2Film(i.qty, i.size || '20x25', i.cat.replace('film_','').toUpperCase());
   });
 
   // By type
@@ -1046,12 +1123,12 @@ function PurchasesDashboardView({ darkMode, globalMetrics, allConsumos }: {
     if (!byType[t]) byType[t] = { qty: 0, costo: 0, m2: 0 };
     byType[t].qty += i.qty;
     byType[t].costo += i.costo_total;
-    byType[t].m2 += getM2Film(i.qty, i.size || '20x25');
+    byType[t].m2 += getM2Film(i.qty, i.size || '20x25', t);
   });
 
   const totalFilmInversion = filmItems.reduce((s: number, i: any) => s + i.costo_total, 0);
   const totalFilmUnits = filmItems.reduce((s: number, i: any) => s + i.qty, 0);
-  const totalFilmM2 = filmItems.reduce((s: number, i: any) => s + getM2Film(i.qty, i.size || '20x25'), 0);
+  const totalFilmM2 = filmItems.reduce((s: number, i: any) => s + getM2Film(i.qty, i.size || '20x25', i.cat.replace('film_','').toUpperCase()), 0);
   const costoPerM2 = totalFilmM2 > 0 ? totalFilmInversion / totalFilmM2 : 0;
 
   // Estimated revenue from price reference (precio = 2× costo)
@@ -1064,16 +1141,15 @@ function PurchasesDashboardView({ darkMode, globalMetrics, allConsumos }: {
   const margenEstimado = 50.0; // confirmed from Excel
 
   // Real revenue from invoices (2025, no date filter)
-  const invoiceRevenue2025 = allConsumos.filter((r: any) => !r.is_return && r.order_date >= '2025-01-01' && r.order_date <= '2025-12-31')
-    .reduce((s: number, r: any) => s + r.quantity * (r.unit_cost || 0), 0);
+  const invoiceRevenue2025 = allConsumos.filter((r: any) => r.order_date >= '2025-01-01' && r.order_date <= '2025-12-31')
+    .reduce((s: number, r: any) => s + recordRevenue(r), 0);
 
   // Sales by size (2025)
   const sales2025: Record<string,{cajas:number;m2:number}> = {};
-  allConsumos.filter((r: any) => !r.is_return && r.order_date >= '2025-01-01').forEach((r: any) => {
+  allConsumos.filter((r: any) => !r.is_return && r.order_date >= '2025-01-01' && r.order_date <= '2025-12-31').forEach((r: any) => {
     if (!sales2025[r.size]) sales2025[r.size] = { cajas: 0, m2: 0 };
     sales2025[r.size].cajas += r.quantity;
-    const pSize = SIZE_SALES_TO_PURCHASE[r.size] || r.size;
-    sales2025[r.size].m2 += r.quantity * (M2_PER_BOX[pSize] || 9.03);
+    sales2025[r.size].m2 += getTotalM2(r.quantity, r.size, r.film_type);
   });
 
   // Size rows with real margin per medida
@@ -1102,8 +1178,8 @@ function PurchasesDashboardView({ darkMode, globalMetrics, allConsumos }: {
       <div className={cn('px-4 py-2.5 rounded-xl border flex items-center gap-3', darkMode ? 'bg-blue-500/8 border-blue-500/20' : 'bg-blue-50 border-blue-200')}>
         <span className="text-base shrink-0">📋</span>
         <p className={cn('text-[9px] leading-relaxed', darkMode ? 'text-blue-300' : 'text-blue-700')}>
-          <strong>Metodología:</strong> Inversión = costo landed (FOB + flete + impuestos + gastos locales). 
-          Precio de venta = 2× costo (margen 50% confirmado del Excel de importaciones). 
+          <strong>Metodología:</strong> Inversión = costo landed (FOB + flete + impuestos + gastos locales).
+          Precio de venta = 2× costo (margen 50% confirmado del Excel de importaciones).
           Revenue real 2025 usa facturas registradas con costo unitario en el sistema.
         </p>
       </div>
@@ -1480,7 +1556,7 @@ function ImagerAnalysis2024View({
     const manualId = imager2024ManualMatch[row.nombre];
     const client = manualId ? allClients.find(c => c.id === manualId) : findClient(row.nombre);
     const currentPrinters = client?.printers?.length || 0;
-    const consumos2025 = client ? allConsumos.filter((r: any) => r.client_id === client.id && new Date(r.order_date).getFullYear() >= 2025) : [];
+    const consumos2025 = client ? allConsumos.filter((r: any) => r.client_id === client.id && parseDate(r.order_date).getFullYear() >= 2025) : [];
     const m2_2025 = consumos2025.reduce((s: number, r: any) => s + getTotalM2(effectiveQty(r), r.size, r.film_type), 0);
     const isManual = !!manualId;
     return { ...row, client, currentPrinters, m2_2025, isManual };
@@ -1902,6 +1978,9 @@ function App() {
       localStorage.setItem('orimec_audit', JSON.stringify(updated));
       return updated;
     });
+    // Compartir con los demás usuarios (JSON quita campos undefined que Firestore rechaza)
+    setDoc(doc(db, 'audit_logs', entry.id), JSON.parse(JSON.stringify(entry)))
+      .catch(e => console.warn('No se pudo guardar el log en Firestore:', e));
   };
 
   // Goals modal
@@ -1945,7 +2024,41 @@ function App() {
       } catch (e) { console.warn('Firestore transit sync failed:', e); }
     }, e => console.warn('Firestore transit listener error:', e));
 
-    return () => { unsubFilm(); unsubTransit(); };
+    // Ajustes compartidos (metas, mínimos de stock, inventario Imager)
+    const settingSetters: Record<string, (v: any) => void> = {
+      sp_goals: v => setSalespersonGoals(v),
+      stock_minimums: v => setStockMinimums(v),
+      imager_data: v => setImagerData(v),
+    };
+    const unsubShared = SHARED_SETTING_KEYS.map(key => onSnapshot(doc(db, 'settings', key), (snap) => {
+      if (!snap.exists()) {
+        // Primera vez: subir lo que haya en este navegador para que lo vean los demás
+        const local = localStorage.getItem(key);
+        if (local && local !== '{}') saveSharedSetting(key, JSON.parse(local));
+        return;
+      }
+      try {
+        const parsed = JSON.parse(snap.data().data);
+        if (parsed && typeof parsed === 'object') {
+          settingSetters[key](parsed);
+          localStorage.setItem(key, JSON.stringify(parsed));
+        }
+      } catch (e) { console.warn(`Firestore ${key} sync failed:`, e); }
+    }, e => console.warn(`Firestore ${key} listener error:`, e)));
+
+    // Historial de auditoría compartido (antes solo local por PC)
+    const unsubAudit = onSnapshot(query(collection(db, 'audit_logs'), orderBy('timestamp', 'desc'), limit(500)), (snap) => {
+      const remote = snap.docs.map(d => d.data() as AuditLog);
+      setAuditLogs(prev => {
+        const byId = new Map<string, AuditLog>();
+        [...prev, ...remote].forEach(l => byId.set(l.id, l));
+        const merged = [...byId.values()].sort((a, b) => b.timestamp.localeCompare(a.timestamp)).slice(0, 500);
+        try { localStorage.setItem('orimec_audit', JSON.stringify(merged)); } catch {}
+        return merged;
+      });
+    }, e => console.warn('Firestore audit_logs listener error:', e));
+
+    return () => { unsubFilm(); unsubTransit(); unsubShared.forEach(u => u()); unsubAudit(); };
   }, []);
 
   useEffect(() => {
@@ -2007,152 +2120,17 @@ function App() {
   // Sync with Firestore
   useEffect(() => {
     const unsubClients = onSnapshot(collection(db, "clientes"), (snapshot) => {
+      // Ya no se cargan datos de ejemplo cuando la base está vacía (antes metían ventas ficticias)
       const docs = snapshot.docs.map(doc => doc.data() as Client);
-      // Only seed if there are NO clients at all AND we haven't seeded yet
-      // We use a local storage flag to remember if we've seeded
-      const hasSeeded = localStorage.getItem('orimec_seeded') === 'true';
-      
-      if (snapshot.empty && fujifilmData.clientes.length > 0 && !hasSeeded) {
-        const seedClients = async () => {
-          const batch = writeBatch(db);
-          fujifilmData.clientes.forEach(client => {
-            const docRef = doc(db, "clientes", client.id.toString());
-            batch.set(docRef, client);
-          });
-          await batch.commit();
-          localStorage.setItem('orimec_seeded', 'true');
-        };
-        seedClients();
-      } else {
-        setAllClients(docs.sort((a, b) => a.name.localeCompare(b.name)));
-      }
+      setAllClients(docs.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))));
     });
 
     const unsubConsumos = onSnapshot(collection(db, "consumos"), (snapshot) => {
       const docs = snapshot.docs.map(doc => doc.data() as ConsumptionRecord);
-      
-      const hasSeededConsumos = localStorage.getItem('orimec_seeded_consumos') === 'true';
-      
-      // Seed if empty
-      if (snapshot.empty && fujifilmData.consumos.length > 0 && !hasSeededConsumos) {
-        const seedData = async () => {
-          const batch = writeBatch(db);
-          fujifilmData.consumos.forEach(record => {
-            const docRef = doc(db, "consumos", record.id.toString());
-            batch.set(docRef, record);
-          });
-          await batch.commit();
-          localStorage.setItem('orimec_seeded_consumos', 'true');
-        };
-        seedData();
-      } else {
-        setAllConsumos(docs);
-      }
+      setAllConsumos(docs);
       setLoading(false);
     });
 
-    // One-time CSV Update Utility
-    const runCsvUpdate = async () => {
-      if (localStorage.getItem('orimec_scanner_update_done') === 'true') return;
-      
-      const newConsumos = [
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "14x17", invoice_number: "001001000070734", order_date: "2025-06-19", batch_number: "72512", quantity: 1, unit_cost: 78.04 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "14x17", invoice_number: "001001000070891", order_date: "2025-07-15", batch_number: "72512", quantity: 6, unit_cost: 78.043769 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "14x17", invoice_number: "001001000071136", order_date: "2025-09-02", batch_number: "72513", quantity: 4, unit_cost: 77.98 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000070739", order_date: "2025-06-19", batch_number: "72620", quantity: 1, unit_cost: 25.92 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000070734", order_date: "2025-06-19", batch_number: "72620", quantity: 3, unit_cost: 25.92 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000070756", order_date: "2025-06-23", batch_number: "72620", quantity: 6, unit_cost: 25.92 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000070757", order_date: "2025-06-23", batch_number: "72620", quantity: 6, unit_cost: 25.92 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000070891", order_date: "2025-07-15", batch_number: "72620", quantity: 6, unit_cost: 25.921764 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000070963", order_date: "2025-07-30", batch_number: "72620", quantity: 1, unit_cost: 25.921764 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000070994", order_date: "2025-08-05", batch_number: "72908", quantity: 2, unit_cost: 25.80 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000070996", order_date: "2025-08-05", batch_number: "72908", quantity: 2, unit_cost: 25.80 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000071137", order_date: "2025-09-02", batch_number: "73439", quantity: 5, unit_cost: 38.52 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000071136", order_date: "2025-09-02", batch_number: "73439", quantity: 10, unit_cost: 38.52 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000071242", order_date: "2025-09-22", batch_number: "73439", quantity: 10, unit_cost: 36.90 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000071325", order_date: "2025-10-07", batch_number: "76439", quantity: 6, unit_cost: 36.90 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000071529", order_date: "2025-11-17", batch_number: "76439", quantity: 5, unit_cost: 30.12 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x14", invoice_number: "001001000071142", order_date: "2025-09-02", batch_number: "67221", quantity: 1, unit_cost: 113.74 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x14", invoice_number: "001001000071336", order_date: "2025-10-09", batch_number: "67221", quantity: 1, unit_cost: 113.74 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x14", invoice_number: "001001000071529", order_date: "2025-11-17", batch_number: "60356", quantity: 5, unit_cost: 115.54 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x14", invoice_number: "001001000071530", order_date: "2025-11-17", batch_number: "60356", quantity: 5, unit_cost: 115.54 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "14x17", invoice_number: "001001000071142", order_date: "2025-09-02", batch_number: "44941", quantity: 8, unit_cost: 121.93 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "14x17", invoice_number: "001001000071326", order_date: "2025-10-07", batch_number: "46331", quantity: 8, unit_cost: 121.93 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "14x17", invoice_number: "001001000071325", order_date: "2025-10-07", batch_number: "46143", quantity: 8, unit_cost: 121.93 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "14x17", invoice_number: "001001000071545", order_date: "2025-11-19", batch_number: "49547", quantity: 10, unit_cost: 123.70 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "14x17", invoice_number: "001001000071547", order_date: "2025-11-19", batch_number: "49547", quantity: 10, unit_cost: 123.70 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000070739", order_date: "2025-06-19", batch_number: "72523", quantity: 1, unit_cost: 38.89 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000070734", order_date: "2025-06-19", batch_number: "72523", quantity: 4, unit_cost: 38.89 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000070756", order_date: "2025-06-23", batch_number: "72522", quantity: 10, unit_cost: 38.89 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000070757", order_date: "2025-06-23", batch_number: "72522", quantity: 10, unit_cost: 38.89 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000070891", order_date: "2025-07-15", batch_number: "72523", quantity: 15, unit_cost: 38.884303 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000070892", order_date: "2025-07-15", batch_number: "72523", quantity: 15, unit_cost: 38.884303 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000070963", order_date: "2025-07-30", batch_number: "72523", quantity: 1, unit_cost: 38.884303 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000070994", order_date: "2025-08-05", batch_number: "72523", quantity: 15, unit_cost: 38.88 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000070996", order_date: "2025-08-05", batch_number: "72523", quantity: 5, unit_cost: 38.88 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000071137", order_date: "2025-09-02", batch_number: "72523", quantity: 15, unit_cost: 38.87 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000071136", order_date: "2025-09-02", batch_number: "72523", quantity: 15, unit_cost: 38.87 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000071324", order_date: "2025-10-07", batch_number: "72523", quantity: 20, unit_cost: 38.86 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000071325", order_date: "2025-10-07", batch_number: "72523", quantity: 20, unit_cost: 38.86 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000071529", order_date: "2025-11-17", batch_number: "73359", quantity: 20, unit_cost: 39.34 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000071530", order_date: "2025-11-17", batch_number: "73359", quantity: 20, unit_cost: 39.34 },
-      ];
-
-      if (allClients.length > 0 && allConsumos.length > 0) {
-        const batch = writeBatch(db);
-        let updates = 0;
-
-        // Get the highest existing consumption ID
-        let nextId = Math.max(0, ...allConsumos.map(r => r.id)) + 1;
-
-        newConsumos.forEach(item => {
-          const client = allClients.find(c => c.name.toUpperCase() === item.clientName.toUpperCase());
-          if (client) {
-            // Check if this exact record already exists to prevent duplicates
-            const exists = allConsumos.some(r => 
-              r.client_id === client.id && 
-              r.invoice_number === item.invoice_number &&
-              r.size === item.size &&
-              r.quantity === item.quantity
-            );
-
-            if (!exists) {
-              const newRecord: ConsumptionRecord = {
-                id: nextId++,
-                client_id: client.id,
-                order_date: item.order_date,
-                invoice_number: item.invoice_number,
-                quantity: item.quantity,
-                size: item.size,
-                batch_number: item.batch_number,
-                expiry_date: "2026-12-31", // Default expiry
-                unit_cost: item.unit_cost
-              };
-              
-              const consumoRef = doc(db, "consumos", newRecord.id.toString());
-              batch.set(consumoRef, newRecord);
-              updates++;
-            }
-          }
-        });
-
-        if (updates > 0) {
-          try {
-            await batch.commit();
-            localStorage.setItem('orimec_scanner_update_done', 'true');
-            console.log(`Successfully added ${updates} new records for Corporacion Scanner.`);
-          } catch (err) {
-            console.error("Error committing batch update:", err);
-          }
-        } else {
-           localStorage.setItem('orimec_scanner_update_done', 'true');
-        }
-      }
-    };
-
-    if (!loading && allClients.length > 0 && allConsumos.length > 0) {
-      runCsvUpdate();
-    }
 
     const unsubAltNames = onSnapshot(collection(db, "altNames"), (snapshot) => {
       const names: Record<number, string> = {};
@@ -2164,7 +2142,7 @@ function App() {
 
     const unsubStock = onSnapshot(collection(db, "stock_entries"), (snapshot) => {
       const entries: StockEntry[] = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as StockEntry));
-      entries.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      entries.sort((a, b) => parseDate(b.date).getTime() - parseDate(a.date).getTime());
       setStockEntries(entries);
     });
 
@@ -2367,7 +2345,7 @@ function App() {
             });
             // Compute OUT by year/month from installDate (YYYY-MM-DD)
             if (printer.installDate) {
-              const d = new Date(printer.installDate);
+              const d = parseDate(printer.installDate);
               if (!isNaN(d.getTime())) {
                 const y = d.getFullYear();
                 const m = MONTH_KEYS[d.getMonth()];
@@ -2390,7 +2368,7 @@ function App() {
       if (!updated[key]) updated[key] = { openingStock: 0, months: {} };
       if (!updated[key].months[month]) updated[key].months[month] = { inUnits: 0, outUnits: 0 };
       updated[key].months[month][field] = value;
-      localStorage.setItem('imager_data', JSON.stringify(updated));
+      saveSharedSetting('imager_data', updated);
       return updated;
     });
   };
@@ -2400,7 +2378,7 @@ function App() {
       const updated = JSON.parse(JSON.stringify(prev));
       if (!updated[key]) updated[key] = { openingStock: value, months: {} };
       else updated[key].openingStock = value;
-      localStorage.setItem('imager_data', JSON.stringify(updated));
+      saveSharedSetting('imager_data', updated);
       return updated;
     });
   };
@@ -2462,6 +2440,11 @@ function App() {
   const [topClientsLimit, setTopClientsLimit] = useState<5|10|'all'>(5);
   const [showTopClientsModal, setShowTopClientsModal] = useState(false);
   const [clientPreviewModal, setClientPreviewModal] = useState<{ client: Client; rank: number; m2: number; cajas: number } | null>(null);
+  // Ventas cuyo cliente no existe: ver detalle y reasignarlas a un cliente existente
+  const [orphanModal, setOrphanModal] = useState<{ clientId: number } | null>(null);
+  const [orphanSearch, setOrphanSearch] = useState('');
+  const [orphanTarget, setOrphanTarget] = useState<Client | null>(null);
+  const [orphanSaving, setOrphanSaving] = useState(false);
   const [pickerYear, setPickerYear] = useState(() => new Date().getFullYear());
   const [pickerOpen, setPickerOpen] = useState(false);
   const [showPrinterStatsModal, setShowPrinterStatsModal] = useState(false);
@@ -2627,10 +2610,10 @@ function App() {
         STOCK_FILM_MONTHS.forEach((month, mi) => {
           const inB = yd.months?.[month]?.inBoxes || 0;
           const outB = allConsumos.reduce((s, r) => {
-            const d = new Date(r.order_date);
+            const d = parseDate(r.order_date);
             if (d.getFullYear() !== srcYear || d.getMonth() !== mi) return s;
             if (r.size !== prod.size) return s;
-            const rft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type === 'DIHL' ? 'DIHL' : r.film_type === 'DIML' ? 'DIML' : 'DIHT';
+            const rft = normFilmType(r.film_type);
             if (rft !== prod.type) return s;
             return s + (r.is_return ? -r.quantity : r.quantity);
           }, 0);
@@ -2642,7 +2625,7 @@ function App() {
         // Only update next year opening if it differs (avoid infinite loop)
         if (!updated[nextYear]) updated[nextYear] = {};
         if (!updated[nextYear][prod.key]) updated[nextYear][prod.key] = { openingBoxes: 0, openingM2: 0, months: Object.fromEntries(STOCK_FILM_MONTHS.map(m => [m, { inBoxes: 0, outBoxes: 0 }])) };
-        
+
         if (updated[nextYear][prod.key].openingBoxes !== decBalance) {
           updated[nextYear][prod.key].openingBoxes = decBalance;
           updated[nextYear][prod.key].openingM2 = decBalanceM2;
@@ -2742,15 +2725,7 @@ function App() {
 
   const norm = (s: string) => (s || '').toUpperCase().trim().replace(/\s+/g, ' ');
   // Returns negative quantity for returns so they subtract from totals automatically
-  const effectiveQty = (r: ConsumptionRecord) => r.is_return ? -r.quantity : r.quantity;
-
-  // m² por caja según medida y tipo de película (datos de Fujifilm DI-HT/DI-HL)
-  // DI-HT: 100 hojas/caja | DI-HL: 150 hojas/caja
-  const FILM_M2_PER_BOX: Record<string, Record<string, number>> = {
-    'DIHT': { '8x10': 5.16, '10x12': 7.50, '10x14': 9.03, '14x17': 15.38 },
-    'DIHL': { '8x10': 7.74, '10x12': 7.50, '10x14': 13.55, '14x17': 15.38 },
-    'DIML': { '8x10': 7.74, '10x14': 13.55 },
-  };
+  // effectiveQty, FILM_M2_PER_BOX, getM2PerBox y getTotalM2 se definen a nivel de módulo.
 
 
 
@@ -2801,37 +2776,62 @@ function App() {
     'DIML_8x10':  { inTransit: 0,    stockBodega: 39,  totalAvailable: 39,  salesJan26: 0,   avgMayDec25: 0.125, coverageCurrentM: 312,   coverageHistoricM: 312,   safetyStock: 0,   orders: ['FJ-2007'] },
     'DIML_10x14': { inTransit: 0,    stockBodega: 0,   totalAvailable: 0,   salesJan26: 0,   avgMayDec25: 0,     coverageCurrentM: 0,     coverageHistoricM: 0,     safetyStock: 0,   orders: [] },
   };
-  const getM2PerBox = (size: string, filmType?: string): number => {
-    const ft = filmType === 'DIHL' ? 'DIHL' : 'DIHT';
-    return FILM_M2_PER_BOX[ft]?.[size] ?? 0;
-  };
-  const getTotalM2 = (quantity: number, size: string, filmType?: string): number => {
-    return parseFloat((quantity * getM2PerBox(size, filmType)).toFixed(2));
-  };
   // Normalize invoice numbers for comparison — strips leading zeros so "001001000071109" === "1001001000071109" === "71109"
   const normInvoice = (s: string) => (s || '').replace(/^0+/, '').trim();
 
-    // ── Duplicate detection: invoice match OR (date + size + qty + client) ───
-    const isExistingRecord = (tempRec: any, clientId: number): boolean => {
-      return allConsumos.some(r => {
-        // Primary: invoice number match (when both have invoice)
-        if (r.invoice_number && tempRec.invoice_number) {
-          const invMatch = normInvoice(r.invoice_number) === normInvoice(tempRec.invoice_number);
-          if (invMatch && r.size === tempRec.size && Math.abs(r.quantity) === Math.abs(tempRec.quantity)) return true;
-          // If invoice numbers are different, they are different sales!
-          if (normInvoice(r.invoice_number) !== normInvoice(tempRec.invoice_number)) return false;
-        }
-        // Secondary: date + client + size + quantity (catches invoice format mismatches)
-        if (clientId > 0 && r.client_id === clientId &&
-            r.order_date === tempRec.order_date &&
-            r.size === tempRec.size &&
-            Math.abs(r.quantity) === Math.abs(tempRec.quantity)) {
-          if (r.invoice_number && tempRec.invoice_number && normInvoice(r.invoice_number) !== normInvoice(tempRec.invoice_number)) return false;
-          return true;
-        }
-        return false;
-      });
-    };
+  // ── Índices para el importador: buscar en un Map es instantáneo; antes, por cada fila del
+  //    CSV se recorrían todas las ventas y todos los clientes (20.000 filas → la página se colgaba).
+  const consumoIndex = useMemo(() => {
+    const byInvSizeQty = new Map<string, ConsumptionRecord>();
+    const byClientDateSizeQty = new Map<string, ConsumptionRecord[]>();
+    allConsumos.forEach(r => {
+      if (r.invoice_number) {
+        const k = `${normInvoice(r.invoice_number)}|${r.size}|${Math.abs(r.quantity)}`;
+        if (!byInvSizeQty.has(k)) byInvSizeQty.set(k, r);
+      }
+      const k2 = `${Number(r.client_id)}|${r.order_date}|${r.size}|${Math.abs(r.quantity)}`;
+      const arr = byClientDateSizeQty.get(k2);
+      if (arr) arr.push(r); else byClientDateSizeQty.set(k2, [r]);
+    });
+    return { byInvSizeQty, byClientDateSizeQty };
+  }, [allConsumos]);
+
+  // Venta existente con misma factura + medida + cantidad (sin importar el cliente)
+  const findByInvoice = (tempRec: any): ConsumptionRecord | undefined =>
+    tempRec.invoice_number
+      ? consumoIndex.byInvSizeQty.get(`${normInvoice(tempRec.invoice_number)}|${tempRec.size}|${Math.abs(tempRec.quantity)}`)
+      : undefined;
+
+  // ── Duplicate detection: invoice match OR (date + size + qty + client) ───
+  const findExistingRecord = (tempRec: any, clientId: number): ConsumptionRecord | undefined => {
+    // Primary: misma factura + medida + cantidad
+    const byInv = findByInvoice(tempRec);
+    if (byInv) return byInv;
+    // Secondary: cliente + fecha + medida + cantidad, salvo que ambas tengan factura y sean distintas
+    if (clientId > 0) {
+      const cands = consumoIndex.byClientDateSizeQty.get(`${Number(clientId)}|${tempRec.order_date}|${tempRec.size}|${Math.abs(tempRec.quantity)}`) || [];
+      return cands.find(r => !(r.invoice_number && tempRec.invoice_number && normInvoice(r.invoice_number) !== normInvoice(tempRec.invoice_number)));
+    }
+    return undefined;
+  };
+  const isExistingRecord = (tempRec: any, clientId: number): boolean => !!findExistingRecord(tempRec, clientId);
+
+  const clientIndex = useMemo(() => {
+    const byCode = new Map<string, Client>();
+    const byRuc = new Map<string, Client>();
+    const byNameKey = new Map<string, Client>();
+    const byExactName = new Map<string, Client>();
+    const nameList: { c: Client; names: string[] }[] = [];
+    allClients.forEach(c => {
+      byExactName.set(c.name, c);
+      [c.client_code, ...(c.alt_codes || [])].map(x => norm(x)).filter(Boolean).forEach(code => { if (!byCode.has(code)) byCode.set(code, c); });
+      if (c.ruc_id && norm(c.ruc_id) && !byRuc.has(norm(c.ruc_id))) byRuc.set(norm(c.ruc_id), c);
+      const names = [c.name, ...String(altNames[c.id] || '').split(' / ')].map(nameKey).filter(Boolean);
+      names.forEach(n => { if (!byNameKey.has(n)) byNameKey.set(n, c); });
+      nameList.push({ c, names });
+    });
+    return { byCode, byRuc, byNameKey, byExactName, nameList };
+  }, [allClients, altNames]);
 
   // Fix scientific notation numbers (e.g. "1,001E+12" → "001001000071772")
   const fixInvoiceNumber = (raw: string): string => {
@@ -2851,51 +2851,46 @@ function App() {
     const clientNameCols = ['cliente', 'client', 'nombre cliente', 'nombre_cliente', 'razón social', 'razon social', 'name', 'nombre'];
     const rucCols = ['ruc', 'ruc/id', 'ruc_id', 'cedula', 'identificacion'];
     // COD CLIENTE is the primary deduplication key — match exact column names first
-    const codeCols = ['cod cliente', 'codigo2', 'codigo cliente', 'código cliente', 'codcliente', 'client_code', 'client code', 'cod', 'codigo', 'código'];
+    const codeCols = ['cod cliente', 'codigo2', 'codigo cliente', 'código cliente', 'codcliente', 'client_code', 'client code'];  // "CODIGO" solo = código de producto, no de cliente
 
     let clientNameVal = '';
     let rucVal = '';
     let codeVal = '';
 
+    // Código de cliente: se recorre la lista en orden de prioridad, así "COD CLIENTE"/"CODIGO2"
+    // ganan a "CODIGO" (que en los reportes de ventas es el código del PRODUCTO).
+    for (const c of codeCols) {
+      const k = rowKeys.find(key => norm(key) === norm(c) && String(row[key] ?? '').trim() !== '');
+      if (k) { codeVal = norm(row[k]); break; }
+    }
     rowKeys.forEach(k => {
       const kn = norm(k);
-      // Prioritize exact matches for code columns (avoid false positives from "codigo" matching "codigo2")
-      if (!codeVal) {
-        // Try exact match first
-        if (codeCols.some(c => kn === norm(c))) codeVal = norm(row[k]);
-        // Then partial match if still empty
-        else if (codeCols.some(c => kn.includes(norm(c)))) codeVal = norm(row[k]);
-      }
       if (!rucVal && rucCols.some(c => kn === norm(c))) rucVal = norm(row[k]);
       if (!clientNameVal && clientNameCols.some(c => kn === norm(c) || kn.includes(norm(c)))) clientNameVal = norm(row[k]);
     });
 
     // 1. Exact match by COD CLIENTE (highest priority — unique identifier)
     if (codeVal) {
-      const found = allClients.find(c =>
-        norm(c.client_code) === codeVal ||
-        (c.alt_codes || []).some(ac => norm(ac) === codeVal)
-      );
+      const found = clientIndex.byCode.get(codeVal);
       if (found) return found;
     }
     // 2. Exact match by RUC
     if (rucVal) {
-      const found = allClients.find(c => norm(c.ruc_id) === rucVal);
+      const found = clientIndex.byRuc.get(rucVal);
       if (found) return found;
     }
-    // 3. Exact name match
+    // 3. Exact name match (principal o alternativo)
     if (clientNameVal) {
-      const found = allClients.find(c => norm(c.name) === clientNameVal || norm(altNames[c.id] || '') === clientNameVal);
+      const found = clientIndex.byNameKey.get(nameKey(clientNameVal));
       if (found) return found;
     }
-    // 4. Partial name match
-    if (clientNameVal) {
-      const found = allClients.find(c =>
-        norm(c.name).includes(clientNameVal) ||
-        clientNameVal.includes(norm(c.name)) ||
-        (altNames[c.id] && (norm(altNames[c.id]).includes(clientNameVal) || clientNameVal.includes(norm(altNames[c.id]))))
-      );
-      if (found) return found;
+    // 4. Nombre parecido: SOLO si la fila no trae código de cliente (si trae un código que
+    //    no existe, es un cliente nuevo), el nombre es suficientemente largo y hay UNA sola
+    //    coincidencia. Así un cliente nuevo no se pega a otro existente por error.
+    if (clientNameVal && !codeVal) {
+      const key = nameKey(clientNameVal);
+      const matches = key.length >= 12 ? clientIndex.nameList.filter(({ names }) => names.some(n => n.length >= 12 && (n.includes(key) || key.includes(n)))).map(x => x.c) : [];
+      if (matches.length === 1) return matches[0];
     }
     return null;
   };
@@ -2931,7 +2926,9 @@ function App() {
 
   const mapRowToRecord = (row: any, clientId: number, nextId: number): ConsumptionRecord => {
     const rowKeys = Object.keys(row);
-    const get = (candidates: string[]) => {
+    // exclude: palabras que, en la búsqueda parcial, descartan la columna
+    // (p. ej. que "costo" no tome "COSTO TOTAL" como costo unitario).
+    const get = (candidates: string[], exclude: string[] = []) => {
       // Pass 1: exact matching
       for (const c of candidates) {
         const key = rowKeys.find(k => norm(k) === norm(c));
@@ -2939,7 +2936,7 @@ function App() {
       }
       // Pass 2: partial matching
       for (const c of candidates) {
-        const key = rowKeys.find(k => norm(k).includes(norm(c)));
+        const key = rowKeys.find(k => norm(k).includes(norm(c)) && !exclude.some(x => norm(k).includes(norm(x))));
         if (key && row[key] !== undefined && row[key] !== '') return String(row[key]);
       }
       return '';
@@ -2975,7 +2972,11 @@ function App() {
     // Date parsing
     const rawDate = get(['fecha pedido', 'fecha_pedido', 'order_date', 'fecha', 'date', 'fecha de pedido', 'fecha venta']);
     let orderDate = rawDate;
-    if (rawDate) {
+    // Número de serie de Excel (p. ej. 46051 = 29/01/2026)
+    if (/^\d{5}(\.\d+)?$/.test(rawDate.trim())) {
+      const d = new Date(Math.round((parseFloat(rawDate) - 25569) * 86400000));
+      orderDate = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+    } else if (rawDate) {
       // DD/MM/YYYY
       const m1 = rawDate.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
       if (m1) {
@@ -3011,17 +3012,19 @@ function App() {
 
     // Quantity — negative = return
     const qtyRaw = get(['cantidad', 'quantity', 'qty', 'cajas', 'boxes']);
-    const qtyParsed = (qtyRaw !== '' && !isNaN(parseInt(qtyRaw))) ? parseInt(qtyRaw) : 1;
+    // Si la cantidad viene vacía o no es número queda en 0 y la fila se descarta (antes se asumía 1)
+    const qtyParsed = (qtyRaw !== '' && !isNaN(parseInt(qtyRaw))) ? parseInt(qtyRaw) : 0;
     const isReturn = qtyParsed < 0;
     const qty = Math.abs(qtyParsed);
 
     // Cost parsing using the new parseNumber helper
-    const unitCostRaw = get(['costo', 'costo unitario', 'costo_unitario', 'unit_cost', 'c/u', 'precio unitario', 'valor unitario']);
-    const totalCostRaw = get(['costo total', 'costo_total', 'total']);
-    
+    // "precio unitario" / "valor unitario" son precio de venta, no costo
+    const unitCostRaw = get(['costo', 'costo unitario', 'costo_unitario', 'unit_cost', 'c/u'], ['total', 'venta', 'vta', 'precio']);
+    const totalCostRaw = get(['costo total', 'costo_total', 'total'], ['vta', 'venta', 'precio', 'utilidad']);
+
     const uCost = parseNumber(unitCostRaw);
     const tCost = parseNumber(totalCostRaw);
-    
+
     let finalCost: number | null = null;
     if (uCost !== undefined) {
       finalCost = Math.abs(uCost);
@@ -3030,7 +3033,7 @@ function App() {
     }
 
     // Sale Price parsing using the new parseNumber helper
-    const unitPriceRaw = get(['precio', 'price', 'precio unitario', 'precio venta', 'pvp', 'valor venta']);
+    const unitPriceRaw = get(['precio', 'precios', 'price', 'precio unitario', 'valor unitario', 'precio venta', 'pvp', 'valor venta'], ['total', 'costo']);
     const totalRevenueRaw = get(['vta total', 'venta total', 'venta_total', 'total venta', 'valor total venta', 'ingresos']);
 
     const uPrice = parseNumber(unitPriceRaw);
@@ -3053,21 +3056,24 @@ function App() {
     const explicitFilmType = get(['film_type', 'tipo pelicula', 'tipo película', 'tipo de pelicula', 'tipo de película']);
     if (explicitFilmType) {
       const ft = explicitFilmType.toUpperCase().trim();
-      if (ft === 'DIHL' || ft === 'DI-HL') filmType = 'DIHL';
-      else if (ft === 'DIML' || ft === 'DI-ML') filmType = 'DIML';
-      else if (ft === 'TXE') filmType = 'TXE';
+      const ftc = ft.replace(/[\s\-\/]/g, '');
+      if (ftc === 'DIHL') filmType = 'DIHL';
+      else if (ftc === 'DIML') filmType = 'DIML';
+      else if (ftc === 'TXE') filmType = 'TXE';
       else filmType = 'DIHT';
     } else if (articuloRaw) {
       const art = articuloRaw.toUpperCase();
-      if (art.includes('DI-HL') || art.includes('DIHL')) filmType = 'DIHL';
-      else if (art.includes('DI-HT') || art.includes('DIHT')) filmType = 'DIHT';
+      const compact = art.replace(/[\s\-\/]/g, ''); // "DI HT", "DI-HT", "DI/HT" → "DIHT"
+      if (compact.includes('DIHL')) filmType = 'DIHL';
+      else if (compact.includes('DIML')) filmType = 'DIML';
+      else if (compact.includes('DIHT')) filmType = 'DIHT';
       else if (art.includes('TXE') || art.includes('TXM') || art.includes('TRIMAX')) filmType = 'TXE';
     }
 
     return {
       id: nextId,
       client_id: clientId,
-      order_date: orderDate || new Date().toISOString().split('T')[0],
+      order_date: orderDate || '',
       invoice_number: fixInvoiceNumber(rawInvoice) || '',
       quantity: qty,
       size,
@@ -3091,7 +3097,7 @@ function App() {
       }
       // Fallback: partial match
       for (const c of candidates) {
-        const key = rowKeys.find(k => norm(k).includes(norm(c)) || norm(c).includes(norm(k)));
+        const key = rowKeys.find(k => norm(k).includes(norm(c)));
         if (key && row[key] !== undefined && row[key] !== '') return String(row[key]).trim();
       }
       return '';
@@ -3100,7 +3106,7 @@ function App() {
       name: getExact(['cliente', 'client', 'nombre cliente', 'nombre', 'name']) || 'Sin nombre',
       province: getExact(['provincia', 'province', 'ciudad', 'city']) || '',
       // COD CLIENTE is the exact column name in our CSV; CODIGO2 is the raw Excel column name
-      clientCode: getExact(['cod cliente', 'codigo2', 'codigo cliente', 'código cliente', 'client_code', 'cod', 'codigo']) || '',
+      clientCode: getExact(['cod cliente', 'codigo2', 'codigo cliente', 'código cliente', 'client_code']) || '',
       salesperson: getExact(['vendedor', 'salesperson', 'asesor', 'representante']) || '',
     };
   };
@@ -3109,7 +3115,7 @@ function App() {
 
   const handlePurgeYearData = async () => {
     const recordsToDelete = allConsumos.filter(r => r.order_date && r.order_date.startsWith(purgeYear));
-    
+
     if (recordsToDelete.length === 0) {
       showToast(`No se encontraron registros del año ${purgeYear} para eliminar.`, "info");
       return;
@@ -3118,16 +3124,16 @@ function App() {
     if (!window.confirm(`⚠️ ATENCIÓN: ¿Está seguro de eliminar TODOS los registros de consumo del año ${purgeYear}? Se detectaron ${recordsToDelete.length} registros. Esta acción es irreversible.`)) {
       return;
     }
-    
+
     if (!window.confirm(`¿Confirmar eliminación definitiva? Todos los datos del ${purgeYear} se borrarán de la base de datos.`)) {
       return;
     }
 
     try {
       setCsvImportStatus('importing');
-      
+
       const totalToDelete = recordsToDelete.length;
-      
+
       // Delete in batches of 400
       for (let i = 0; i < recordsToDelete.length; i += 400) {
         const chunk = recordsToDelete.slice(i, i + 400);
@@ -3159,19 +3165,64 @@ function App() {
       const allRows = parseCSV(clean);
       if (!allRows.length) { setCsvImportError('El archivo no tiene filas válidas o el separador no fue reconocido. Columnas detectadas: ' + (Object.keys(allRows[0] ?? {}).join(', ') || 'ninguna')); setCsvImportStatus('error'); return; }
 
-      // ── Filtrar solo filas de PELICULAS si existe la columna CATEGORIA ──────
-      const hasCategoriaCol = allRows.length > 0 && Object.keys(allRows[0]).some(k => k.trim().toUpperCase() === 'CATEGORIA');
-      const rows = hasCategoriaCol
-        ? allRows.filter(row => {
-            const cat = Object.entries(row).find(([k]) => k.trim().toUpperCase() === 'CATEGORIA')?.[1] || '';
-            return String(cat).trim().toUpperCase() === 'PELICULAS';
-          })
-        : allRows;
-      if (hasCategoriaCol && rows.length === 0) {
-        setCsvImportError(`El archivo tiene la columna CATEGORIA pero ninguna fila contiene "PELICULAS". Categorías encontradas: ${[...new Set(allRows.map(r => Object.entries(r).find(([k]) => k.trim().toUpperCase() === 'CATEGORIA')?.[1] || '').filter(Boolean))].join(', ')}`);
+      // ── Solo PELÍCULAS: impresoras, magazines, feeders, servicios, etc. se ignoran ──
+      // Sin tildes y en mayúsculas, para comparar "PELÍCULAS", "Pelicula", "CATEGORÍA"…
+      const plain = (v: unknown) => String(v ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().trim();
+      const isCategoriaKey = (k: string) => plain(k) === 'CATEGORIA';
+      const hasCategoriaCol = allRows.length > 0 && Object.keys(allRows[0]).some(isCategoriaKey);
+      const getProducto = (row: any) => {
+        const k = Object.keys(row).find(key => ['ARTICULO', 'PRODUCTO', 'DESCRIPCION', 'ARTICLE', 'DESCRIPTION'].includes(plain(key)));
+        return plain(k ? row[k] : '');
+      };
+      // Película por el nombre del producto (DRY FILM, DI-HT/HL/ML, TXE) y no un equipo/accesorio
+      const isFilmProduct = (prod: string): boolean => {
+        if (/DRYPIX|DRIPYX|MAGAZINE|FEEDER|IMPRESORA|MANTENIMIENTO|SERVICIO|REPUESTO|MAIN UNIT|POWER CORD/.test(prod)) return false;
+        return /FILM|PELICULA/.test(prod) || /DIHT|DIHL|DIML|TXE/.test(prod.replace(/[\s\-\/]/g, ''));
+      };
+      // Filas vacías o la fila "Total" que deja Excel al exportar
+      const isBlankRow = (row: any) => !getProducto(row) && !Object.entries(row).some(([k, v]) => plain(k) === 'CANTIDAD' && /\d/.test(String(v))) || /^TOTAL/.test(plain(Object.values(row)[0]));
+      const isFilmRow = (row: any): boolean => {
+        if (isBlankRow(row)) return false;
+        const prod = getProducto(row);
+        if (hasCategoriaCol) {
+          const cat = plain(Object.entries(row).find(([k]) => isCategoriaKey(k))?.[1]);
+          // Categoría PELICULAS, o película mal categorizada (p. ej. "DRY FILM DI-HL" como ACCESORIOS)
+          return cat.startsWith('PELICULA') || (!!prod && isFilmProduct(prod));
+        }
+        // Sin columna CATEGORIA: se reconoce por el nombre del producto
+        if (!prod) return true; // sin descripción: lo decide la validación por medida
+        return isFilmProduct(prod);
+      };
+      let rows = allRows.filter(isFilmRow);
+      const skippedNonFilm = allRows.filter(r => !isBlankRow(r)).length - rows.length;
+      if (rows.length === 0) {
+        const cats = hasCategoriaCol
+          ? [...new Set(allRows.map(r => String(Object.entries(r).find(([k]) => isCategoriaKey(k))?.[1] || '').trim()).filter(Boolean))].join(', ')
+          : '';
+        setCsvImportError(`El archivo no contiene filas de películas.${cats ? ` Categorías encontradas: ${cats}` : ''}`);
         setCsvImportStatus('error');
         return;
       }
+      if (skippedNonFilm > 0) {
+        showToast(`Se ignoraron ${skippedNonFilm} fila(s) que no son películas (impresoras, accesorios, servicios…).`, 'info');
+      }
+      // ── Validar filas: sin cantidad, sin fecha válida o con medida desconocida se descartan ──
+      const VALID_SIZES = ['8x10', '10x12', '10x14', '11x14', '14x17'];
+      const invalid: string[] = [];
+      const validRows = rows.filter((row, i) => {
+        const rec = mapRowToRecord(row, 0, 0);
+        const reasons: string[] = [];
+        if (!rec.quantity) reasons.push('cantidad vacía o 0');
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(rec.order_date) || isNaN(parseDate(rec.order_date).getTime())) reasons.push('fecha inválida');
+        if (!VALID_SIZES.includes(rec.size)) reasons.push(`medida "${rec.size || '—'}" no reconocida`);
+        if (reasons.length) { invalid.push(`Factura ${rec.invoice_number || `#${i + 1}`}: ${reasons.join(', ')}`); return false; }
+        return true;
+      });
+      if (invalid.length) {
+        console.warn('Filas descartadas en la importación CSV:', invalid);
+        showToast(`${invalid.length} fila(s) descartadas por datos incompletos. ${invalid.slice(0, 3).join(' · ')}${invalid.length > 3 ? ' …' : ''}`, 'warning');
+      }
+      rows = validRows;
       setCsvPreviewRows(rows.slice(0, 5));
 
       const matched: { row: any; clientName: string }[] = [];
@@ -3191,28 +3242,15 @@ function App() {
         // If this code was already resolved to an existing client, use that client directly
         if (normCode && resolvedCodes.has(normCode)) {
           const clientName = resolvedCodes.get(normCode)!;
-          const client = allClients.find(c => c.name === clientName)!;
+          const client = clientIndex.byExactName.get(clientName)!;
           const tempRecord = mapRowToRecord(row, client.id, 0);
           const isDup = isExistingRecord(tempRecord, client.id);
           if (isDup) {
-            const existingRec = allConsumos.find(r => {
-              if (r.invoice_number && tempRecord.invoice_number) {
-                const invMatch = normInvoice(r.invoice_number) === normInvoice(tempRecord.invoice_number);
-                if (invMatch && r.size === tempRecord.size && Math.abs(r.quantity) === Math.abs(tempRecord.quantity)) return true;
-                if (normInvoice(r.invoice_number) !== normInvoice(tempRecord.invoice_number)) return false;
-              }
-              if (r.client_id === client.id &&
-                  r.order_date === tempRecord.order_date &&
-                  r.size === tempRecord.size &&
-                  Math.abs(r.quantity) === Math.abs(tempRecord.quantity)) {
-                if (r.invoice_number && tempRecord.invoice_number && normInvoice(r.invoice_number) !== normInvoice(tempRecord.invoice_number)) return false;
-                return true;
-              }
-              return false;
-            });
+            const existingRec = findExistingRecord(tempRecord, client.id);
             if (existingRec) {
-              const hasDiff = 
-                (tempRecord.unit_cost !== undefined && tempRecord.unit_cost !== existingRec.unit_cost) ||
+              const hasDiff =
+                (tempRecord.unit_cost != null && tempRecord.unit_cost !== existingRec.unit_cost) ||
+              (tempRecord.sale_price != null && tempRecord.sale_price !== existingRec.sale_price) ||
                 (tempRecord.batch_number !== '' && tempRecord.batch_number !== existingRec.batch_number) ||
                 (tempRecord.expiry_date !== '2099-12-31' && tempRecord.expiry_date !== existingRec.expiry_date) ||
                 (tempRecord.film_type !== undefined && tempRecord.film_type !== existingRec.film_type) ||
@@ -3255,24 +3293,11 @@ function App() {
         const tempRecord2 = mapRowToRecord(row, client.id, 0);
         const isDup2 = isExistingRecord(tempRecord2, client.id);
         if (isDup2) {
-          const existingRec2 = allConsumos.find(r => {
-            if (r.invoice_number && tempRecord2.invoice_number) {
-              const invMatch = normInvoice(r.invoice_number) === normInvoice(tempRecord2.invoice_number);
-              if (invMatch && r.size === tempRecord2.size && Math.abs(r.quantity) === Math.abs(tempRecord2.quantity)) return true;
-              if (normInvoice(r.invoice_number) !== normInvoice(tempRecord2.invoice_number)) return false;
-            }
-            if (r.client_id === client.id &&
-                r.order_date === tempRecord2.order_date &&
-                r.size === tempRecord2.size &&
-                Math.abs(r.quantity) === Math.abs(tempRecord2.quantity)) {
-              if (r.invoice_number && tempRecord2.invoice_number && normInvoice(r.invoice_number) !== normInvoice(tempRecord2.invoice_number)) return false;
-              return true;
-            }
-            return false;
-          });
+          const existingRec2 = findExistingRecord(tempRecord2, client.id);
           if (existingRec2) {
-            const hasDiff2 = 
-              (tempRecord2.unit_cost !== undefined && tempRecord2.unit_cost !== existingRec2.unit_cost) ||
+            const hasDiff2 =
+              (tempRecord2.unit_cost != null && tempRecord2.unit_cost !== existingRec2.unit_cost) ||
+              (tempRecord2.sale_price != null && tempRecord2.sale_price !== existingRec2.sale_price) ||
               (tempRecord2.batch_number !== '' && tempRecord2.batch_number !== existingRec2.batch_number) ||
               (tempRecord2.expiry_date !== '2099-12-31' && tempRecord2.expiry_date !== existingRec2.expiry_date) ||
               (tempRecord2.film_type !== undefined && tempRecord2.film_type !== existingRec2.film_type) ||
@@ -3302,7 +3327,7 @@ function App() {
         const trueDuplicates: any[] = [];
         duplicates.forEach(item => {
           const temp = mapRowToRecord(item.row, 0, 0);
-          const existingForRescue = allConsumos.find(r => r.invoice_number && temp.invoice_number && normInvoice(r.invoice_number) === normInvoice(temp.invoice_number) && r.size === temp.size && Math.abs(r.quantity) === Math.abs(temp.quantity));
+          const existingForRescue = findByInvoice(temp);
           if (existingForRescue && existingForRescue.film_type !== 'DIHL') {
             // Was incorrectly classified as duplicate — it's a DIHT to replace
             rescuedFromDuplicates.push({ row: item.row, clientName: item.clientName, _replaceId: existingForRescue.id });
@@ -3316,10 +3341,11 @@ function App() {
         const stillNew: any[] = [];
         toCreate.forEach(item => {
           const temp = mapRowToRecord(item.row, 0, 0);
-          const existingForNew = allConsumos.find(r => r.invoice_number && temp.invoice_number && normInvoice(r.invoice_number) === normInvoice(temp.invoice_number) && r.size === temp.size && Math.abs(r.quantity) === Math.abs(temp.quantity));
+          const existingForNew = findByInvoice(temp);
           if (existingForNew && existingForNew.film_type === 'DIHL') {
-            const hasDiff = 
-              (temp.unit_cost !== undefined && temp.unit_cost !== existingForNew.unit_cost) ||
+            const hasDiff =
+              (temp.unit_cost != null && temp.unit_cost !== existingForNew.unit_cost) ||
+              (temp.sale_price != null && temp.sale_price !== existingForNew.sale_price) ||
               (temp.batch_number !== '' && temp.batch_number !== existingForNew.batch_number) ||
               (temp.expiry_date !== '2099-12-31' && temp.expiry_date !== existingForNew.expiry_date) ||
               (temp.order_date !== existingForNew.order_date);
@@ -3340,15 +3366,11 @@ function App() {
         matched.forEach(item => {
           if ((item as any)._updateId) { finalMatched.push(item); return; }
           const temp = mapRowToRecord(item.row, 0, 0);
-          const existingFinal = allConsumos.find(r =>
-            r.invoice_number && temp.invoice_number &&
-            normInvoice(r.invoice_number) === normInvoice(temp.invoice_number) &&
-            r.size === temp.size &&
-            Math.abs(r.quantity) === Math.abs(temp.quantity)
-          );
+          const existingFinal = findByInvoice(temp);
           if (existingFinal && existingFinal.film_type === 'DIHL') {
-            const hasDiff = 
-              (temp.unit_cost !== undefined && temp.unit_cost !== existingFinal.unit_cost) ||
+            const hasDiff =
+              (temp.unit_cost != null && temp.unit_cost !== existingFinal.unit_cost) ||
+              (temp.sale_price != null && temp.sale_price !== existingFinal.sale_price) ||
               (temp.batch_number !== '' && temp.batch_number !== existingFinal.batch_number) ||
               (temp.expiry_date !== '2099-12-31' && temp.expiry_date !== existingFinal.expiry_date) ||
               (temp.order_date !== existingFinal.order_date);
@@ -3436,11 +3458,12 @@ function App() {
             const clientId = allClients.find(c => c.name === clientName)?.id || 0;
             const record = mapRowToRecord(row, clientId, 0);
             const updateData: any = { film_type: 'DIHL' };
-            if (record.unit_cost !== undefined) updateData.unit_cost = record.unit_cost;
+            if (record.unit_cost != null) updateData.unit_cost = record.unit_cost;
+            if (record.sale_price != null) updateData.sale_price = record.sale_price;
             if (record.batch_number !== undefined && record.batch_number !== '') updateData.batch_number = record.batch_number;
             if (record.expiry_date !== undefined && record.expiry_date !== '2099-12-31') updateData.expiry_date = record.expiry_date;
             if (record.order_date !== undefined) updateData.order_date = record.order_date;
-            
+
             batch.update(doc(db, 'consumos', (_updateId as number).toString()), updateData);
           });
           await batch.commit();
@@ -3554,7 +3577,8 @@ function App() {
       for (const { row, clientId, _updateId } of toUpdateFilmType) {
         const record = mapRowToRecord(row, clientId, 0);
         const updateData: any = {};
-        if (record.unit_cost !== undefined) updateData.unit_cost = record.unit_cost;
+        if (record.unit_cost != null) updateData.unit_cost = record.unit_cost;
+            if (record.sale_price != null) updateData.sale_price = record.sale_price;
         if (record.batch_number !== undefined && record.batch_number !== '') updateData.batch_number = record.batch_number;
         if (record.expiry_date !== undefined && record.expiry_date !== '2099-12-31') updateData.expiry_date = record.expiry_date;
         if (record.film_type !== undefined && record.film_type !== '') updateData.film_type = record.film_type;
@@ -3699,7 +3723,7 @@ Sé específico con los números. Usa un tono ejecutivo y directo.`;
       return {
         ID: record.id,
         'ID Cliente': record.client_id,
-        'Nombre Cliente': client?.name || 'Desconocido',
+        'Nombre Cliente': client?.name || missingClientLabel(record.client_id),
         'Fecha Pedido': record.order_date,
         Factura: record.invoice_number || '',
         Medida: record.size,
@@ -3732,14 +3756,14 @@ Sé específico con los números. Usa un tono ejecutivo y directo.`;
 
     // Crear el libro de trabajo
     const wb = XLSX.utils.book_new();
-    
+
     // Añadir hojas
     const wsClients = XLSX.utils.json_to_sheet(clientsData);
     XLSX.utils.book_append_sheet(wb, wsClients, "Clientes");
-    
+
     const wsConsumos = XLSX.utils.json_to_sheet(consumosData);
     XLSX.utils.book_append_sheet(wb, wsConsumos, "Consumos");
-    
+
     if (printersData.length > 0) {
       const wsPrinters = XLSX.utils.json_to_sheet(printersData);
       XLSX.utils.book_append_sheet(wb, wsPrinters, "Impresoras");
@@ -3757,12 +3781,12 @@ Sé específico con los números. Usa un tono ejecutivo y directo.`;
 
     const consumos = allConsumos
       .filter(r => r.client_id === selectedClient.id)
-      .sort((a, b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime());
+      .sort((a, b) => parseDate(b.order_date).getTime() - parseDate(a.order_date).getTime());
 
     const totalM2 = parseFloat(consumos.reduce((s, r) => s + getTotalM2(effectiveQty(r), r.size, r.film_type), 0).toFixed(2));
     const totalCajas = consumos.reduce((s, r) => s + effectiveQty(r), 0);
     const totalRevenue = consumos.reduce((s, r) => {
-      const price = ((r as any).sale_price !== null && (r as any).sale_price !== undefined) ? (r as any).sale_price : (r.unit_cost || 0);
+      const price = unitSalePrice(r as any);
       return s + (price * r.quantity);
     }, 0);
     const totalCostClient = consumos.reduce((s, r) => s + (r.unit_cost ? r.unit_cost * r.quantity : 0), 0);
@@ -3776,7 +3800,7 @@ Sé específico con los números. Usa un tono ejecutivo y directo.`;
       const d = new Date(now.getFullYear(), now.getMonth() - 11 + i, 1);
       const label = `${MONTH_NAMES_ES[d.getMonth()]} ${d.getFullYear()}`;
       const qty = consumos.filter(r => {
-        const rd = new Date(r.order_date);
+        const rd = parseDate(r.order_date);
         return rd.getFullYear() === d.getFullYear() && rd.getMonth() === d.getMonth() && !r.is_return;
       }).reduce((s,r) => s + r.quantity, 0);
       return {label, qty};
@@ -3960,11 +3984,7 @@ Sé específico con los números. Usa un tono ejecutivo y directo.`;
       'DIHL': ['8x10','10x14','14x17'],
       'DIML': ['8x10','10x14'],
     };
-    const FILM_M2: Record<string,Record<string,number>> = {
-      'DIHT': {'8x10':5.16,'10x12':7.5,'10x14':9.03,'14x17':15.38},
-      'DIHL': {'8x10':7.74,'10x14':13.55,'14x17':15.38},
-      'DIML': {'8x10':7.74,'10x14':13.55},
-    };
+    const FILM_M2 = FILM_M2_PER_BOX;
 
     // Build rows
     const rows: {ft:string; size:string; stock:number; transit:number; safetyStock:number; avgMonthly:number; toOrder:number; m2box:number; status:string}[] = [];
@@ -3973,36 +3993,9 @@ Sé específico con los números. Usa un tono ejecutivo y directo.`;
         const m2box = FILM_M2[ft]?.[size] ?? 0;
         const prod = STOCK_FILM_PRODUCTS.find(p => p.type === ft && p.size === size);
         if (!prod) return;
-        const cy = now.getFullYear();
-        const cm = now.getMonth();
-        const yd = stockFilmData[String(cy)]?.[prod.key];
-        let running = yd?.openingBoxes || 0;
-        STOCK_FILM_MONTHS.forEach((month, mi) => {
-          if (mi > cm) return;
-          const inB = yd?.months?.[month]?.inBoxes || 0;
-          const outB = allConsumos.reduce((s,r) => {
-            const rd = new Date(r.order_date);
-            const rft = (!r.film_type||r.film_type==='DIHT')?'DIHT':r.film_type;
-            if (rd.getFullYear()!==cy||rd.getMonth()!==mi||r.size!==size||rft!==ft) return s;
-            return s+(r.is_return?-r.quantity:r.quantity);
-          },0);
-          running = running + inB - outB;
-        });
-        const stock = Math.max(0,running);
-        const realTransit = Object.values(stockFilmTransit[String(cy)]?.[`${ft}_${size}`]||{}).reduce((s:number,v:any)=>s+(v||0),0) as number;
+        // Mismos datos que la pantalla de Recomendación de compra
+        const { stock, transit: realTransit, avgMonthly } = getPlanningInputs(ft, size);
         const totalW = stock + (includeTransit ? realTransit : 0);
-        const avgMonthly = (() => {
-          let t=0;
-          for(let i=0;i<12;i++){
-            const d=new Date(cy, now.getMonth()-i, 1);
-            allConsumos.forEach(r=>{
-              const rd=new Date(r.order_date);
-              const rft=(!r.film_type||r.film_type==='DIHT')?'DIHT':r.film_type;
-              if(rd.getFullYear()===d.getFullYear()&&rd.getMonth()===d.getMonth()&&r.size===size&&rft===ft&&!r.is_return) t+=r.quantity;
-            });
-          }
-          return t/12;
-        })();
         const safetyStock = Math.round(avgMonthly*2);
         const demand = Math.round(avgMonthly*projectionPeriod);
         const toOrder = Math.max(0, demand - Math.max(0,totalW-safetyStock));
@@ -4103,17 +4096,17 @@ ${rows.map(r=>{
       const provinceMatch = String(c.province || '').toLowerCase().includes(searchLower);
       const clientCodeMatch = String(c.client_code || '').toLowerCase().includes(searchLower);
       const salespersonMatch = String(c.salesperson || '').toLowerCase().includes(searchLower);
-      
-      const hasInvoiceMatch = allConsumos.some(r => 
-        r.client_id === c.id && 
-        r.invoice_number && 
+
+      const hasInvoiceMatch = allConsumos.some(r =>
+        r.client_id === c.id &&
+        r.invoice_number &&
         String(r.invoice_number).toLowerCase().includes(searchLower)
       );
 
-      const hasPrinterSerialMatch = c.printers?.some(p => 
+      const hasPrinterSerialMatch = c.printers?.some(p =>
         p.serial && String(p.serial).toLowerCase().includes(searchLower)
       ) || false;
-      
+
       return nameMatch || rucMatch || altNameMatch || provinceMatch || clientCodeMatch || salespersonMatch || hasInvoiceMatch || hasPrinterSerialMatch;
     });
   }, [searchTerm, altNames, allClients, allConsumos]);
@@ -4122,13 +4115,13 @@ ${rows.map(r=>{
   const currentConsumption = useMemo(() => {
     if (!selectedClient) return [];
     return allConsumos.filter(r => r.client_id === selectedClient.id)
-      .sort((a, b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime());
+      .sort((a, b) => parseDate(b.order_date).getTime() - parseDate(a.order_date).getTime());
   }, [selectedClient, allConsumos]);
 
   // Consumo filtrado por medida y factura (para métricas, tendencia y tabla)
   const filteredClientConsumption = useMemo(() => {
     let filtered = currentConsumption;
-    
+
     if (clientSizeFilter !== 'Todas') {
       filtered = filtered.filter(r => r.size === clientSizeFilter);
     }
@@ -4136,14 +4129,14 @@ ${rows.map(r=>{
     if (clientFilmFilter !== 'Todos') {
       filtered = filtered.filter(r => r.film_type === clientFilmFilter);
     }
-    
+
     if (invoiceSearchTerm.trim() !== '') {
       const searchLower = invoiceSearchTerm.toLowerCase();
-      filtered = filtered.filter(r => 
+      filtered = filtered.filter(r =>
         r.invoice_number && String(r.invoice_number).toLowerCase().includes(searchLower)
       );
     }
-    
+
     return filtered;
   }, [currentConsumption, clientSizeFilter, clientFilmFilter, invoiceSearchTerm]);
 
@@ -4201,7 +4194,7 @@ ${rows.map(r=>{
           id: nextId
         } as Client;
       }
-      
+
       await setDoc(doc(db, "clientes", finalClient.id.toString()), finalClient);
       setIsClientModalOpen(false);
       setSelectedClient(finalClient);
@@ -4243,9 +4236,12 @@ ${rows.map(r=>{
     if (!clientToDelete) return;
 
     try {
-      // 1. Delete client document
-      await deleteDoc(doc(db, "clientes", clientToDelete.id.toString()));
-      
+      // 1. Primero borrar TODAS las ventas del cliente en lotes atómicos.
+      //    Si algo falla se detiene aquí y el cliente NO se borra (antes quedaban
+      //    ventas huérfanas que aparecían como "Desconocido").
+      const recordsToDelete = allConsumos.filter(r => Number(r.client_id) === Number(clientToDelete.id));
+      await commitInChunks(recordsToDelete, (b, record) => b.delete(doc(db, "consumos", record.id.toString())));
+
       // 2. Delete associated altName if exists
       if (altNames[clientToDelete.id]) {
         try {
@@ -4255,16 +4251,8 @@ ${rows.map(r=>{
         }
       }
 
-      // 3. Delete all consumption records for this client
-      const recordsToDelete = allConsumos.filter(r => r.client_id === clientToDelete.id);
-      
-      // Delete records in parallel for better performance
-      await Promise.all(
-        recordsToDelete.map(record => 
-          deleteDoc(doc(db, "consumos", record.id.toString()))
-            .catch(e => console.warn(`Failed to delete record ${record.id}`, e))
-        )
-      );
+      // 3. Delete client document
+      await deleteDoc(doc(db, "clientes", clientToDelete.id.toString()));
 
       // 4. Update local state
       const deletedName = clientToDelete.name;
@@ -4311,13 +4299,11 @@ ${rows.map(r=>{
     setIsMerging(true);
     try {
       // 1. Move all consumos from mergeTarget → selectedClient
-      const targetConsumos = allConsumos.filter(r => r.client_id === mergeTarget.id);
-      await Promise.all(
-        targetConsumos.map(record =>
-          updateDoc(doc(db, 'consumos', record.id.toString()), { client_id: selectedClient.id })
-            .catch(e => console.warn(`Failed to move record ${record.id}`, e))
-        )
-      );
+      // Lotes atómicos: si falla, se detiene y el duplicado NO se borra
+      // (antes los errores se ignoraban y quedaban ventas huérfanas).
+      const targetConsumos = allConsumos.filter(r => Number(r.client_id) === Number(mergeTarget.id));
+      await commitInChunks(targetConsumos, (b, record) =>
+        b.update(doc(db, 'consumos', record.id.toString()), { client_id: selectedClient.id }));
 
       // 2. Merge alt_codes: accumulate both codes
       const existingAltCodes: string[] = selectedClient.alt_codes || [];
@@ -4383,7 +4369,7 @@ ${rows.map(r=>{
   const handleSaveAltName = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedClient) return;
-    
+
     try {
       await setDoc(doc(db, "altNames", selectedClient.id.toString()), {
         name: tempAltName
@@ -4425,7 +4411,7 @@ ${rows.map(r=>{
 
       // Sanitize undefined fields before Firestore
       const sanitized = Object.fromEntries(Object.entries(finalRecord).filter(([_, v]) => v !== undefined));
-      
+
       await setDoc(doc(db, "consumos", finalRecord.id.toString()), sanitized);
       setIsModalOpen(false);
       setEditingRecord(null);
@@ -4433,7 +4419,7 @@ ${rows.map(r=>{
       addAuditLog(editingRecord.id ? 'update_record' : 'create_record',
         `${editingRecord.id ? 'Actualizó' : 'Creó'} registro ${finalRecord.invoice_number || finalRecord.id} — ${finalRecord.size} × ${finalRecord.quantity} cj`,
         String(finalRecord.client_id),
-        { 
+        {
           operacion: editingRecord.id ? 'Edición de factura' : 'Nueva factura',
           cambios: editingRecord.id ? [
             `Factura registrada: ${finalRecord.invoice_number || '—'} · ${finalRecord.size} · ${finalRecord.quantity} cj · ${finalRecord.film_type || 'DIHT'} · ${finalRecord.order_date}${finalRecord.is_return ? ' (devolución)' : ''}`
@@ -4464,52 +4450,52 @@ ${rows.map(r=>{
   // Métricas de Fidelidad Calculadas
   const metrics = useMemo(() => {
     if (!filteredClientConsumption.length) return { avg: 0, total: 0, totalCost: 0, trend: 0, loyalty: 0, status: { label: 'Sin Datos', color: 'bg-gray-50 text-gray-400', darkColor: 'bg-white/5 text-gray-500 border-white/10' } };
-    
+
     const total = filteredClientConsumption.reduce((acc, curr) => acc + effectiveQty(curr), 0);
     const totalCost = filteredClientConsumption.reduce((acc, curr) => {
       if (curr.unit_cost) return acc + (curr.unit_cost * curr.quantity);
       return acc;
     }, 0);
-    
+
     // Fechas para cálculos
     const currentDate = new Date();
-    const firstOrderDate = new Date(filteredClientConsumption[filteredClientConsumption.length - 1].order_date);
-    const lastOrderDate = new Date(filteredClientConsumption[0].order_date);
-    
+    const firstOrderDate = parseDate(filteredClientConsumption[filteredClientConsumption.length - 1].order_date);
+    const lastOrderDate = parseDate(filteredClientConsumption[0].order_date);
+
     // Meses transcurridos desde el primer pedido hasta HOY (inclusivo)
     let monthsElapsed = (currentDate.getFullYear() - firstOrderDate.getFullYear()) * 12 + (currentDate.getMonth() - firstOrderDate.getMonth()) + 1;
     if (monthsElapsed <= 0) monthsElapsed = 1;
-    
+
     // Promedio real considerando el tiempo total desde su primer pedido
     const avg = total / monthsElapsed;
-    
+
     // Tendencia: comparamos el promedio de los últimos 3 meses vs el promedio histórico
     const threeMonthsAgo = new Date();
     threeMonthsAgo.setMonth(currentDate.getMonth() - 3);
-    
+
     const recentTotal = filteredClientConsumption
-      .filter(r => new Date(r.order_date) >= threeMonthsAgo)
+      .filter(r => parseDate(r.order_date) >= threeMonthsAgo)
       .reduce((acc, curr) => acc + effectiveQty(curr), 0);
-      
+
     const recentAvg = recentTotal / 3;
     // Only calculate trend if historical avg is meaningful (>=0.5 boxes/month)
     // and there's enough history to compare against
     const trend = (avg < 0.5 || monthsElapsed < 4) ? null : ((recentAvg - avg) / avg) * 100;
     // Cap trend at ±500% to avoid absurd display values
     const trendCapped = trend === null ? null : Math.max(-500, Math.min(500, trend));
-    
+
     // Meses de inactividad (desde el último pedido hasta HOY)
     const monthsSinceLastOrder = (currentDate.getFullYear() - lastOrderDate.getFullYear()) * 12 + (currentDate.getMonth() - lastOrderDate.getMonth());
-    
+
     // Cálculo de Fidelidad (0-100%)
     // Usamos un benchmark de 5 cajas por mes como el 100% para "Socio Estratégico"
     let loyaltyScore = Math.min(100, Math.round((avg / 5) * 100));
-    
+
     // Penalización por inactividad: restamos 15% por cada mes sin comprar (después del primer mes de gracia)
     if (monthsSinceLastOrder > 1) {
       loyaltyScore = Math.max(0, loyaltyScore - ((monthsSinceLastOrder - 1) * 15));
     }
-    
+
     let status = { label: 'Ocasional', color: 'bg-slate-100 text-slate-600 border-slate-200', darkColor: 'bg-slate-900/50 text-slate-400 border-slate-800' };
     if (loyaltyScore >= 90) {
       status = { label: 'Socio Estratégico', color: 'bg-amber-50 text-amber-700 border-amber-200 shadow-lg shadow-amber-100 ring-1 ring-amber-400/20', darkColor: 'bg-amber-900/20 text-amber-400 border-amber-800/50 shadow-lg shadow-amber-900/20 ring-1 ring-amber-500/20' };
@@ -4544,54 +4530,32 @@ ${rows.map(r=>{
   // Métricas Globales para el Dashboard
   const globalMetrics = useMemo(() => {
     let filteredConsumos = allConsumos;
-    
+
     if (dashboardStartDate) {
-      filteredConsumos = filteredConsumos.filter(r => new Date(r.order_date) >= new Date(dashboardStartDate));
+      filteredConsumos = filteredConsumos.filter(r => parseDate(r.order_date) >= parseDate(dashboardStartDate));
     }
     if (dashboardEndDate) {
-      filteredConsumos = filteredConsumos.filter(r => new Date(r.order_date) <= new Date(dashboardEndDate));
+      filteredConsumos = filteredConsumos.filter(r => parseDate(r.order_date) <= parseDate(dashboardEndDate));
     }
 
     // Apply film type filter (GLOBAL / DI-HT / DI-HL / DI-ML)
     if (globalFilmFilter !== 'all') {
       filteredConsumos = filteredConsumos.filter(r => {
-        const ft = r.film_type || 'DIHT';
-        return ft === globalFilmFilter;
+        return normFilmType(r.film_type) === globalFilmFilter;
       });
     }
 
     const totalConsumption = filteredConsumos.reduce((acc, curr) => acc + effectiveQty(curr), 0);
-    
-    const totalRevenue = filteredConsumos.reduce((acc, curr) => {
-      const salePrice = (curr.sale_price !== null && curr.sale_price !== undefined)
-        ? curr.sale_price
-        : (curr.unit_cost || (() => {
-            const ft = (!curr.film_type || curr.film_type === 'DIHT') ? 'DIHT' : curr.film_type;
-            const key = `${ft}_${curr.size}`;
-            const ref = FILM_PRICE_REF[key];
-            return ref ? ref.precio : 0;
-          })());
-      return acc + (effectiveQty(curr) * salePrice);
-    }, 0);
 
-    const totalCost = filteredConsumos.reduce((acc, curr) => {
-      const unitCost = (curr.unit_cost !== null && curr.unit_cost !== undefined && curr.unit_cost > 0)
-        ? curr.unit_cost
-        : (() => {
-            const ft = (!curr.film_type || curr.film_type === 'DIHT') ? 'DIHT' : curr.film_type;
-            const key = `${ft}_${curr.size}`;
-            const ref = FILM_PRICE_REF[key];
-            return ref ? ref.costo : 0;
-          })();
-      return acc + (effectiveQty(curr) * unitCost);
-    }, 0);
+    const totalRevenue = filteredConsumos.reduce((acc, curr) => acc + recordRevenue(curr), 0);
+    const totalCost = filteredConsumos.reduce((acc, curr) => acc + effectiveQty(curr) * unitCostOf(curr), 0);
 
     const totalUtility = totalRevenue - totalCost;
     // Clients with activity in the filtered period
     // Note: film filter excluded — client count always based on dates only
     const dateFilteredConsumos = allConsumos.filter(r => {
-      if (dashboardStartDate && new Date(r.order_date) < new Date(dashboardStartDate)) return false;
-      if (dashboardEndDate && new Date(r.order_date) > new Date(dashboardEndDate)) return false;
+      if (dashboardStartDate && parseDate(r.order_date) < parseDate(dashboardStartDate)) return false;
+      if (dashboardEndDate && parseDate(r.order_date) > parseDate(dashboardEndDate)) return false;
       return true;
     });
     // Clients active in period filtered by both date AND film type
@@ -4601,8 +4565,8 @@ ${rows.map(r=>{
       // Apply both filters to get matching records
       const matching = allConsumos.filter(r => {
         if (r.is_return) return false;
-        if (dashboardStartDate && new Date(r.order_date) < new Date(dashboardStartDate)) return false;
-        if (dashboardEndDate && new Date(r.order_date) > new Date(dashboardEndDate)) return false;
+        if (dashboardStartDate && parseDate(r.order_date) < parseDate(dashboardStartDate)) return false;
+        if (dashboardEndDate && parseDate(r.order_date) > parseDate(dashboardEndDate)) return false;
         if (globalFilmFilter !== 'all') {
           const ft = r.film_type || 'DIHT';
           if (globalFilmFilter === 'DIHT' && ft !== 'DIHT' && !(!r.film_type)) return false;
@@ -4616,13 +4580,13 @@ ${rows.map(r=>{
 
     // ── m² calculations ──
     const totalM2 = parseFloat(filteredConsumos.reduce((acc, curr) => acc + getTotalM2(effectiveQty(curr), curr.size, curr.film_type), 0).toFixed(2));
-    
+
     const sizeDist = {} as Record<string, number>;
     const sizeDistM2: Record<string, number> = {};
     const clientDist: Record<number, number> = {};
     const clientDistM2: Record<number, number> = {};
     const salespersonDist: Record<string, { quantity: number, m2: number, revenue: number }> = {};
-    
+
     filteredConsumos.forEach(r => {
       const qty = effectiveQty(r);
       const m2 = getTotalM2(qty, r.size, r.film_type);
@@ -4630,16 +4594,16 @@ ${rows.map(r=>{
       sizeDistM2[r.size] = parseFloat(((sizeDistM2[r.size] || 0) + m2).toFixed(2));
       clientDist[r.client_id] = (clientDist[r.client_id] || 0) + qty;
       clientDistM2[r.client_id] = parseFloat(((clientDistM2[r.client_id] || 0) + m2).toFixed(2));
-      
+
       const client = allClients.find(c => c.id === r.client_id);
       const salesperson = (client?.salesperson || 'Sin Vendedor').toUpperCase().trim();
-      
+
       if (!salespersonDist[salesperson]) {
         salespersonDist[salesperson] = { quantity: 0, m2: 0, revenue: 0 };
       }
       salespersonDist[salesperson].quantity += qty;
       salespersonDist[salesperson].m2 = parseFloat((salespersonDist[salesperson].m2 + m2).toFixed(2));
-      const spPrice = (r.sale_price !== null && r.sale_price !== undefined) ? r.sale_price : (r.unit_cost || 0);
+      const spPrice = unitSalePrice(r);
       salespersonDist[salesperson].revenue += qty * spPrice;
     });
 
@@ -4650,17 +4614,17 @@ ${rows.map(r=>{
         // Use allConsumos with date filter only (not film filter) for revenue
         const revenueConsumos = allConsumos.filter(r => {
           if (r.client_id !== cId || r.is_return) return false;
-          if (dashboardStartDate && new Date(r.order_date) < new Date(dashboardStartDate)) return false;
-          if (dashboardEndDate && new Date(r.order_date) > new Date(dashboardEndDate)) return false;
+          if (dashboardStartDate && parseDate(r.order_date) < parseDate(dashboardStartDate)) return false;
+          if (dashboardEndDate && parseDate(r.order_date) > parseDate(dashboardEndDate)) return false;
           return true;
         });
         const revenue = revenueConsumos.reduce((s, r) => {
-          const price = (r.sale_price !== null && r.sale_price !== undefined) ? r.sale_price : (r.unit_cost || 0);
+          const price = unitSalePrice(r);
           return s + r.quantity * price;
         }, 0);
         return {
           id: cId,
-          name: c?.name || 'Desconocido',
+          name: c?.name || missingClientLabel(cId),
           province: c?.province || '—',
           salesperson: c?.salesperson || '—',
           value: clientDist[cId] || 0,
@@ -4718,7 +4682,7 @@ ${rows.map(r=>{
     const clientesEnRiesgo = allClients.filter(c => {
       const consumos = allConsumos.filter(r => r.client_id === c.id && !r.is_return);
       if (!consumos.length) return false;
-      const last = new Date(consumos.slice().sort((a,b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime())[0].order_date);
+      const last = parseDate(consumos.slice().sort((a,b) => parseDate(b.order_date).getTime() - parseDate(a.order_date).getTime())[0].order_date);
       return last < cutoff60;
     }).length;
 
@@ -4730,7 +4694,7 @@ ${rows.map(r=>{
     let stockBajo = 0;
     FUJI_SIZES.forEach(({ft, size}) => {
       const consumosFt = allConsumos.filter(r => {
-        const rft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type === 'DIHL' ? 'DIHL' : null;
+        const rft = normFilmType(r.film_type);
         return rft === ft && r.size === size && !r.is_return;
       });
       if (!consumosFt.length) return;
@@ -4747,8 +4711,8 @@ ${rows.map(r=>{
       STOCK_FILM_MONTHS.forEach((month, mi) => {
         if (mi > cm) return;
         running = running + (yd.months?.[month]?.inBoxes || 0) - allConsumos.reduce((s, r) => {
-          const rd = new Date(r.order_date);
-          const rft2 = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type === 'DIHL' ? 'DIHL' : null;
+          const rd = parseDate(r.order_date);
+          const rft2 = normFilmType(r.film_type);
           if (rd.getFullYear() !== cy || rd.getMonth() !== mi || r.size !== size || rft2 !== ft) return s;
           return s + (r.is_return ? -r.quantity : r.quantity);
         }, 0);
@@ -4785,11 +4749,11 @@ ${rows.map(r=>{
     return allClients.map(client => {
       const consumos = filteredConsumosForView
         .filter(r => r.client_id === client.id)
-        .sort((a, b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime());
+        .sort((a, b) => parseDate(b.order_date).getTime() - parseDate(a.order_date).getTime());
       if (consumos.length < 2) return null;
 
-      const lastOrder = new Date(consumos[0].order_date);
-      const firstOrder = new Date(consumos[consumos.length - 1].order_date);
+      const lastOrder = parseDate(consumos[0].order_date);
+      const firstOrder = parseDate(consumos[consumos.length - 1].order_date);
       const monthsElapsed = Math.max(1,
         (firstOrder.getFullYear() === lastOrder.getFullYear() && firstOrder.getMonth() === lastOrder.getMonth())
           ? 1
@@ -4841,9 +4805,9 @@ ${rows.map(r=>{
       allClients.forEach(client => {
         const consumos = filteredConsumosForView.filter(r => r.client_id === client.id && r.size === size);
         if (!consumos.length) return;
-        const sorted = [...consumos].sort((a, b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime());
-        const first = new Date(sorted[sorted.length - 1].order_date);
-        const last = new Date(sorted[0].order_date);
+        const sorted = [...consumos].sort((a, b) => parseDate(b.order_date).getTime() - parseDate(a.order_date).getTime());
+        const first = parseDate(sorted[sorted.length - 1].order_date);
+        const last = parseDate(sorted[0].order_date);
         const months = Math.max(1, (last.getFullYear() - first.getFullYear()) * 12 + (last.getMonth() - first.getMonth()) + 1);
         const avg = consumos.reduce((s, r) => s + effectiveQty(r), 0) / months;
         if (avg > 0) {
@@ -4856,7 +4820,7 @@ ${rows.map(r=>{
       const history = Array.from({ length: 6 }, (_, i) => {
         const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
         const qty = filteredConsumosForView.filter(r => {
-          const rd = new Date(r.order_date);
+          const rd = parseDate(r.order_date);
           return r.size === size && rd.getFullYear() === d.getFullYear() && rd.getMonth() === d.getMonth();
         }).reduce((s, r) => s + effectiveQty(r), 0);
         return { label: d.toLocaleDateString('es-EC', { month: 'short' }), qty, projected: false };
@@ -4884,10 +4848,10 @@ ${rows.map(r=>{
             if (mi > cm) return;
             const inB = yd.months?.[month]?.inBoxes || 0;
             const outB = allConsumos.reduce((s, r) => {
-              const d = new Date(r.order_date);
+              const d = parseDate(r.order_date);
               if (d.getFullYear() !== cy || d.getMonth() !== mi) return s;
               if (r.size !== prod.size) return s;
-              const rft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type === 'DIHL' ? 'DIHL' : r.film_type === 'DIML' ? 'DIML' : 'DIHT';
+              const rft = normFilmType(r.film_type);
               if (rft !== prod.type) return s;
               return s + (r.is_return ? -r.quantity : r.quantity);
             }, 0);
@@ -4928,16 +4892,16 @@ ${rows.map(r=>{
     return allClients.map(client => {
       const consumos = filteredConsumosForView
         .filter(r => r.client_id === client.id)
-        .sort((a, b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime());
+        .sort((a, b) => parseDate(b.order_date).getTime() - parseDate(a.order_date).getTime());
       if (consumos.length < 2) return null;
 
-      const lastOrder = new Date(consumos[0].order_date);
+      const lastOrder = parseDate(consumos[0].order_date);
       const monthsSinceLast = (now.getFullYear() - lastOrder.getFullYear()) * 12 + (now.getMonth() - lastOrder.getMonth());
-      const firstOrder = new Date(consumos[consumos.length - 1].order_date);
+      const firstOrder = parseDate(consumos[consumos.length - 1].order_date);
       const monthsActive = Math.max(1, (lastOrder.getFullYear() - firstOrder.getFullYear()) * 12 + (lastOrder.getMonth() - firstOrder.getMonth()) + 1);
       const totalQty = consumos.reduce((s, r) => s + effectiveQty(r), 0);
       const avgMonthly = totalQty / monthsActive;
-      const lostRevenue = avgMonthly * monthsSinceLast * (consumos[0].unit_cost || 0);
+      const lostRevenue = avgMonthly * monthsSinceLast * unitSalePrice(consumos[0]);
 
       // Risk score
       let riskLevel: 'lost' | 'high' | 'medium' = 'medium';
@@ -4949,8 +4913,8 @@ ${rows.map(r=>{
       // Trend: compare last 3 months vs previous 3
       const threeMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 3, 1);
       const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6, 1);
-      const recent = consumos.filter(r => new Date(r.order_date) >= threeMonthsAgo).reduce((s, r) => s + effectiveQty(r), 0);
-      const previous = consumos.filter(r => new Date(r.order_date) >= sixMonthsAgo && new Date(r.order_date) < threeMonthsAgo).reduce((s, r) => s + effectiveQty(r), 0);
+      const recent = consumos.filter(r => parseDate(r.order_date) >= threeMonthsAgo).reduce((s, r) => s + effectiveQty(r), 0);
+      const previous = consumos.filter(r => parseDate(r.order_date) >= sixMonthsAgo && parseDate(r.order_date) < threeMonthsAgo).reduce((s, r) => s + effectiveQty(r), 0);
       const trend = previous > 0 ? ((recent - previous) / previous) * 100 : 0;
 
       return { client, monthsSinceLast, avgMonthly: avgMonthly.toFixed(1), totalQty, lostRevenue, riskLevel, trend: trend.toFixed(0), lastOrder };
@@ -4980,16 +4944,16 @@ ${rows.map(r=>{
 
       if (!spConsumos.length) return null;
 
-      const thisMonth = spConsumos.filter(r => new Date(r.order_date) >= currentMonthStart).reduce((s, r) => s + effectiveQty(r), 0);
+      const thisMonth = spConsumos.filter(r => parseDate(r.order_date) >= currentMonthStart).reduce((s, r) => s + effectiveQty(r), 0);
       const lastMonth = spConsumos.filter(r => {
-        const d = new Date(r.order_date);
+        const d = parseDate(r.order_date);
         return d >= lastMonthStart && d <= lastMonthEnd;
       }).reduce((s, r) => s + effectiveQty(r), 0);
 
-      const monthlyRevenue = spConsumos.filter(r => new Date(r.order_date) >= currentMonthStart).reduce((s, r) => s + r.quantity * (r.unit_cost || 0), 0);
+      const monthlyRevenue = spConsumos.filter(r => parseDate(r.order_date) >= currentMonthStart).reduce((s, r) => s + recordRevenue(r), 0);
 
       // Calculate monthly average from ALL history (not date-filtered)
-      const allDates = spConsumos.map(r => new Date(r.order_date));
+      const allDates = spConsumos.map(r => parseDate(r.order_date));
       const minDate = allDates.length ? new Date(Math.min(...allDates.map(d => d.getTime()))) : now;
       const monthsActive = Math.max(1, (now.getFullYear() - minDate.getFullYear()) * 12 + (now.getMonth() - minDate.getMonth()) + 1);
       const totalQty = spConsumos.reduce((s, r) => s + effectiveQty(r), 0);
@@ -4998,7 +4962,7 @@ ${rows.map(r=>{
       const monthlyAvgM2 = parseFloat((totalM2sp / monthsActive).toFixed(2));
 
       // This month m²
-      const thisMonthM2 = parseFloat(spConsumos.filter(r => new Date(r.order_date) >= currentMonthStart)
+      const thisMonthM2 = parseFloat(spConsumos.filter(r => parseDate(r.order_date) >= currentMonthStart)
         .reduce((s, r) => s + getTotalM2(effectiveQty(r), r.size, r.film_type), 0).toFixed(2));
 
       // Total quantity in dashboard period (for the table "Cajas Vendidas" column)
@@ -5006,19 +4970,19 @@ ${rows.map(r=>{
         const c = allClients.find(x => x.id === r.client_id);
         return (c?.salesperson || '').toUpperCase().trim() === spName;
       });
-      if (dashboardStartDate) periodConsumos = periodConsumos.filter(r => new Date(r.order_date) >= new Date(dashboardStartDate));
-      if (dashboardEndDate) periodConsumos = periodConsumos.filter(r => new Date(r.order_date) <= new Date(dashboardEndDate));
-      if (globalFilmFilter !== 'all') periodConsumos = periodConsumos.filter(r => (r.film_type || 'DIHT') === globalFilmFilter);
+      if (dashboardStartDate) periodConsumos = periodConsumos.filter(r => parseDate(r.order_date) >= parseDate(dashboardStartDate));
+      if (dashboardEndDate) periodConsumos = periodConsumos.filter(r => parseDate(r.order_date) <= parseDate(dashboardEndDate));
+      if (globalFilmFilter !== 'all') periodConsumos = periodConsumos.filter(r => normFilmType(r.film_type) === globalFilmFilter);
       const quantity = periodConsumos.reduce((s, r) => s + effectiveQty(r), 0);
       const periodM2 = parseFloat(periodConsumos.reduce((s, r) => s + getTotalM2(effectiveQty(r), r.size, r.film_type), 0).toFixed(2));
       // Total revenue respecting dashboard date filter
-      const revenue = periodConsumos.reduce((s, r) => s + (effectiveQty(r) * (r.unit_cost || 0)), 0);
+      const revenue = periodConsumos.reduce((s, r) => s + recordRevenue(r), 0);
 
       // Last 6 months chart — show m²
       const history = Array.from({ length: 6 }, (_, i) => {
         const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
         const monthConsumos = spConsumos.filter(r => {
-          const rd = new Date(r.order_date);
+          const rd = parseDate(r.order_date);
           return rd.getFullYear() === d.getFullYear() && rd.getMonth() === d.getMonth();
         });
         const qty = monthConsumos.reduce((s, r) => s + effectiveQty(r), 0);
@@ -5039,18 +5003,18 @@ ${rows.map(r=>{
     return allClients.map(client => {
       const consumos = filteredConsumosForView
         .filter(r => r.client_id === client.id)
-        .sort((a, b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime());
+        .sort((a, b) => parseDate(b.order_date).getTime() - parseDate(a.order_date).getTime());
       if (consumos.length === 0) return null;
 
-      const lastOrder = new Date(consumos[0].order_date);
+      const lastOrder = parseDate(consumos[0].order_date);
       const monthsSinceLast = (now.getFullYear() - lastOrder.getFullYear()) * 12 + (now.getMonth() - lastOrder.getMonth());
-      const firstOrder = new Date(consumos[consumos.length - 1].order_date);
+      const firstOrder = parseDate(consumos[consumos.length - 1].order_date);
       const monthsActive = Math.max(1, (lastOrder.getFullYear() - firstOrder.getFullYear()) * 12 + (lastOrder.getMonth() - firstOrder.getMonth()) + 1);
       const totalQty = consumos.reduce((s, r) => s + effectiveQty(r), 0);
       const avgMonthly = totalQty / monthsActive;
 
       // Frequency score (0-25): how regularly they order
-      const orderDates = consumos.map(r => new Date(r.order_date).getTime());
+      const orderDates = consumos.map(r => parseDate(r.order_date).getTime());
       const gaps: number[] = [];
       for (let i = 0; i < orderDates.length - 1; i++) gaps.push((orderDates[i] - orderDates[i+1]) / (1000*60*60*24));
       const avgGap = gaps.length ? gaps.reduce((s,g) => s+g, 0) / gaps.length : 999;
@@ -5066,8 +5030,8 @@ ${rows.map(r=>{
       // Trend score (0-25): last 3 months vs previous 3
       const threeAgo = new Date(now.getFullYear(), now.getMonth() - 3, 1);
       const sixAgo = new Date(now.getFullYear(), now.getMonth() - 6, 1);
-      const recent = consumos.filter(r => new Date(r.order_date) >= threeAgo).reduce((s, r) => s + effectiveQty(r), 0);
-      const previous = consumos.filter(r => new Date(r.order_date) >= sixAgo && new Date(r.order_date) < threeAgo).reduce((s, r) => s + effectiveQty(r), 0);
+      const recent = consumos.filter(r => parseDate(r.order_date) >= threeAgo).reduce((s, r) => s + effectiveQty(r), 0);
+      const previous = consumos.filter(r => parseDate(r.order_date) >= sixAgo && parseDate(r.order_date) < threeAgo).reduce((s, r) => s + effectiveQty(r), 0);
       const trendScore = previous === 0 ? 12 : Math.min(25, Math.max(0, 12 + ((recent - previous) / previous) * 12));
 
       const score = Math.round(freqScore + recencyScore + volScore + trendScore);
@@ -5091,7 +5055,7 @@ ${rows.map(r=>{
     // Track per client per month for top-client tooltip
     const clientByMonth: Record<number, Record<number, number>> = {}; // monthIdx → clientId → qty
     filteredConsumosForView.forEach(r => {
-      const d = new Date(r.order_date);
+      const d = parseDate(r.order_date);
       const m = d.getMonth();
       const y = d.getFullYear();
       if (grid[r.size]) grid[r.size][m] += effectiveQty(r);
@@ -5106,7 +5070,7 @@ ${rows.map(r=>{
     // Track per client per month per size for expanded tooltip
     const clientByMonthSize: Record<string, Record<number, number>> = {}; // "monthIdx-size" → clientId → qty
     filteredConsumosForView.forEach(r => {
-      const d = new Date(r.order_date);
+      const d = parseDate(r.order_date);
       const m = d.getMonth();
       const key = `${m}-${r.size}`;
       if (!clientByMonthSize[key]) clientByMonthSize[key] = {};
@@ -5164,7 +5128,7 @@ ${rows.map(r=>{
       if (!hasPrinters || consumos.length === 0) return null;
 
       const now = new Date();
-      const firstOrder = new Date(Math.min(...consumos.map(r => new Date(r.order_date).getTime())));
+      const firstOrder = new Date(Math.min(...consumos.map(r => parseDate(r.order_date).getTime())));
       const monthsActive = Math.max(1, (now.getFullYear() - firstOrder.getFullYear()) * 12 + (now.getMonth() - firstOrder.getMonth()) + 1);
       const totalQty = consumos.reduce((s, r) => s + effectiveQty(r), 0);
       const avgMonthly = totalQty / monthsActive;
@@ -5192,11 +5156,11 @@ ${rows.map(r=>{
       if (!map[prov]) map[prov] = { clients: 0, qty: 0, m2: 0, revenue: 0, recent: 0, previous: 0 };
       map[prov].clients++;
       filteredConsumosForView.filter(r => r.client_id === client.id).forEach(r => {
-        const d = new Date(r.order_date);
+        const d = parseDate(r.order_date);
         const qty = effectiveQty(r);
         map[prov].qty += qty;
         map[prov].m2 = parseFloat((map[prov].m2 + getTotalM2(qty, r.size, r.film_type)).toFixed(2));
-        map[prov].revenue += r.quantity * (r.unit_cost || 0);
+        map[prov].revenue += recordRevenue(r);
         if (d >= sixMonthsAgo) map[prov].recent += qty;
         else if (d >= twelveMonthsAgo) map[prov].previous += qty;
       });
@@ -5213,13 +5177,13 @@ ${rows.map(r=>{
     const now = new Date();
     const results: any[] = [];
     allClients.forEach(client => {
-      const consumos = filteredConsumosForView.filter(r => r.client_id === client.id).sort((a,b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime());
+      const consumos = filteredConsumosForView.filter(r => r.client_id === client.id).sort((a,b) => parseDate(b.order_date).getTime() - parseDate(a.order_date).getTime());
       if (consumos.length < 4) return;
 
       // Build monthly qtys last 12 months
       const monthly: Record<string, number> = {};
       consumos.forEach(r => {
-        const d = new Date(r.order_date);
+        const d = parseDate(r.order_date);
         const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
         monthly[key] = (monthly[key] || 0) + r.quantity;
       });
@@ -5258,14 +5222,14 @@ ${rows.map(r=>{
       if (!consumos.length) return null;
       const totalQty = consumos.reduce((s, r) => s + effectiveQty(r), 0);
       const totalM2client = parseFloat(consumos.reduce((s, r) => s + getTotalM2(effectiveQty(r), r.size, r.film_type), 0).toFixed(2));
-      const totalCost = consumos.filter(r => r.unit_cost).reduce((s,r) => s + r.quantity * (r.unit_cost||0), 0);
+      const totalCost = consumos.reduce((s, r) => s + recordRevenue(r), 0); // facturación neta (nombre histórico)
       const now = new Date();
-      const firstOrder = new Date(Math.min(...consumos.map(r => new Date(r.order_date).getTime())));
+      const firstOrder = new Date(Math.min(...consumos.map(r => parseDate(r.order_date).getTime())));
       const monthsActive = Math.max(1, (now.getFullYear()-firstOrder.getFullYear())*12 + (now.getMonth()-firstOrder.getMonth()) + 1);
       const avgMonthlyRevenue = totalCost / monthsActive;
       const avgMonthlyQty = totalQty / monthsActive;
       const avgMonthlyM2 = parseFloat((totalM2client / monthsActive).toFixed(2));
-      const lastOrder = new Date(Math.max(...consumos.map(r => new Date(r.order_date).getTime())));
+      const lastOrder = new Date(Math.max(...consumos.map(r => parseDate(r.order_date).getTime())));
       const monthsSinceLast = (now.getFullYear()-lastOrder.getFullYear())*12 + (now.getMonth()-lastOrder.getMonth());
       return { client, totalQty, totalM2client, totalCost, avgMonthlyRevenue, avgMonthlyQty, avgMonthlyM2, monthsActive, monthsSinceLast };
     }).filter(Boolean).sort((a,b) => b!.totalM2client - a!.totalM2client) as any[];
@@ -5280,8 +5244,8 @@ ${rows.map(r=>{
       const consumos = filteredConsumosForView.filter(r => r.client_id === client.id);
       if (consumos.length < 2) return null;
 
-      const sorted = [...consumos].sort((a, b) => new Date(a.order_date).getTime() - new Date(b.order_date).getTime());
-      const firstDate = new Date(sorted[0].order_date);
+      const sorted = [...consumos].sort((a, b) => parseDate(a.order_date).getTime() - parseDate(b.order_date).getTime());
+      const firstDate = parseDate(sorted[0].order_date);
       const monthsActive = Math.max(1, (now.getFullYear() - firstDate.getFullYear()) * 12 + (now.getMonth() - firstDate.getMonth()) + 1);
       const totalQty = consumos.reduce((s, r) => s + effectiveQty(r), 0);
       const monthlyAvg = totalQty / monthsActive;
@@ -5289,7 +5253,7 @@ ${rows.map(r=>{
 
       // Seasonality index per month (relative to own average)
       const monthlyTotals = Array(12).fill(0);
-      consumos.forEach(r => { monthlyTotals[new Date(r.order_date).getMonth()] += effectiveQty(r); });
+      consumos.forEach(r => { monthlyTotals[parseDate(r.order_date).getMonth()] += effectiveQty(r); });
       const yearsActive = Math.max(1, Math.ceil(monthsActive / 12));
       const seasonIndex = monthlyTotals.map(v => {
         const avg = totalQty / 12;
@@ -5313,7 +5277,7 @@ ${rows.map(r=>{
       });
 
       const annualTotal = forecast.reduce((s, m) => s + m.projected, 0);
-      const lastOrder = new Date(sorted[sorted.length - 1].order_date);
+      const lastOrder = parseDate(sorted[sorted.length - 1].order_date);
       const avgCost = consumos.reduce((s, r) => s + (r.unit_cost || 0), 0) / consumos.length;
 
       return {
@@ -5338,10 +5302,10 @@ ${rows.map(r=>{
 
     let filteredConsumos = filteredConsumosForView;
     if (dashboardStartDate) {
-      filteredConsumos = filteredConsumos.filter(r => new Date(r.order_date) >= new Date(dashboardStartDate));
+      filteredConsumos = filteredConsumos.filter(r => parseDate(r.order_date) >= parseDate(dashboardStartDate));
     }
     if (dashboardEndDate) {
-      filteredConsumos = filteredConsumos.filter(r => new Date(r.order_date) <= new Date(dashboardEndDate));
+      filteredConsumos = filteredConsumos.filter(r => parseDate(r.order_date) <= parseDate(dashboardEndDate));
     }
 
     allClients.forEach(client => {
@@ -5400,21 +5364,21 @@ ${rows.map(r=>{
   const returnsSummary = useMemo(() => {
     const returns = allConsumos.filter(r => r.is_return || r.quantity < 0);
     const totalUnits = Math.abs(returns.reduce((s, r) => s + effectiveQty(r), 0));
-    const totalValue = Math.abs(returns.reduce((s, r) => s + (r.quantity * (r.unit_cost || 0)), 0));
+    const totalValue = Math.abs(returns.reduce((s, r) => s + recordRevenue(r), 0));
     // Group by client
     const byClient: Record<number, { name: string; units: number; value: number; records: typeof returns }> = {};
     returns.forEach(r => {
       const client = allClients.find(c => c.id === r.client_id);
-      if (!byClient[r.client_id]) byClient[r.client_id] = { name: client?.name || 'Desconocido', units: 0, value: 0, records: [] };
+      if (!byClient[r.client_id]) byClient[r.client_id] = { name: client?.name || missingClientLabel(r.client_id), units: 0, value: 0, records: [] };
       byClient[r.client_id].units += Math.abs(r.quantity);
-      byClient[r.client_id].value += Math.abs(r.quantity * (r.unit_cost || 0));
+      byClient[r.client_id].value += Math.abs(r.quantity * unitSalePrice(r));
       byClient[r.client_id].records.push(r);
     });
     const byClientList = Object.entries(byClient)
       .map(([id, v]) => ({ clientId: parseInt(id), ...v }))
       .sort((a, b) => b.value - a.value);
     // Sort all returns by date desc
-    const sorted = [...returns].sort((a, b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime());
+    const sorted = [...returns].sort((a, b) => parseDate(b.order_date).getTime() - parseDate(a.order_date).getTime());
     return { returns: sorted, totalUnits, totalValue, byClientList };
   }, [allConsumos, allClients]);
   const stockSummary = useMemo(() => {
@@ -5446,10 +5410,10 @@ ${rows.map(r=>{
           if (mi > currentMonthIdx) return;
           const inB = yd.months?.[month]?.inBoxes || 0;
           const outB = allConsumos.reduce((s, r) => {
-            const d = new Date(r.order_date);
+            const d = parseDate(r.order_date);
             if (d.getFullYear() !== currentYear || d.getMonth() !== mi) return s;
             if (r.size !== prod.size) return s;
-            const rft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type === 'DIHL' ? 'DIHL' : 'DIHT';
+            const rft = normFilmType(r.film_type);
             if (rft !== prod.type) return s;
             return s + (r.is_return ? -r.quantity : r.quantity);
           }, 0);
@@ -5487,14 +5451,14 @@ ${rows.map(r=>{
           };
         })
         .filter(b => b.remaining > 0)
-        .sort((a, b) => new Date(a.expiry_date).getTime() - new Date(b.expiry_date).getTime());
+        .sort((a, b) => parseDate(a.expiry_date).getTime() - parseDate(b.expiry_date).getTime());
 
       const avgCost = batches.length > 0
         ? batches.reduce((s, b) => s + b.unit_cost * b.remaining, 0) / batches.reduce((s, b) => s + b.remaining, 0)
         : 0;
       const stockValue = batches.reduce((s, b) => s + b.unit_cost * b.remaining, 0);
       const expiringSoon = batches.filter(b => {
-        const days = (new Date(b.expiry_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24);
+        const days = (parseDate(b.expiry_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24);
         return days <= 90 && days > 0;
       });
 
@@ -5523,12 +5487,10 @@ ${rows.map(r=>{
         const inBoxes = yd.months?.[month]?.inBoxes || 0;
         // Real OUT from consumos for this month/year/product
         const outBoxes = allConsumos.reduce((s, r) => {
-          const d = new Date(r.order_date);
+          const d = parseDate(r.order_date);
           if (d.getFullYear() !== currentYear || d.getMonth() !== mi) return s;
           if (r.size !== prod.size) return s;
-          const rft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT'
-                    : r.film_type === 'DIHL' ? 'DIHL'
-                    : r.film_type === 'DIML' ? 'DIML' : 'DIHT';
+          const rft = normFilmType(r.film_type);
           if (rft !== prod.type) return s;
           return s + (r.is_return ? -r.quantity : r.quantity);
         }, 0);
@@ -5554,13 +5516,38 @@ ${rows.map(r=>{
       }
     });
 
-    return { byTypeSize: result, bySize };
+    return { byTypeSize: result, bySize, year: currentYear };
   }, [stockFilmData, allConsumos, STOCK_FILM_PRODUCTS, STOCK_FILM_MONTHS]);
+
+  // ── Datos de planificación de compra por producto (pantalla y PDF usan esto) ──
+  // Stock: Stock Film (apertura + entradas − ventas reales). Solo si ese producto no
+  // tiene datos en Stock Film se usa el stock del Excel de Fujifilm (26-ene-2026).
+  // Demanda: promedio neto (devoluciones restan) de los últimos 12 meses.
+  const getPlanningInputs = (ft: string, size: string) => {
+    const now = new Date();
+    const key = `${ft}_${size}`;
+    const year = stockFromFilmPlanning.year;
+    const prod = STOCK_FILM_PRODUCTS.find(p => p.type === ft && p.size === size);
+    const fuji = FUJI_PLANNING[key];
+    const hasFilmData = !!(prod && stockFilmData[String(year)]?.[prod.key]);
+    const stock = hasFilmData ? (stockFromFilmPlanning.byTypeSize[key]?.boxes ?? 0) : (fuji?.stockBodega ?? 0);
+    const transitByMonth: Record<string, number> = stockFilmTransit[String(year)]?.[key] || {};
+    const transit = STOCK_FILM_MONTHS.reduce((s, m) => s + (transitByMonth[m] || 0), 0);
+    const from = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+    const realTotal = allConsumos.reduce((s, r) => {
+      if (r.size !== size || normFilmType(r.film_type) !== ft) return s;
+      const d = parseDate(r.order_date);
+      return d >= from && d <= now ? s + effectiveQty(r) : s;
+    }, 0);
+    const realAvgMonthly = realTotal / 12;
+    const avgMonthly = realAvgMonthly > 0 ? realAvgMonthly : (fuji?.avgMayDec25 ?? 0);
+    return { year, stock, transit, transitByMonth, realAvgMonthly, avgMonthly, hasFilmData };
+  };
 
   // ── STOCK TIEMPO: precomputed matrix outside JSX (avoids TS annotations in IIFE) ──
   const stockTiempoData = useMemo(() => {
     const SIZES = ['8x10', '10x12', '10x14', '14x17'];
-    const FILM_TYPES_ALL = ['DIHT', 'DIHL'] as const;
+    const FILM_TYPES_ALL = ['DIHT', 'DIHL', 'DIML'] as const;
     const now = new Date();
 
     const allMonths: { year: number; month: number; label: string }[] = [];
@@ -5581,9 +5568,10 @@ ${rows.map(r=>{
     });
 
     allConsumos.forEach(r => {
-      const d = new Date(r.order_date);
-      const ft = r.film_type === 'DIHL' ? 'DIHL' : 'DIHT';
+      const d = parseDate(r.order_date);
+      const ft = normFilmType(r.film_type);
       const sz = r.size;
+      if (!matrix[ft]) return; // TXE u otros no se suman a las películas Fujifilm
       if (!SIZES.includes(sz)) return;
       const idx = months.findIndex(m => m.year === d.getFullYear() && m.month === d.getMonth());
       if (idx < 0) return;
@@ -5595,6 +5583,7 @@ ${rows.map(r=>{
     const monthTotals: Record<string, { boxes: number; m2: number }[]> = {
       DIHT: months.map(() => ({ boxes: 0, m2: 0 })),
       DIHL: months.map(() => ({ boxes: 0, m2: 0 })),
+      DIML: months.map(() => ({ boxes: 0, m2: 0 })),
     };
     FILM_TYPES_ALL.forEach(ft => {
       SIZES.forEach(sz => {
@@ -5627,8 +5616,10 @@ ${rows.map(r=>{
     const realOutByMonth = {} as Record<string, { boxes: number; m2: number }>;
     months.forEach(m => { realOutByMonth[m] = { boxes: 0, m2: 0 }; });
     allConsumos.forEach(r => {
-      const d = new Date(r.order_date);
+      const d = parseDate(r.order_date);
       if (d.getFullYear() !== useYear) return;
+      // Solo productos que existen en Stock Film (excluye TXE u otros), para cuadrar con las salidas planificadas
+      if (!STOCK_FILM_PRODUCTS.some(p => p.type === normFilmType(r.film_type) && p.size === r.size)) return;
       const ml = months[d.getMonth()];
       realOutByMonth[ml].boxes += effectiveQty(r);
       realOutByMonth[ml].m2 = parseFloat((realOutByMonth[ml].m2 + getTotalM2(effectiveQty(r), r.size, r.film_type)).toFixed(2));
@@ -5693,7 +5684,7 @@ ${rows.map(r=>{
     setIsSavingOpening(true);
     try {
       const SIZES = ['8x10', '10x12', '10x14', '14x17'];
-      const TYPES = ['DIHT', 'DIHL'] as ('DIHT' | 'DIHL')[];
+      const TYPES = ['DIHT', 'DIHL', 'DIML'] as ('DIHT' | 'DIHL' | 'DIML')[];
       for (const size of SIZES) {
         for (const ft of TYPES) {
           const key = `${size}-${ft}`;
@@ -5701,7 +5692,7 @@ ${rows.map(r=>{
           if (raw === undefined) continue; // not edited
           const qty = parseInt(raw) || 0;
           // Find existing opening entry for this size+film_type
-          const existing = stockEntries.find(e => e.is_opening && e.size === size && (e.film_type || 'DIHT') === ft);
+          const existing = stockEntries.find(e => e.is_opening && e.size === size && normFilmType(e.film_type) === ft);
           if (existing) {
             if (qty === 0) {
               await deleteDoc(doc(db, 'stock_entries', existing.id));
@@ -5735,7 +5726,7 @@ ${rows.map(r=>{
     const ft = newStockEntry.film_type || 'DIHT';
     const size = newStockEntry.size;
     const qty = parseInt(String(newStockEntry.quantity)) || 0;
-    const entryDate = newStockEntry.date || new Date().toISOString().split('T')[0];
+    const entryDate = newStockEntry.date || todayStr();
     try {
       await addDoc(collection(db, 'stock_entries'), {
         date: entryDate,
@@ -5752,7 +5743,7 @@ ${rows.map(r=>{
       setIsStockEntryModalOpen(false);
 
       // Check if there's transit stock for this product
-      const entryYear = new Date(entryDate).getFullYear();
+      const entryYear = parseDate(entryDate).getFullYear();
       const filmKey = `${ft}_${size}`;
       const transitByMonth = stockFilmTransit[String(entryYear)]?.[filmKey] || {};
       const totalTransit = Object.values(transitByMonth).reduce((s: number, v: any) => s + (v || 0), 0) as number;
@@ -5778,12 +5769,12 @@ ${rows.map(r=>{
 
   return (
     <div className="w-screen h-screen overflow-hidden bg-transparent">
-      <div 
+      <div
         className={cn(
           "flex flex-col text-sm overflow-hidden transition-all duration-300",
           darkMode ? "bg-[#0F0F11] text-white" : "bg-[#F4F5F7] text-[#111827]"
         )}
-        style={{ 
+        style={{
           transform: `scale(${zoomLevel})`,
           transformOrigin: 'top left',
           width: `${100 / zoomLevel}vw`,
@@ -6369,7 +6360,7 @@ ${rows.map(r=>{
                           </div>
                         </div>
                       </div>
-                      
+
                       {showPrinters && (
                         <div className={cn(
                           "mt-5 p-5 rounded-xl border transition-colors duration-300",
@@ -6379,7 +6370,7 @@ ${rows.map(r=>{
                             <h3 className="text-sm font-black uppercase tracking-widest">Impresoras Instaladas</h3>
                             <div className="flex items-center gap-2">
                               {!isEditingPrinters && editingPrinters.length > 0 && role !== 'vendedor' && (
-                                <button 
+                                <button
                                   onClick={() => setIsEditingPrinters(true)}
                                   className={cn(
                                     "text-[10px] font-bold px-3 py-1.5 rounded-full flex items-center gap-1.5 transition-all shadow-sm",
@@ -6390,7 +6381,7 @@ ${rows.map(r=>{
                                 </button>
                               )}
                               {role !== 'vendedor' && (
-                                <button 
+                                <button
                                   onClick={() => {
                                     setEditingPrinters([...editingPrinters, { id: Date.now().toString(), type: '', trays: '', installDate: '', serial: '', location: '' }]);
                                   }}
@@ -6401,18 +6392,18 @@ ${rows.map(r=>{
                               )}
                             </div>
                           </div>
-                          
+
                           <div className="space-y-4">
                             {editingPrinters.map((printer, index) => {
                               const isExistingPrinter = selectedClient?.printers?.some(p => p.id === printer.id);
                               const isDisabled = role === 'vendedor' || (!isEditingPrinters && isExistingPrinter);
-                              
+
                               return (
                                 <div key={printer.id} className="grid grid-cols-12 gap-4 items-end">
                                   <div className="col-span-2">
                                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Tipo Impresora</label>
-                                    <input 
-                                      type="text" 
+                                    <input
+                                      type="text"
                                       value={printer.type}
                                       disabled={isDisabled}
                                       onChange={e => {
@@ -6422,8 +6413,8 @@ ${rows.map(r=>{
                                       }}
                                       className={cn(
                                         "w-full px-3 py-2 rounded-xl border-none outline-none font-bold text-xs transition-colors",
-                                        isDisabled 
-                                          ? "bg-transparent px-0 text-lg" 
+                                        isDisabled
+                                          ? "bg-transparent px-0 text-lg"
                                           : (darkMode ? "bg-[#16161A] text-white focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm" : "bg-white text-gray-900 focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm")
                                       )}
                                       placeholder={!isDisabled ? "Ej: DryPix Plus" : "-"}
@@ -6431,8 +6422,8 @@ ${rows.map(r=>{
                                   </div>
                                   <div className="col-span-1">
                                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Trays</label>
-                                    <input 
-                                      type="text" 
+                                    <input
+                                      type="text"
                                       value={printer.trays}
                                       disabled={isDisabled}
                                       onChange={e => {
@@ -6442,8 +6433,8 @@ ${rows.map(r=>{
                                       }}
                                       className={cn(
                                         "w-full px-3 py-2 rounded-xl border-none outline-none font-bold text-xs transition-colors",
-                                        isDisabled 
-                                          ? "bg-transparent px-0 text-lg" 
+                                        isDisabled
+                                          ? "bg-transparent px-0 text-lg"
                                           : (darkMode ? "bg-[#16161A] text-white focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm" : "bg-white text-gray-900 focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm")
                                       )}
                                       placeholder={!isDisabled ? "Ej: 2" : "-"}
@@ -6451,8 +6442,8 @@ ${rows.map(r=>{
                                   </div>
                                   <div className="col-span-3">
                                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Fecha Instalación</label>
-                                    <input 
-                                      type="date" 
+                                    <input
+                                      type="date"
                                       value={printer.installDate}
                                       disabled={isDisabled}
                                       onChange={e => {
@@ -6462,23 +6453,23 @@ ${rows.map(r=>{
                                       }}
                                       className={cn(
                                         "w-full px-3 py-2 rounded-xl border-none outline-none font-bold text-xs transition-colors",
-                                        isDisabled 
-                                          ? "bg-transparent px-0 text-lg" 
+                                        isDisabled
+                                          ? "bg-transparent px-0 text-lg"
                                           : (darkMode ? "bg-[#16161A] text-white focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm" : "bg-white text-gray-900 focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm")
                                       )}
                                     />
                                   </div>
                                   <div className="col-span-3">
                                     <label className={cn("text-[10px] font-bold uppercase mb-1 block",
-                                      printer.warrantyDate && new Date(printer.warrantyDate) < new Date() ? "text-red-400" :
-                                      printer.warrantyDate && new Date(printer.warrantyDate) < new Date(Date.now() + 60*24*60*60*1000) ? "text-amber-400" :
+                                      printer.warrantyDate && parseDate(printer.warrantyDate) < new Date() ? "text-red-400" :
+                                      printer.warrantyDate && parseDate(printer.warrantyDate) < new Date(Date.now() + 60*24*60*60*1000) ? "text-amber-400" :
                                       "text-gray-400"
                                     )}>
                                       Venc. Garantía / Mantenimiento
-                                      {printer.warrantyDate && new Date(printer.warrantyDate) < new Date() && <span className="ml-1">⚠ Vencida</span>}
+                                      {printer.warrantyDate && parseDate(printer.warrantyDate) < new Date() && <span className="ml-1">⚠ Vencida</span>}
                                     </label>
-                                    <input 
-                                      type="date" 
+                                    <input
+                                      type="date"
                                       value={printer.warrantyDate || ''}
                                       disabled={isDisabled}
                                       onChange={e => {
@@ -6488,16 +6479,16 @@ ${rows.map(r=>{
                                       }}
                                       className={cn(
                                         "w-full px-3 py-2 rounded-xl border-none outline-none font-bold text-xs transition-colors",
-                                        isDisabled 
-                                          ? "bg-transparent px-0 text-lg" 
+                                        isDisabled
+                                          ? "bg-transparent px-0 text-lg"
                                           : (darkMode ? "bg-[#16161A] text-white focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm" : "bg-white text-gray-900 focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm")
                                       )}
                                     />
                                   </div>
                                   <div className="col-span-2">
                                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Serial</label>
-                                    <input 
-                                      type="text" 
+                                    <input
+                                      type="text"
                                       value={printer.serial}
                                       disabled={isDisabled}
                                       onChange={e => {
@@ -6507,8 +6498,8 @@ ${rows.map(r=>{
                                       }}
                                       className={cn(
                                         "w-full px-3 py-2 rounded-xl border-none outline-none font-bold text-xs transition-colors",
-                                        isDisabled 
-                                          ? "bg-transparent px-0 text-lg" 
+                                        isDisabled
+                                          ? "bg-transparent px-0 text-lg"
                                           : (darkMode ? "bg-[#16161A] text-white focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm" : "bg-white text-gray-900 focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm")
                                       )}
                                       placeholder={!isDisabled ? "Ej: 12345ABC" : "-"}
@@ -6516,8 +6507,8 @@ ${rows.map(r=>{
                                   </div>
                                   <div className="col-span-3">
                                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Sucursal / Ciudad</label>
-                                    <input 
-                                      type="text" 
+                                    <input
+                                      type="text"
                                       value={printer.location || ''}
                                       disabled={isDisabled}
                                       onChange={e => {
@@ -6527,8 +6518,8 @@ ${rows.map(r=>{
                                       }}
                                       className={cn(
                                         "w-full px-3 py-2 rounded-xl border-none outline-none font-bold text-xs transition-colors",
-                                        isDisabled 
-                                          ? "bg-transparent px-0 text-lg" 
+                                        isDisabled
+                                          ? "bg-transparent px-0 text-lg"
                                           : (darkMode ? "bg-[#16161A] text-white focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm" : "bg-white text-gray-900 focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm")
                                       )}
                                       placeholder={!isDisabled ? "Ej: Quito - Matriz" : "-"}
@@ -6536,7 +6527,7 @@ ${rows.map(r=>{
                                   </div>
                                   {!isDisabled && (
                                     <div className="col-span-1 flex justify-end pb-1">
-                                      <button 
+                                      <button
                                         onClick={() => {
                                           const newPrinters = editingPrinters.filter((_, i) => i !== index);
                                           setEditingPrinters(newPrinters);
@@ -6557,10 +6548,10 @@ ${rows.map(r=>{
                               <p className="text-xs text-gray-400 font-bold uppercase text-center py-4">No hay impresoras registradas</p>
                             )}
                           </div>
-                          
+
                           {role !== 'vendedor' && (isEditingPrinters || JSON.stringify(editingPrinters) !== JSON.stringify(selectedClient?.printers || [])) && (
                             <div className="mt-6 flex justify-end gap-3">
-                              <button 
+                              <button
                                 onClick={() => {
                                   setEditingPrinters(selectedClient.printers || []);
                                   setIsEditingPrinters(false);
@@ -6572,7 +6563,7 @@ ${rows.map(r=>{
                               >
                                 Cancelar
                               </button>
-                              <button 
+                              <button
                                 onClick={async () => {
                                   if (!selectedClient) return;
                                   try {
@@ -6846,7 +6837,7 @@ ${rows.map(r=>{
                                 formattedDate = `${day}/${month}/${year}`;
                               }
                             }
-                            
+
                             return (
                             <tr key={record.id} className={cn(
                               "transition-colors group",
@@ -7327,9 +7318,9 @@ ${rows.map(r=>{
                         : globalFilmFilter === 'DIHT' ? allConsumos.filter(r => !r.film_type || r.film_type === 'DIHT')
                         : allConsumos.filter(r => r.film_type === globalFilmFilter);
                       const dated = filtered.filter(r => {
-                        const d = new Date(r.order_date);
-                        if (dashboardStartDate && d < new Date(dashboardStartDate)) return false;
-                        if (dashboardEndDate && d > new Date(dashboardEndDate)) return false;
+                        const d = parseDate(r.order_date);
+                        if (dashboardStartDate && d < parseDate(dashboardStartDate)) return false;
+                        if (dashboardEndDate && d > parseDate(dashboardEndDate)) return false;
                         return true;
                       });
                       const distM2 = {} as Record<string, number>;
@@ -7412,6 +7403,7 @@ ${rows.map(r=>{
                       onClick={() => {
                         const c = allClients.find(x => x.id === client.id);
                         if (c) setClientPreviewModal({ client: c, rank: idx + 1, m2: client.m2, cajas: client.value });
+                        else { setOrphanModal({ clientId: client.id }); setOrphanSearch(''); setOrphanTarget(null); }
                       }}
                     >
                       <div className={cn(
@@ -7434,7 +7426,7 @@ ${rows.map(r=>{
                   ))}
                 </div>
               </div>
-              
+
               {/* Estadísticas por Vendedor */}
               <div className={cn(
                 "col-span-12 p-6 rounded-xl border transition-colors duration-300",
@@ -7552,7 +7544,7 @@ ${rows.map(r=>{
                                   const v = parseInt(editingGoal.value) || 0;
                                   const ng = { ...salespersonGoals, [salesperson.name]: v };
                                   setSalespersonGoals(ng);
-                                  localStorage.setItem('sp_goals', JSON.stringify(ng));
+                                  saveSharedSetting('sp_goals', ng);
                                   setEditingGoal(null);
                                 }}
                                 onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
@@ -7612,7 +7604,7 @@ ${rows.map(r=>{
                     const row: Record<string,any> = { label };
                     vendorCompareSelected.forEach(sp => {
                       row[sp] = allConsumos.filter(r => {
-                        const d = new Date(r.order_date);
+                        const d = parseDate(r.order_date);
                         return d.getFullYear() === now.getFullYear() && d.getMonth() === mi
                           && (r as any).salesperson_name === sp && !r.is_return;
                       }).reduce((s,r) => s + r.quantity, 0);
@@ -7667,7 +7659,7 @@ ${rows.map(r=>{
                 <h3 className={cn("text-[10px] font-bold uppercase tracking-wider mb-5 flex items-center gap-2", darkMode ? "text-gray-500" : "text-gray-400")}>
                   <Printer className="w-3.5 h-3.5 text-[#ED1C24]" /> Análisis de Impresoras Instaladas
                 </h3>
-                
+
                 <div className="grid grid-cols-4 gap-4 mb-6">
                   <div className={cn(
                     "p-4 rounded-xl border transition-colors duration-300",
@@ -7944,7 +7936,7 @@ ${rows.map(r=>{
                               <span className="font-black text-amber-400">{r.quantity}</span>
                             </td>
                             <td className="px-5 py-3 text-right font-bold text-red-400">
-                              ${Math.abs(r.quantity * (r.unit_cost || 0)).toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              ${Math.abs(r.quantity * unitSalePrice(r)).toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </td>
                             <td className="px-5 py-3 text-center">
                               <button onClick={() => { if (client) { setSelectedClient(client); setView('clients'); } }}
@@ -8002,7 +7994,7 @@ ${rows.map(r=>{
                   ))}
                 </div>
                 <button
-                  onClick={() => { setNewStockEntry({ date: new Date().toISOString().split('T')[0], film_type: (globalFilmFilter === 'DIHL' ? 'DIHL' : globalFilmFilter === 'DIML' ? 'DIML' : 'DIHT') as 'DIHT'|'DIHL'|'DIML' }); setIsStockEntryModalOpen(true); }}
+                  onClick={() => { setNewStockEntry({ date: todayStr(), film_type: (globalFilmFilter === 'DIHL' ? 'DIHL' : globalFilmFilter === 'DIML' ? 'DIML' : 'DIHT') as 'DIHT'|'DIHL'|'DIML' }); setIsStockEntryModalOpen(true); }}
                   className="bg-[#ED1C24] text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 hover:bg-[#D11920] shadow-md shadow-red-500/20 transition-all"
                 >
                   <Plus className="w-3.5 h-3.5" /> Nueva Entrada
@@ -8016,7 +8008,7 @@ ${rows.map(r=>{
                 {/* ── STOCK DE APERTURA ── */}
                 {(() => {
                   const SIZES = ['8x10', '10x12', '10x14', '14x17'];
-                  const TYPES = ['DIHT', 'DIHL'] as ('DIHT' | 'DIHL')[];
+                  const TYPES = ['DIHT', 'DIHL', 'DIML'] as ('DIHT' | 'DIHL' | 'DIML')[];
                   const hasEdits = Object.keys(openingStockEdit).length > 0;
                   return (
                     <div className={cn("rounded-xl border p-5", darkMode ? "bg-white/3 border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
@@ -8037,15 +8029,15 @@ ${rows.map(r=>{
                           <div key={size} className={cn("rounded-xl p-3 border", darkMode ? "bg-white/4 border-white/8" : "bg-gray-50 border-gray-100")}>
                             <span className={cn("text-[10px] font-black uppercase px-2 py-0.5 rounded mb-3 inline-block", darkMode ? "bg-white/10 text-white" : "bg-gray-800 text-white")}>{size}</span>
                             <div className="space-y-2">
-                              {TYPES.map(ft => {
+                              {TYPES.filter(ft => ft !== 'DIML' || size === '8x10' || size === '10x14').map(ft => {
                                 const key = `${size}-${ft}`;
-                                const existing = stockEntries.find(e => e.is_opening && e.size === size && (e.film_type || 'DIHT') === ft);
+                                const existing = stockEntries.find(e => e.is_opening && e.size === size && normFilmType(e.film_type) === ft);
                                 const currentVal = openingStockEdit[key] !== undefined ? openingStockEdit[key] : (existing?.quantity?.toString() || '');
                                 return (
                                   <div key={ft} className="flex items-center gap-2">
                                     <span className={cn("text-[9px] font-black px-1.5 py-0.5 rounded shrink-0",
-                                      ft === 'DIHL' ? "bg-blue-500/20 text-blue-400" : "bg-[#ED1C24]/15 text-[#ED1C24]"
-                                    )}>{ft === 'DIHL' ? 'HL' : 'HT'}</span>
+                                      ft === 'DIHL' ? "bg-blue-500/20 text-blue-400" : ft === 'DIML' ? "bg-purple-500/20 text-purple-400" : "bg-[#ED1C24]/15 text-[#ED1C24]"
+                                    )}>{ft === 'DIHL' ? 'HL' : ft === 'DIML' ? 'ML' : 'HT'}</span>
                                     <input
                                       type="number" min={0} placeholder="0"
                                       value={currentVal}
@@ -8094,7 +8086,7 @@ ${rows.map(r=>{
                         // Show m² for both DIHT and DIHL if filter is 'all', or just for the active filter
                         const m2PerBoxDIHT = FILM_M2_PER_BOX['DIHT']?.[item.size] ?? 0;
                         const m2PerBoxDIHL = FILM_M2_PER_BOX['DIHL']?.[item.size] ?? 0;
-                        const m2PerBox = globalFilmFilter === 'DIHL' ? m2PerBoxDIHL : m2PerBoxDIHT;
+                        const m2PerBox = globalFilmFilter === 'DIHL' ? m2PerBoxDIHL : globalFilmFilter === 'DIML' ? getM2PerBox(item.size, 'DIML') : m2PerBoxDIHT;
                         const totalM2 = m2PerBox > 0 ? (item.current * m2PerBox).toFixed(2) : null;
                         return totalM2 ? (
                           <p className={cn("text-xs font-bold mt-0.5", darkMode ? "text-cyan-400" : "text-cyan-600")}>
@@ -8129,9 +8121,7 @@ ${rows.map(r=>{
                             <span className="font-bold text-red-400">−{item.totalOut} cj</span>
                           </div>
                           {(() => {
-                            const m2PerBox = globalFilmFilter === 'DIHL'
-                              ? (FILM_M2_PER_BOX['DIHL']?.[item.size] ?? 0)
-                              : (FILM_M2_PER_BOX['DIHT']?.[item.size] ?? 0);
+                            const m2PerBox = getM2PerBox(item.size, globalFilmFilter === 'all' ? 'DIHT' : globalFilmFilter);
                             const m2Sold = m2PerBox > 0 ? (item.totalOut * m2PerBox).toFixed(2) : null;
                             return m2Sold ? (
                               <div className="flex justify-between">
@@ -8154,7 +8144,7 @@ ${rows.map(r=>{
                             const v = parseInt(e.target.value) || 0;
                             const ns = { ...stockMinimums, [item.size]: v };
                             setStockMinimums(ns);
-                            localStorage.setItem('stock_minimums', JSON.stringify(ns));
+                            saveSharedSetting('stock_minimums', ns);
                           }}
                           className={cn("w-14 text-right text-xs font-black rounded-lg px-2 py-0.5 outline-none border-none focus:ring-2 focus:ring-[#ED1C24]/30",
                             darkMode ? "bg-white/10 text-white" : "bg-white text-gray-800 border border-gray-200"
@@ -8227,7 +8217,7 @@ ${rows.map(r=>{
                       </thead>
                       <tbody className={cn("divide-y", darkMode ? "divide-white/4" : "divide-gray-50")}>
                         {stockSummary.flatMap(item => item.batches).map((b, i) => {
-                          const daysToExpiry = Math.ceil((new Date(b.expiry_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+                          const daysToExpiry = Math.ceil((parseDate(b.expiry_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
                           return (
                             <tr key={i} className={cn("transition-colors", darkMode ? "hover:bg-white/3" : "hover:bg-gray-50/60")}>
                               <td className="px-5 py-3">
@@ -8299,7 +8289,7 @@ ${rows.map(r=>{
                     <tbody className={cn("divide-y", darkMode ? "divide-white/4" : "divide-gray-50")}>
                       {[
                         ...filteredStockEntries.map(e => ({ type: 'in' as const, id: e.id, date: e.date, size: e.size, batch: e.batch_number, qty: e.quantity, ref: e.purchase_order ? `${e.purchase_order}${e.supplier_invoice ? ' · ' + e.supplier_invoice : ''}` : e.supplier_invoice, detail: e.notes || 'Compra a Fujifilm', ft: e.film_type || 'DIHT' })),
-                        ...filteredConsumosForView.sort((a,b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime()).slice(0, 200).map(r => ({
+                        ...filteredConsumosForView.sort((a,b) => parseDate(b.order_date).getTime() - parseDate(a.order_date).getTime()).slice(0, 200).map(r => ({
                           type: 'out' as const,
                           id: String(r.id),
                           date: r.order_date,
@@ -8307,10 +8297,10 @@ ${rows.map(r=>{
                           batch: r.batch_number,
                           qty: r.quantity,
                           ref: r.invoice_number || '—',
-                          detail: allClients.find(c => c.id === r.client_id)?.name || 'Desconocido',
+                          detail: allClients.find(c => c.id === r.client_id)?.name || missingClientLabel(r.client_id),
                           ft: r.film_type || 'DIHT'
                         }))
-                      ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map((mv, i) => (
+                      ].sort((a, b) => parseDate(b.date).getTime() - parseDate(a.date).getTime()).map((mv, i) => (
                         <tr key={i} className={cn("transition-colors group", darkMode ? "hover:bg-white/3" : "hover:bg-gray-50/60")}>
                           <td className="px-5 py-3">
                             <span className={cn("text-[9px] font-black px-2 py-0.5 rounded-lg",
@@ -8335,7 +8325,7 @@ ${rows.map(r=>{
                                 onClick={async () => {
                                   if (mv.type === 'in') {
                                     // Show unified delete+revert modal
-                                    const entryYear = new Date(mv.date).getFullYear();
+                                    const entryYear = parseDate(mv.date).getFullYear();
                                     const filmKey = `${mv.ft}_${mv.size}`;
                                     setTransitRevertQty(String(mv.qty));
                                     setTransitRevertModal({ ft: mv.ft, size: mv.size, entryQty: mv.qty, entryDate: mv.date, filmKey, year: entryYear, entryId: mv.id });
@@ -8441,10 +8431,10 @@ ${rows.map(r=>{
                         const outBoxes = stockFilmGroupFilter === 'TXE'
                           ? (yd.months?.[month]?.outBoxes || 0)
                           : allConsumos.reduce((s, r) => {
-                          const d = new Date(r.order_date);
+                          const d = parseDate(r.order_date);
                           if (d.getFullYear() !== stockFilmYear || d.getMonth() !== monthIdx) return s;
                           if (r.size !== prod.size) return s;
-                          const rft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type === 'DIHL' ? 'DIHL' : r.film_type === 'DIML' ? 'DIML' : 'DIHT';
+                          const rft = normFilmType(r.film_type);
                           if (rft !== prod.type) return s;
                           return s + (r.is_return ? -r.quantity : r.quantity);
                         }, 0);
@@ -8460,10 +8450,10 @@ ${rows.map(r=>{
                         STOCK_FILM_MONTHS.slice(0, monthIdx + 1).forEach((m, mi) => {
                           const inB = yd.months?.[m]?.inBoxes || 0;
                           const outB = allConsumos.reduce((s, r) => {
-                            const d = new Date(r.order_date);
+                            const d = parseDate(r.order_date);
                             if (d.getFullYear() !== stockFilmYear || d.getMonth() !== mi) return s;
                             if (r.size !== prod.size) return s;
-                            const rft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type === 'DIHL' ? 'DIHL' : r.film_type === 'DIML' ? 'DIML' : 'DIHT';
+                            const rft = normFilmType(r.film_type);
                             if (rft !== prod.type) return s;
                             return s + (r.is_return ? -r.quantity : r.quantity);
                           }, 0);
@@ -8513,13 +8503,10 @@ ${rows.map(r=>{
                   });
                   if (!isTXE) {
                     allConsumos.forEach(r => {
-                      const d = new Date(r.order_date);
+                      const d = parseDate(r.order_date);
                       if (d.getFullYear() !== stockFilmYear) return;
                       if (r.size !== prod.size) return;
-                      const rft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT'
-                                : r.film_type === 'DIHL' ? 'DIHL'
-                                : r.film_type === 'DIML' ? 'DIML'
-                                : 'DIHT';
+                      const rft = normFilmType(r.film_type);
                       if (rft !== prod.type) return;
                       const monthLabel = STOCK_FILM_MONTHS[d.getMonth()];
                       const qty = r.is_return ? -r.quantity : r.quantity;
@@ -8559,10 +8546,10 @@ ${rows.map(r=>{
                   const endBalanceM2 = balances[balances.length - 1]?.balanceM2 ?? 0;
                   // Count matching sales records for this year/product
                   const matchingRecords = allConsumos.filter(r => {
-                    const d = new Date(r.order_date);
+                    const d = parseDate(r.order_date);
                     if (d.getFullYear() !== stockFilmYear) return false;
                     if (r.size !== prod.size) return false;
-                    const rft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type === 'DIHL' ? 'DIHL' : r.film_type === 'DIML' ? 'DIML' : 'DIHT';
+                    const rft = normFilmType(r.film_type);
                     return rft === prod.type;
                   }).length;
                   return (
@@ -8809,10 +8796,10 @@ ${rows.map(r=>{
                                 const monthIdx = STOCK_FILM_MONTHS.indexOf(b.month);
                                 const cellClients = {} as Record<number, { boxes: number; invoices: string[] }>;
                                 allConsumos.forEach(r => {
-                                  const d = new Date(r.order_date);
+                                  const d = parseDate(r.order_date);
                                   if (d.getFullYear() !== stockFilmYear || d.getMonth() !== monthIdx) return;
                                   if (r.size !== prod.size) return;
-                                  const rft2 = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type === 'DIHL' ? 'DIHL' : r.film_type === 'DIML' ? 'DIML' : 'DIHT';
+                                  const rft2 = normFilmType(r.film_type);
                                   if (rft2 !== prod.type) return;
                                   if (!cellClients[r.client_id]) cellClients[r.client_id] = { boxes: 0, invoices: [] };
                                   cellClients[r.client_id].boxes += r.is_return ? -r.quantity : r.quantity;
@@ -8922,7 +8909,9 @@ ${rows.map(r=>{
             )}
             {/* ── TAB: STOCK TIEMPO ── */}
             {(inventoryTab === 'stock-tiempo' || inventoryTab === 'overview') && (() => {
-              const FILM_TYPES = ['DIHT', 'DIHL'] as ('DIHT' | 'DIHL')[];
+              // DI-ML solo se muestra si tiene ventas registradas
+              const FILM_TYPES = (['DIHT', 'DIHL', 'DIML'] as ('DIHT' | 'DIHL' | 'DIML')[])
+                .filter(ft => ft !== 'DIML' || stockTiempoData.ftGrandTotal('DIML').boxes !== 0);
 
               // Use precomputed data from useMemo (avoids TS annotations in JSX IIFE)
               const now = new Date();
@@ -8966,8 +8955,8 @@ ${rows.map(r=>{
                       <div key={ft} className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
                         {/* Header */}
                         <div className={cn("px-6 py-3.5 border-b flex items-center gap-3 flex-wrap", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
-                          <span className={cn("text-[9px] font-black px-2.5 py-1 rounded-lg shrink-0", ft === 'DIHL' ? "bg-blue-500/20 text-blue-400" : "bg-[#ED1C24]/15 text-[#ED1C24]")}>
-                            {ft === 'DIHT' ? 'DI-HT' : 'DI-HL'}
+                          <span className={cn("text-[9px] font-black px-2.5 py-1 rounded-lg shrink-0", ft === 'DIHL' ? "bg-blue-500/20 text-blue-400" : ft === 'DIML' ? "bg-purple-500/20 text-purple-400" : "bg-[#ED1C24]/15 text-[#ED1C24]")}>
+                            {filmLabel(ft)}
                           </span>
                           <h3 className={cn("text-xs font-black uppercase tracking-wider", darkMode ? "text-gray-200" : "text-gray-700")}>
                             Ventas mensuales desde 2024 — Cajas &amp; m²
@@ -9056,10 +9045,10 @@ ${rows.map(r=>{
                                                 // Build client breakdown for this cell
                                                 const clientMap = {} as Record<number, { boxes: number; invoices: string[] }>;
                                                 allConsumos.forEach(r => {
-                                                  const d = new Date(r.order_date);
+                                                  const d = parseDate(r.order_date);
                                                   if (d.getFullYear() !== months[i].year || d.getMonth() !== months[i].month) return;
                                                   if (r.size !== sz) return;
-                                                  const rft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type === 'DIHL' ? 'DIHL' : 'DIHT';
+                                                  const rft = normFilmType(r.film_type);
                                                   if (rft !== ft) return;
                                                   if (!clientMap[r.client_id]) clientMap[r.client_id] = { boxes: 0, invoices: [] };
                                                   clientMap[r.client_id].boxes += r.is_return ? -r.quantity : r.quantity;
@@ -9221,7 +9210,7 @@ ${rows.map(r=>{
                   IMAGER_PRODUCTS.forEach(p => {
                     defaults[p.key] = { openingStock: p.openingStock, months: Object.fromEntries(IMAGER_MONTHS.map(m => [m, { inUnits: 0, outUnits: 0 }])) };
                   });
-                  localStorage.setItem('imager_data', JSON.stringify(defaults));
+                  saveSharedSetting('imager_data', defaults);
                   setImagerData(defaults);
                 }}
                 className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all", darkMode ? "bg-white/8 hover:bg-white/12 text-gray-400" : "bg-gray-100 hover:bg-gray-200 text-gray-600")}
@@ -9435,7 +9424,7 @@ ${rows.map(r=>{
                                     const monthKey = MONTH_KEYS[i];
                                     const clientsThisMonth = (imagerFromClients[prod.key]?.installs || []).filter(inst => {
                                       if (!inst.installDate) return false;
-                                      const d = new Date(inst.installDate);
+                                      const d = parseDate(inst.installDate);
                                       return d.getFullYear() === imagerYear && MONTH_KEYS[d.getMonth()] === monthKey;
                                     });
                                     return (
@@ -9526,7 +9515,7 @@ ${rows.map(r=>{
                             const allInstaladas = (imagerFromClients[prod.key]?.installs || []);
                             const instaladas = allInstaladas.filter(inst => {
                               if (!inst.installDate) return false;
-                              return new Date(inst.installDate).getFullYear() === imagerYear;
+                              return parseDate(inst.installDate).getFullYear() === imagerYear;
                             });
                             const sinFecha = allInstaladas.filter(inst => !inst.installDate);
                             const sortBy = imagerSort[prod.key] || 'date';
@@ -9807,7 +9796,7 @@ ${rows.map(r=>{
             {intelligenceTab === 'comparativo' && (() => {
               const SIZES_FJ = ['8x10', '10x12', '10x14', '14x17'];
               const SIZES_TXE = ['8x10', '10x12', '11x14', '14x17'];
-              const FT_ALL = ['DIHT', 'DIHL'] as const;
+              const FT_ALL = ['DIHT', 'DIHL', 'DIML'] as const;
               const now = new Date();
               const currentYear = now.getFullYear();
               const currentMonth = now.getMonth(); // 0-based
@@ -9822,11 +9811,12 @@ ${rows.map(r=>{
                 });
               });
               allConsumos.forEach(r => {
-                const d = new Date(r.order_date);
+                const d = parseDate(r.order_date);
                 const y = d.getFullYear();
                 if (![2024, 2025, 2026].includes(y)) return;
-                const ft = r.film_type === 'DIHL' ? 'DIHL' : 'DIHT';
+                const ft = normFilmType(r.film_type);
                 const sz = r.size;
+                if (!fujiByYearSizeType[y][ft]) return; // TXE se toma de Stock Film, no de consumos
                 if (!SIZES_FJ.includes(sz)) return;
                 const qty = r.is_return ? -r.quantity : r.quantity;
                 fujiByYearSizeType[y][ft][sz].boxes += qty;
@@ -9845,7 +9835,10 @@ ${rows.map(r=>{
               });
 
               // Projection for 2026: avg of last 6 months × 12 / months elapsed
-              const monthsElapsed2026 = currentYear === 2026 ? Math.max(1, currentMonth) : 12;
+              // Meses transcurridos incluyendo la fracción del mes en curso (los datos de 2026
+              // ya incluyen las ventas del mes actual; antes se dividían solo entre meses cerrados).
+              const daysInCurrentMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+              const monthsElapsed2026 = currentYear === 2026 ? Math.max(1, currentMonth + now.getDate() / daysInCurrentMonth) : 12;
               const isCurrentYear2026 = currentYear === 2026 && monthsElapsed2026 < 12;
               // real2026: actual data registered so far
               // proj2026: extrapolated to 12 months
@@ -9864,7 +9857,7 @@ ${rows.map(r=>{
               // Helper: get 2026 data based on current mode
               const get2026 = (ft: string, sz: string) =>
                 (isCurrentYear2026 && comparativo2026Mode === 'real')
-                  ? fujiByYearSizeType[2026][ft as 'DIHT'|'DIHL'][sz]
+                  ? fujiByYearSizeType[2026][ft][sz]
                   : proj2026[ft][sz];
 
               const YEARS = [2024, 2025, 2026] as const;
@@ -9943,8 +9936,8 @@ ${rows.map(r=>{
                           {isCurrentYearCard && (
                             <p className={cn("text-[9px] mt-2 pt-2 border-t", darkMode ? "border-white/8 text-gray-600" : "border-black/6 text-gray-400")}>
                               {comparativo2026Mode === 'real'
-                                ? `${monthsElapsed2026}m registrados (hasta hoy)`
-                                : `${monthsElapsed2026}m registrados → extrapolado a 12m`}
+                                ? `${monthsElapsed2026.toFixed(1)}m registrados (hasta hoy)`
+                                : `${monthsElapsed2026.toFixed(1)}m registrados → extrapolado a 12m`}
                             </p>
                           )}
                         </div>
@@ -9956,7 +9949,7 @@ ${rows.map(r=>{
                   {FT_ALL.map(ft => (
                     <div key={ft} className={cn("rounded-xl border overflow-hidden", darkMode ? "bg-[#16161A] border-white/8" : "bg-white border-gray-200/70 shadow-sm")}>
                       <div className={cn("px-6 py-3 border-b flex items-center gap-3", ft === 'DIHL' ? (darkMode ? "bg-blue-500/5 border-blue-500/15" : "bg-blue-50 border-blue-100") : (darkMode ? "bg-[#ED1C24]/5 border-[#ED1C24]/15" : "bg-red-50 border-red-100"))}>
-                        <span className={cn("text-[9px] font-black px-2.5 py-1 rounded-lg", ft === 'DIHL' ? "bg-blue-500/20 text-blue-400" : "bg-[#ED1C24]/15 text-[#ED1C24]")}>{ft === 'DIHT' ? 'DI-HT' : 'DI-HL'}</span>
+                        <span className={cn("text-[9px] font-black px-2.5 py-1 rounded-lg", ft === 'DIHL' ? "bg-blue-500/20 text-blue-400" : ft === 'DIML' ? "bg-purple-500/20 text-purple-400" : "bg-[#ED1C24]/15 text-[#ED1C24]")}>{filmLabel(ft)}</span>
                         <span className={cn("text-[10px] font-bold", darkMode ? "text-gray-400" : "text-gray-600")}>Comparativo anual por medida</span>
                         <div className="ml-auto flex items-center gap-6">
                           {YEARS.map(y => {
@@ -10009,14 +10002,14 @@ ${rows.map(r=>{
                                 if (v.boxes === 0 || (y === 2026 && !(isCurrentYear2026 && comparativo2026Mode === 'real'))) return;
                                 const clientMap: Record<string, { name: string; salesperson: string; province: string; boxes: number; m2: number; invoices: string[] }> = {};
                                 allConsumos.forEach(r => {
-                                  const d = new Date(r.order_date);
+                                  const d = parseDate(r.order_date);
                                   if (d.getFullYear() !== y) return;
                                   if (r.size !== sz) return;
-                                  const rft = r.film_type === 'DIHL' ? 'DIHL' : 'DIHT';
+                                  const rft = normFilmType(r.film_type);
                                   if (rft !== ft) return;
                                   const qty = r.is_return ? -r.quantity : r.quantity;
                                   const client = allClients.find(c => c.id === r.client_id);
-                                  const name = client?.name || 'Desconocido';
+                                  const name = client?.name || missingClientLabel(r.client_id);
                                   if (!clientMap[name]) clientMap[name] = { name, salesperson: client?.salesperson || '', province: client?.province || '', boxes: 0, m2: 0, invoices: [] };
                                   clientMap[name].boxes += qty;
                                   clientMap[name].m2 = parseFloat((clientMap[name].m2 + getTotalM2(qty, sz, ft)).toFixed(2));
@@ -10658,58 +10651,11 @@ ${rows.map(r=>{
 
                       const m2box = FILM_M2_PER_BOX[ft]?.[size] ?? 0;
 
-                      // Real demand from allConsumos last 12 months
-                      const now = new Date();
-                      let realTotal = 0;
-                      for (let i = 0; i < 12; i++) {
-                        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-                        allConsumos.forEach(r => {
-                          const rd = new Date(r.order_date);
-                          if (rd.getFullYear() !== d.getFullYear() || rd.getMonth() !== d.getMonth()) return;
-                          if (r.size !== size) return;
-                          const rft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type === 'DIHL' ? 'DIHL' : 'DIHT';
-                          if (rft !== ft) return;
-                          realTotal += r.is_return ? -r.quantity : r.quantity;
-                        });
-                      }
-                      const realAvgMonthly = realTotal / 12;
-
-                      // Stock from Film Planning (source of truth)
-                      const availYears = Object.keys(stockFilmData).map(Number).filter(y => y <= now.getFullYear()).sort((a,b)=>b-a);
-                      const cy = availYears[0] || now.getFullYear();
-                      const cm = cy === now.getFullYear() ? now.getMonth() : 11;
-                      let filmStock = 0;
-                      const prod = STOCK_FILM_PRODUCTS.find(p => p.type === ft && p.size === size);
-                      if (prod) {
-                        const yd = stockFilmData[String(cy)]?.[prod.key] || { openingBoxes: 0, openingM2: 0, months: {} };
-                        let running = yd.openingBoxes || 0;
-                        STOCK_FILM_MONTHS.forEach((month, mi) => {
-                          if (mi > cm) return;
-                          const inB = yd.months?.[month]?.inBoxes || 0;
-                          const outB = allConsumos.reduce((s, r) => {
-                            const rd2 = new Date(r.order_date);
-                            if (rd2.getFullYear() !== cy || rd2.getMonth() !== mi) return s;
-                            if (r.size !== size) return s;
-                            const rft2 = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type === 'DIHL' ? 'DIHL' : 'DIHT';
-                            if (rft2 !== ft) return s;
-                            return s + (r.is_return ? -r.quantity : r.quantity);
-                          }, 0);
-                          running = running + inB - outB;
-                        });
-                        filmStock = Math.max(0, running);
-                      }
-
-                      // Use Film Planning stock if available, else Fujifilm Excel stock
-                      const currentStock = filmStock > 0 ? filmStock : fuji.stockBodega;
-
-                      // Real transit from Stock Film Transit state (user-entered)
-                      const prodKey = `${ft}_${size}`;
-                      const transitByMonth = stockFilmTransit[String(cy)]?.[prodKey] || {};
-                      const realTransit = STOCK_FILM_MONTHS.reduce((s, m) => s + (transitByMonth[m] || 0), 0);
+                      // Stock, tránsito y demanda: misma función que el PDF de proyección
+                      const { stock: currentStock, transit: realTransit, transitByMonth, realAvgMonthly, avgMonthly, year: cy } = getPlanningInputs(ft, size);
+                      const prodKey = key;
                       const totalWithTransit = currentStock + (includeTransit ? realTransit : 0);
-
-                      // Demand for selected period — use real avg or Fujifilm avg (whichever is available)
-                      const avgMonthly = realAvgMonthly > 0 ? realAvgMonthly : fuji.avgMayDec25;
+                      const now = new Date();
                       const demandPeriod = Math.round(avgMonthly * projectionPeriod);
                       const demandM2 = parseFloat((demandPeriod * m2box).toFixed(1));
 
@@ -10736,10 +10682,10 @@ ${rows.map(r=>{
                       for (let i = 0; i < Math.max(projectionPeriod, 3); i++) {
                         const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
                         allConsumos.forEach(r => {
-                          const rd = new Date(r.order_date);
+                          const rd = parseDate(r.order_date);
                           if (rd.getFullYear() !== d.getFullYear() || rd.getMonth() !== d.getMonth()) return;
                           if (r.size !== size) return;
-                          const rft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type === 'DIHL' ? 'DIHL' : 'DIHT';
+                          const rft = normFilmType(r.film_type);
                           if (rft !== ft) return;
                           const name = allClients.find(c => c.id === r.client_id)?.name || '?';
                           clientMap[name] = (clientMap[name] || 0) + (r.is_return ? -r.quantity : r.quantity);
@@ -10827,8 +10773,8 @@ ${rows.map(r=>{
                                 : (darkMode ? "bg-[#ED1C24]/5 border-[#ED1C24]/15" : "bg-red-50/60 border-red-100")
                             )}>
                               <span className={cn("text-[9px] font-black px-2.5 py-1 rounded-lg shrink-0",
-                                ft === 'DIHL' ? "bg-blue-500/20 text-blue-400" : "bg-[#ED1C24]/15 text-[#ED1C24]"
-                              )}>{ft === 'DIHT' ? 'DI-HT' : 'DI-HL'}</span>
+                                ft === 'DIHL' ? "bg-blue-500/20 text-blue-400" : ft === 'DIML' ? "bg-purple-500/20 text-purple-400" : "bg-[#ED1C24]/15 text-[#ED1C24]"
+                              )}>{filmLabel(ft)}</span>
                               <span className={cn("text-[10px] font-bold", darkMode ? "text-gray-400" : "text-gray-600")}>
                                 {periodLabel} — a pedir a Fujifilm
                               </span>
@@ -11406,7 +11352,7 @@ ${rows.map(r=>{
                   </div>
                   <div className="min-w-0">
                     <p className={cn("text-[9px] font-bold uppercase tracking-widest", stockTiempoModal.ft === 'DIHL' ? (darkMode ? "text-blue-400/60" : "text-blue-400") : (darkMode ? "text-red-400/60" : "text-red-400"))}>
-                      {stockTiempoModal.ft === 'DIHT' ? 'DI-HT' : 'DI-HL'} · {stockTiempoModal.sz} · {stockTiempoModal.monthLabel}
+                      {filmLabel(stockTiempoModal.ft)} · {stockTiempoModal.sz} · {stockTiempoModal.monthLabel}
                     </p>
                     <h3 className="text-sm font-black leading-tight">Ventas del mes</h3>
                   </div>
@@ -11471,15 +11417,15 @@ ${rows.map(r=>{
               const m2box = FILM_M2_PER_BOX[stockTiempoModal.ft]?.[stockTiempoModal.sz] ?? 0;
               const records = allConsumos.filter(r => {
                 if (!client || r.client_id !== client.id) return false;
-                const d = new Date(r.order_date);
+                const d = parseDate(r.order_date);
                 if (d.getFullYear() !== stockTiempoModal.year || d.getMonth() !== stockTiempoModal.month) return false;
                 if (r.size !== stockTiempoModal.sz) return false;
-                const rft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type === 'DIHL' ? 'DIHL' : 'DIHT';
+                const rft = normFilmType(r.film_type);
                 return rft === stockTiempoModal.ft;
-              }).sort((a, b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime());
+              }).sort((a, b) => parseDate(b.order_date).getTime() - parseDate(a.order_date).getTime());
               const totalBoxes = records.reduce((s, r) => s + (r.is_return ? -r.quantity : r.quantity), 0);
               const totalM2 = parseFloat((totalBoxes * m2box).toFixed(2));
-              const totalRevenue = records.reduce((s, r) => s + r.quantity * (r.unit_cost || 0), 0);
+              const totalRevenue = records.reduce((s, r) => s + recordRevenue(r), 0);
               return (
                 <div className={cn("flex-1 flex flex-col border-l overflow-hidden", darkMode ? "border-white/8" : "border-gray-100")}>
                   <div className={cn("px-5 py-4 border-b shrink-0", darkMode ? "border-white/8 bg-white/2" : "border-gray-100 bg-gray-50/60")}>
@@ -11523,7 +11469,7 @@ ${rows.map(r=>{
                         {records.map((r, ri) => {
                           const qty = r.is_return ? -r.quantity : r.quantity;
                           const m2r = parseFloat((qty * m2box).toFixed(2));
-                          const total = r.quantity * (r.unit_cost || 0);
+                          const total = qty * unitSalePrice(r);
                           return (
                             <tr key={ri} className={cn("transition-colors", darkMode ? "hover:bg-white/3" : "hover:bg-gray-50/60")}>
                               <td className={cn("px-4 py-2.5", darkMode ? "text-gray-400" : "text-gray-600")}>{r.order_date}</td>
@@ -11615,7 +11561,7 @@ ${rows.map(r=>{
               <div className="flex flex-col w-[360px] shrink-0" style={{ maxHeight: '85vh' }}>
                 <div className={cn("px-5 py-4 border-b shrink-0 relative", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
                   <div className="flex items-center gap-2 mb-1 pr-8">
-                    <span className={cn("text-[9px] font-black px-2 py-0.5 rounded", ftBg, ftColor)}>{ft === 'DIHT' ? 'DI-HT' : 'DI-HL'}</span>
+                    <span className={cn("text-[9px] font-black px-2 py-0.5 rounded", ftBg, ftColor)}>{filmLabel(ft)}</span>
                     <span className={cn("text-[9px] font-black px-2 py-0.5 rounded", darkMode ? "bg-white/10 text-white" : "bg-gray-800 text-white")}>{sz}</span>
                     <span className={cn("text-[9px] font-semibold ml-auto", darkMode ? "text-gray-500" : "text-gray-400")}>{year}</span>
                   </div>
@@ -11656,13 +11602,13 @@ ${rows.map(r=>{
               {comparativoSelectedClient && clientInfo && (() => {
                 const client = allClients.find(c => c.name === clientInfo.name);
                 const clientConsumos = allConsumos.filter(r => {
-                  const d = new Date(r.order_date);
+                  const d = parseDate(r.order_date);
                   if (d.getFullYear() !== year) return false;
                   if (r.size !== sz) return false;
-                  const rft = r.film_type === 'DIHL' ? 'DIHL' : 'DIHT';
+                  const rft = normFilmType(r.film_type);
                   return rft === ft && r.client_id === client?.id;
-                }).sort((a, b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime());
-                const totalRevenue = clientConsumos.reduce((s, r) => s + (r.quantity * (r.unit_cost || 0)), 0);
+                }).sort((a, b) => parseDate(b.order_date).getTime() - parseDate(a.order_date).getTime());
+                const totalRevenue = clientConsumos.reduce((s, r) => s + recordRevenue(r), 0);
                 return (
                   <div className={cn("flex flex-col border-l flex-1 min-w-0", darkMode ? "border-white/8" : "border-gray-100")} style={{ maxHeight: '85vh' }}>
                     <div className={cn("px-5 py-4 border-b shrink-0", darkMode ? "border-white/8 bg-white/3" : "border-gray-100 bg-gray-50")}>
@@ -11695,7 +11641,7 @@ ${rows.map(r=>{
                                 <td className={cn("px-4 py-2.5 font-mono text-[10px]", darkMode ? "text-gray-600" : "text-gray-400")}>{r.invoice_number || '—'}</td>
                                 <td className={cn("px-4 py-2.5 text-center font-bold", ftColor)}>{qty}</td>
                                 <td className={cn("px-4 py-2.5 text-center", darkMode ? "text-cyan-500" : "text-cyan-600")}>{m2r.toFixed(2)}</td>
-                                <td className={cn("px-4 py-2.5 text-right font-bold", darkMode ? "text-emerald-400" : "text-emerald-600")}>${(qty * (r.unit_cost || 0)).toFixed(2)}</td>
+                                <td className={cn("px-4 py-2.5 text-right font-bold", darkMode ? "text-emerald-400" : "text-emerald-600")}>${(qty * unitSalePrice(r)).toFixed(2)}</td>
                               </tr>
                             );
                           })}
@@ -11832,16 +11778,16 @@ ${rows.map(r=>{
               // Get all records for this client in this month/year/product
               const records = allConsumos.filter(r => {
                 if (!client || r.client_id !== client.id) return false;
-                const d = new Date(r.order_date);
+                const d = parseDate(r.order_date);
                 if (d.getFullYear() !== stockFilmCellDetail.year || d.getMonth() !== monthIdx) return false;
                 if (r.size !== stockFilmCellDetail.prod.size) return false;
-                const rft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type === 'DIHL' ? 'DIHL' : r.film_type === 'DIML' ? 'DIML' : 'DIHT';
+                const rft = normFilmType(r.film_type);
                 return rft === stockFilmCellDetail.prod.type;
-              }).sort((a, b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime());
+              }).sort((a, b) => parseDate(b.order_date).getTime() - parseDate(a.order_date).getTime());
 
               const totalBoxes = records.reduce((s, r) => s + (r.is_return ? -r.quantity : r.quantity), 0);
               const totalM2 = parseFloat((totalBoxes * stockFilmCellDetail.prod.m2box).toFixed(2));
-              const totalRevenue = records.reduce((s, r) => s + r.quantity * (r.unit_cost || 0), 0);
+              const totalRevenue = records.reduce((s, r) => s + recordRevenue(r), 0);
 
               return (
                 <div className={cn("flex-1 flex flex-col border-l overflow-hidden", darkMode ? "border-white/8" : "border-gray-100")}>
@@ -11892,7 +11838,7 @@ ${rows.map(r=>{
                         {records.map((r, ri) => {
                           const qty = r.is_return ? -r.quantity : r.quantity;
                           const m2r = parseFloat((qty * stockFilmCellDetail.prod.m2box).toFixed(2));
-                          const total = r.quantity * (r.unit_cost || 0);
+                          const total = qty * unitSalePrice(r);
                           return (
                             <tr key={ri} className={cn("transition-colors", darkMode ? "hover:bg-white/3" : "hover:bg-gray-50/60")}>
                               <td className={cn("px-4 py-2.5 whitespace-nowrap", darkMode ? "text-gray-400" : "text-gray-600")}>{r.order_date}</td>
@@ -11980,7 +11926,7 @@ ${rows.map(r=>{
                 {!selectedClient || !editingRecord.id ? (
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Cliente</label>
-                    <select 
+                    <select
                       required
                       value={editingRecord.client_id}
                       onChange={e => setEditingRecord({...editingRecord, client_id: parseInt(e.target.value)})}
@@ -12009,8 +11955,8 @@ ${rows.map(r=>{
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Fecha de Pedido</label>
-                    <input 
-                      type="date" 
+                    <input
+                      type="date"
                       required
                       value={editingRecord.order_date || ''}
                       onChange={e => setEditingRecord({...editingRecord, order_date: e.target.value})}
@@ -12022,8 +11968,8 @@ ${rows.map(r=>{
                   </div>
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Nº Factura</label>
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       placeholder="Ej: 001-001-000123"
                       value={editingRecord.invoice_number || ''}
                       onChange={e => setEditingRecord({...editingRecord, invoice_number: e.target.value})}
@@ -12069,7 +12015,7 @@ ${rows.map(r=>{
                   </div>
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Medida</label>
-                    <select 
+                    <select
                       value={editingRecord.size || '14x17'}
                       onChange={e => setEditingRecord({...editingRecord, size: e.target.value})}
                       style={darkMode ? { colorScheme: 'dark' } : {}}
@@ -12111,8 +12057,8 @@ ${rows.map(r=>{
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Lote</label>
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       required
                       placeholder="Ej: 72512"
                       value={editingRecord.batch_number || ''}
@@ -12125,8 +12071,8 @@ ${rows.map(r=>{
                   </div>
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Fecha de Expiración</label>
-                    <input 
-                      type="date" 
+                    <input
+                      type="date"
                       required
                       value={editingRecord.expiry_date || ''}
                       onChange={e => setEditingRecord({...editingRecord, expiry_date: e.target.value})}
@@ -12140,8 +12086,8 @@ ${rows.map(r=>{
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Costo Unitario ($)</label>
-                    <input 
-                      type="number" 
+                    <input
+                      type="number"
                       step="0.01"
                       placeholder="Ej: 150.50 o -150.50"
                       value={editingRecord.unit_cost || ''}
@@ -12401,8 +12347,8 @@ ${rows.map(r=>{
               <div className="space-y-4">
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Nombre del Centro</label>
-                  <input 
-                    type="text" 
+                  <input
+                    type="text"
                     required
                     placeholder="Ej: Hospital Metropolitano"
                     value={newClient.name || ''}
@@ -12415,8 +12361,8 @@ ${rows.map(r=>{
                 </div>
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Provincia</label>
-                  <input 
-                    type="text" 
+                  <input
+                    type="text"
                     required
                     placeholder="Ej: Pichincha"
                     value={newClient.province || ''}
@@ -12430,8 +12376,8 @@ ${rows.map(r=>{
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">COD Cliente</label>
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       required
                       placeholder="Ej: CL-001"
                       value={newClient.client_code || ''}
@@ -12444,8 +12390,8 @@ ${rows.map(r=>{
                   </div>
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Vendedor</label>
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       required
                       placeholder="Ej: JUAN PÉREZ"
                       value={newClient.salesperson || ''}
@@ -12459,8 +12405,8 @@ ${rows.map(r=>{
                 </div>
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">RUC / ID</label>
-                  <input 
-                    type="text" 
+                  <input
+                    type="text"
                     required
                     placeholder="Ej: 1792345678001"
                     value={newClient.ruc_id || ''}
@@ -12473,8 +12419,8 @@ ${rows.map(r=>{
                 </div>
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Contacto / Teléfono</label>
-                  <input 
-                    type="text" 
+                  <input
+                    type="text"
                     placeholder="Ej: Dr. Pérez - 0991234567"
                     value={newClient.contact || ''}
                     onChange={e => setNewClient({...newClient, contact: e.target.value})}
@@ -12485,7 +12431,7 @@ ${rows.map(r=>{
                   />
                 </div>
               </div>
-              <button 
+              <button
                 type="submit"
                 className="w-full bg-[#ED1C24] text-white py-4 rounded-2xl font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-[#D11920] shadow-lg shadow-red-500/20 transition-all"
               >
@@ -12518,8 +12464,8 @@ ${rows.map(r=>{
             <form onSubmit={handleSaveAltName} className="p-8 space-y-6">
               <div>
                 <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Nombre Alternativo</label>
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   autoFocus
                   placeholder="Ej: Clínica Central - Sucursal Norte"
                   value={tempAltName || ''}
@@ -12530,7 +12476,7 @@ ${rows.map(r=>{
                   )}
                 />
               </div>
-              <button 
+              <button
                 type="submit"
                 className="w-full bg-[#ED1C24] text-white py-4 rounded-2xl font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-[#D11920] shadow-lg shadow-red-500/20 transition-all"
               >
@@ -12752,7 +12698,7 @@ ${rows.map(r=>{
                           <span className="flex items-center gap-1"><User className="w-3 h-3" /> {client.salesperson || 'Sin vendedor'}</span>
                         </div>
                       </div>
-                      <button 
+                      <button
                         onClick={() => {
                           setSelectedPrinterType(null);
                           setSelectedClient(client);
@@ -12916,7 +12862,7 @@ ${rows.map(r=>{
                   {(['DIHT', 'DIHL', 'DIML'] as const).map(ft => (
                     <button key={ft} onClick={() => setNewStockEntry(p => ({ ...p, film_type: ft }))}
                       className={cn("flex-1 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all border",
-                        (newStockEntry.film_type || 'DIHT') === ft
+                        normFilmType(newStockEntry.film_type) === ft
                           ? ft === 'DIHL'
                             ? "bg-blue-500/20 text-blue-400 border-blue-500/40"
                             : ft === 'DIML'
@@ -13026,7 +12972,7 @@ ${rows.map(r=>{
 
         // Total metrics
         const totalCajas = spConsumos.reduce((s, r) => s + effectiveQty(r), 0);
-        const totalRevenue = spConsumos.reduce((s, r) => s + r.quantity * (r.unit_cost || 0), 0);
+        const totalRevenue = spConsumos.reduce((s, r) => s + recordRevenue(r), 0);
         const totalClients = spClients.length;
         const totalM2sp = parseFloat(spConsumos.reduce((s, r) => s + getTotalM2(effectiveQty(r), r.size, r.film_type), 0).toFixed(1));
 
@@ -13036,12 +12982,12 @@ ${rows.map(r=>{
           const d = new Date(now.getFullYear(), now.getMonth() - (11 - i), 1);
           const label = d.toLocaleDateString('es-EC', { month: 'short', year: '2-digit' });
           const monthConsumos = spConsumos.filter(r => {
-            const rd = new Date(r.order_date);
+            const rd = parseDate(r.order_date);
             return rd.getFullYear() === d.getFullYear() && rd.getMonth() === d.getMonth();
           });
           const cajas = monthConsumos.reduce((s, r) => s + effectiveQty(r), 0);
           const m2 = parseFloat(monthConsumos.reduce((s, r) => s + getTotalM2(effectiveQty(r), r.size, r.film_type), 0).toFixed(1));
-          const revenue = monthConsumos.reduce((s, r) => s + r.quantity * (r.unit_cost || 0), 0);
+          const revenue = monthConsumos.reduce((s, r) => s + recordRevenue(r), 0);
           return { label, cajas, m2, revenue };
         });
 
@@ -13289,6 +13235,7 @@ ${rows.map(r=>{
                     "mt-5 p-4 rounded-xl border text-xs",
                     darkMode ? "bg-white/3 border-white/8 text-gray-400" : "bg-gray-50 border-gray-100 text-gray-500"
                   )}>
+                    <p className="mb-3 text-[11px]"><span className="font-bold">Solo se importan películas</span> (DI-HT, DI-HL, DI-ML, TXE). Impresoras, accesorios, repuestos y servicios se ignoran automáticamente.</p>
                     <p className="font-bold mb-2 text-[11px] uppercase tracking-wide">Columnas reconocidas automáticamente:</p>
                     <div className="grid grid-cols-2 gap-x-6 gap-y-1">
                       {[
@@ -13333,8 +13280,8 @@ ${rows.map(r=>{
                         onChange={(e) => setPurgeYear(e.target.value)}
                         className={cn(
                           "px-2.5 py-1.5 rounded-lg font-bold text-xs outline-none transition-all cursor-pointer",
-                          darkMode 
-                            ? "bg-[#16161A] border border-white/10 text-white focus:border-red-500/50" 
+                          darkMode
+                            ? "bg-[#16161A] border border-white/10 text-white focus:border-red-500/50"
                             : "bg-white border border-gray-200 text-gray-800 focus:border-red-500/50"
                         )}
                       >
@@ -13346,8 +13293,8 @@ ${rows.map(r=>{
                         onClick={handlePurgeYearData}
                         className={cn(
                           "px-3 py-1.5 rounded-lg font-black uppercase tracking-wider text-[9px] transition-all whitespace-nowrap shrink-0",
-                          darkMode 
-                            ? "bg-red-500/20 text-red-300 hover:bg-red-500/30 border border-red-500/30" 
+                          darkMode
+                            ? "bg-red-500/20 text-red-300 hover:bg-red-500/30 border border-red-500/30"
                             : "bg-red-600 text-white hover:bg-red-500"
                         )}
                       >
@@ -13355,6 +13302,39 @@ ${rows.map(r=>{
                       </button>
                     </div>
                   </div>
+
+                  {/* Ventas sin número de factura (incluye los 247 de ejemplo que cargaba src/data.js) */}
+                  {role === 'admin' && allConsumos.some(r => !String(r.invoice_number || '').trim()) && (() => {
+                    const noInvoice = allConsumos.filter(r => !String(r.invoice_number || '').trim());
+                    const cajas = noInvoice.reduce((s, r) => s + effectiveQty(r), 0);
+                    const seedCount = noInvoice.filter(isSeedRecord).length;
+                    return (
+                      <div className={cn("mt-4 p-4 rounded-xl border", darkMode ? "bg-red-500/8 border-red-500/20" : "bg-red-50 border-red-200")}>
+                        <p className="text-[11px] font-black uppercase tracking-wider text-red-500 mb-1">Ventas sin factura</p>
+                        <p className={cn("text-[10px] mb-3", darkMode ? "text-gray-400" : "text-gray-500")}>
+                          Hay <strong>{noInvoice.length} ventas ({cajas} cajas)</strong> sin número de factura
+                          {seedCount > 0 && <> — <strong>{seedCount}</strong> son los datos de ejemplo (fecha 01-01-2025, lotes "B-…")</>}.
+                          Bórralas antes de importar tus CSV. Clientes, impresoras e inventario no se tocan.
+                        </p>
+                        <button
+                          onClick={async () => {
+                            if (!window.confirm(`¿Borrar ${noInvoice.length} ventas SIN factura (${cajas} cajas)?\n\nNo se tocan las ventas con factura, los clientes, las impresoras ni el inventario. No se puede deshacer.`)) return;
+                            try {
+                              await commitInChunks(noInvoice, (b, r) => b.delete(doc(db, 'consumos', String(r.id))));
+                              showToast(`Se borraron ${noInvoice.length} ventas sin factura`, 'success');
+                              addAuditLog('delete_record', `Borró ${noInvoice.length} ventas sin factura (${cajas} cj)`);
+                            } catch (e) {
+                              console.error('Error borrando ventas sin factura:', e);
+                              showToast('No se pudieron borrar todas. Revisa los permisos e inténtalo de nuevo.', 'error');
+                            }
+                          }}
+                          className="text-[10px] font-black uppercase tracking-wider bg-red-600 text-white px-3 py-1.5 rounded-lg hover:bg-red-500 transition-all"
+                        >
+                          Borrar {noInvoice.length} ventas sin factura →
+                        </button>
+                      </div>
+                    );
+                  })()}
 
                   {/* DIHT Migration tool */}
                   {allConsumos.filter(r => !r.film_type).length > 0 && (
@@ -13477,8 +13457,8 @@ ${rows.map(r=>{
                               </tr>
                             </thead>
                             <tbody className={cn("divide-y", darkMode ? "divide-white/5" : "divide-gray-50")}>
-                              {csvImportResults.matched.map((item, i) => {
-                                const r = mapRowToRecord(item.row, allClients.find(c => c.name === item.clientName)!.id, 0);
+                              {csvImportResults.matched.slice(0, 200).map((item, i) => {
+                                const r = mapRowToRecord(item.row, clientIndex.byExactName.get(item.clientName)?.id ?? 0, 0);
                                 return (
                                   <tr key={i} className={cn(darkMode ? "hover:bg-white/3" : "hover:bg-gray-50/60")}>
                                     <td className="px-4 py-2 font-semibold max-w-[180px] truncate">{item.clientName}</td>
@@ -13496,6 +13476,9 @@ ${rows.map(r=>{
                             </tbody>
                           </table>
                         </div>
+                        {csvImportResults.matched.length > 200 && (
+                          <p className="px-4 py-2 text-[10px] text-gray-500">Mostrando 200 de {csvImportResults.matched.length.toLocaleString()} registros (se importarán todos).</p>
+                        )}
                       </div>
                     </div>
                   )}
@@ -13698,8 +13681,8 @@ ${rows.map(r=>{
         const last12 = Array.from({length:12}, (_,i) => {
           const d = new Date(now.getFullYear(), now.getMonth() - 11 + i, 1);
           const qty = allConsumos.filter(r => {
-            const rd = new Date(r.order_date);
-            const rft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type;
+            const rd = parseDate(r.order_date);
+            const rft = normFilmType(r.film_type);
             return rd.getFullYear() === d.getFullYear() && rd.getMonth() === d.getMonth()
               && r.size === m.size && rft === m.ft && !r.is_return;
           }).reduce((s,r) => s + r.quantity, 0);
@@ -13919,7 +13902,7 @@ ${rows.map(r=>{
         const m = transitRevertModal;
         const ftLabel = m.ft === 'DIHT' ? 'DI-HT' : m.ft === 'DIHL' ? 'DI-HL' : 'DI-ML';
         const MONTH_KEYS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-        const entryMonth = MONTH_KEYS[new Date(m.entryDate).getMonth()];
+        const entryMonth = MONTH_KEYS[parseDate(m.entryDate).getMonth()];
         const currentTransit = Object.values(stockFilmTransit[String(m.year)]?.[m.filmKey] || {}).reduce((s: number, v: any) => s + (v || 0), 0);
         const MONTH_NAMES: Record<string,string> = {
           Jan:'Enero',Feb:'Febrero',Mar:'Marzo',Apr:'Abril',May:'Mayo',Jun:'Junio',
@@ -14165,7 +14148,7 @@ ${rows.map(r=>{
           for (const client of Object.values(byClient)) {
             const updatedPrinters = (client.printers || []).map(p => {
               if (!p.installDate) return p;
-              const installDate = new Date(p.installDate);
+              const installDate = parseDate(p.installDate);
               installDate.setMonth(installDate.getMonth() + months);
               const warrantyDate = installDate.toISOString().split('T')[0];
               return { ...p, warrantyDate };
@@ -14304,14 +14287,110 @@ ${rows.map(r=>{
       })()}
 
       {/* ── CLIENT PREVIEW MODAL ── */}
+      {orphanModal && (() => {
+        const records = allConsumos
+          .filter(r => Number(r.client_id) === Number(orphanModal.clientId))
+          .sort((a, b) => String(b.order_date || '').localeCompare(String(a.order_date || '')));
+        const totalCajas = records.reduce((s, r) => s + (Number(effectiveQty(r)) || 0), 0);
+        const totalM2 = records.reduce((s, r) => s + (getTotalM2(Number(effectiveQty(r)) || 0, String(r.size || ''), r.film_type) || 0), 0);
+        const q = norm(orphanSearch);
+        const candidates = q.length < 2 ? [] : allClients
+          .filter(c => norm(c.name).includes(q) || norm(c.client_code).includes(q) || (c.alt_codes || []).some(a => norm(a).includes(q)) || norm(altNames[c.id] || '').includes(q))
+          .slice(0, 8);
+        const canEdit = role === 'admin' || role === 'financiero';
+        const handleReassign = async () => {
+          if (!orphanTarget || !records.length) return;
+          if (!window.confirm(`¿Asignar ${records.length} venta(s) a "${orphanTarget.name}"?`)) return;
+          setOrphanSaving(true);
+          try {
+            await commitInChunks(records, (b, r) => b.update(doc(db, 'consumos', r.id.toString()), { client_id: orphanTarget.id }));
+            showToast(`${records.length} venta(s) asignadas a "${orphanTarget.name}"`, 'success');
+            addAuditLog('update_record', `Asignó ${records.length} ventas sin cliente (ID ${orphanModal.clientId}) a "${orphanTarget.name}"`, String(orphanTarget.id));
+            setOrphanModal(null);
+          } catch (e) {
+            console.error('Error reasignando ventas:', e);
+            showToast('No se pudieron reasignar las ventas. No se cambió nada.', 'error');
+          } finally {
+            setOrphanSaving(false);
+          }
+        };
+        return (
+          <div className="fixed inset-0 z-[9997] flex items-center justify-center" onClick={() => setOrphanModal(null)}>
+            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+            <div className={cn("relative w-full max-w-2xl mx-4 rounded-2xl shadow-2xl border overflow-hidden max-h-[90vh] flex flex-col",
+              darkMode ? "bg-[#16161A] border-white/12 text-gray-200" : "bg-white border-gray-200 text-gray-800")} onClick={e => e.stopPropagation()}>
+              <div className={cn("px-6 py-4 border-b flex items-start justify-between gap-4", darkMode ? "border-white/8" : "border-gray-100")}>
+                <div>
+                  <h3 className="text-sm font-black">{missingClientLabel(orphanModal.clientId)}</h3>
+                  <p className="text-[11px] mt-1 text-gray-500">
+                    Estas ventas apuntan a un cliente que ya no existe (probablemente se borró o se fusionó). Asígnalas al cliente correcto.
+                  </p>
+                </div>
+                <button onClick={() => setOrphanModal(null)} className={cn("p-1.5 rounded-lg", darkMode ? "hover:bg-white/8" : "hover:bg-gray-100")}><X className="w-4 h-4" /></button>
+              </div>
+              <div className="px-6 py-3 flex flex-wrap gap-6 text-xs">
+                <span><b>{records.length}</b> ventas</span>
+                <span><b>{totalCajas}</b> cajas</span>
+                <span><b>{totalM2.toFixed(1)}</b> m²</span>
+                {records.length > 0 && <span>{records[records.length - 1].order_date} → {records[0].order_date}</span>}
+              </div>
+              <div className="flex-1 overflow-auto px-6">
+                <table className="w-full text-xs">
+                  <thead className={cn("text-[10px] uppercase sticky top-0", darkMode ? "bg-[#16161A] text-gray-500" : "bg-white text-gray-400")}>
+                    <tr><th className="text-left py-2">Fecha</th><th className="text-left">Factura</th><th className="text-left">Tipo</th><th className="text-left">Medida</th><th className="text-right">Cajas</th><th className="text-right">Lote</th></tr>
+                  </thead>
+                  <tbody>
+                    {records.slice(0, 300).map(r => (
+                      <tr key={r.id} className={cn("border-t", darkMode ? "border-white/5" : "border-gray-50")}>
+                        <td className="py-1.5">{String(r.order_date || '—')}</td>
+                        <td className="font-mono text-[10px]">{String(r.invoice_number || '—')}</td>
+                        <td>{filmLabel(r.film_type)}</td>
+                        <td>{String(r.size || '—')}</td>
+                        <td className={cn("text-right font-bold", r.is_return && "text-red-400")}>{String(effectiveQty(r) ?? '—')}</td>
+                        <td className="text-right text-[10px]">{r.batch_number || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {records.length > 300 && <p className="text-[10px] py-2 text-gray-500">Mostrando 300 de {records.length}.</p>}
+              </div>
+              {canEdit && (
+                <div className={cn("px-6 py-4 border-t space-y-2", darkMode ? "border-white/8 bg-white/2" : "border-gray-100 bg-gray-50/60")}>
+                  <p className="text-[11px] font-bold">Asignar todas estas ventas a un cliente existente</p>
+                  <input value={orphanSearch} onChange={e => { setOrphanSearch(e.target.value); setOrphanTarget(null); }}
+                    placeholder="Buscar por nombre o código (CODIGO2)…"
+                    className={cn("w-full px-3 py-2 rounded-lg text-xs outline-none border", darkMode ? "bg-white/5 border-white/10" : "bg-white border-gray-200")} />
+                  {candidates.length > 0 && !orphanTarget && (
+                    <div className={cn("rounded-lg border max-h-40 overflow-auto", darkMode ? "border-white/10" : "border-gray-200")}>
+                      {candidates.map(c => (
+                        <button key={c.id} onClick={() => { setOrphanTarget(c); setOrphanSearch(c.name); }}
+                          className={cn("w-full text-left px-3 py-1.5 text-xs", darkMode ? "hover:bg-white/8" : "hover:bg-gray-100")}>
+                          {c.name} <span className="text-gray-500">· {c.client_code || 'sin código'} · {c.province || '—'}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex justify-end">
+                    <button disabled={!orphanTarget || orphanSaving} onClick={handleReassign}
+                      className="px-4 py-2 rounded-xl text-xs font-black bg-[#1A3A5C] text-white hover:bg-[#22487A] transition-colors disabled:opacity-40">
+                      {orphanSaving ? 'Asignando…' : orphanTarget ? `Asignar a ${orphanTarget.name}` : 'Elige un cliente'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
       {clientPreviewModal && (() => {
         const { client, rank, m2, cajas } = clientPreviewModal;
         const clientConsumos = filteredConsumosForView
           .filter(r => r.client_id === client.id && !r.is_return)
-          .sort((a,b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime());
-        const totalRevenue = clientConsumos.reduce((s, r) => s + r.quantity * (r.unit_cost || 0), 0);
+          .sort((a,b) => parseDate(b.order_date).getTime() - parseDate(a.order_date).getTime());
+        const totalRevenue = clientConsumos.reduce((s, r) => s + recordRevenue(r), 0);
         const lastOrder = clientConsumos[0];
-        const daysSince = lastOrder ? Math.floor((Date.now() - new Date(lastOrder.order_date).getTime()) / (1000*60*60*24)) : null;
+        const daysSince = lastOrder ? Math.floor((Date.now() - parseDate(lastOrder.order_date).getTime()) / (1000*60*60*24)) : null;
         const printers = client.printers || [];
 
         // m² breakdown by size
@@ -14329,9 +14408,9 @@ ${rows.map(r=>{
         const now = new Date();
         const last6 = Array.from({length:6}, (_,i) => {
           const d = new Date(now.getFullYear(), now.getMonth() - 5 + i, 1);
-          const rows = clientConsumos.filter(r => { const rd = new Date(r.order_date); return rd.getFullYear()===d.getFullYear()&&rd.getMonth()===d.getMonth(); });
+          const rows = clientConsumos.filter(r => { const rd = parseDate(r.order_date); return rd.getFullYear()===d.getFullYear()&&rd.getMonth()===d.getMonth(); });
           const qty = rows.reduce((s,r)=>s+r.quantity,0);
-          const rev = rows.reduce((s,r)=>s+r.quantity*(r.unit_cost||0),0);
+          const rev = rows.reduce((s,r)=>s+recordRevenue(r),0);
           return { label: d.toLocaleDateString('es-EC',{month:'short'}), qty, rev };
         });
         const maxQty = Math.max(...last6.map(x=>x.qty), 1);
@@ -14428,7 +14507,7 @@ ${rows.map(r=>{
                     </p>
                     {clientConsumos.slice(0, 5).map((r, i) => {
                       const m2r = getTotalM2(r.quantity, r.size, r.film_type);
-                      const rev = r.quantity * (r.unit_cost || 0);
+                      const rev = r.quantity * unitSalePrice(r);
                       return (
                         <div key={i} className={cn("px-4 py-2.5 flex items-center gap-3 border-b last:border-0", darkMode ? "border-white/4" : "border-gray-50")}>
                           <div className="flex-1 min-w-0">
@@ -14496,9 +14575,9 @@ ${rows.map(r=>{
 
         // Dynamic audit of the selected period's transactions
         const datedConsumos = allConsumos.filter(r => {
-          const d = new Date(r.order_date);
-          if (dashboardStartDate && d < new Date(dashboardStartDate)) return false;
-          if (dashboardEndDate && d > new Date(dashboardEndDate)) return false;
+          const d = parseDate(r.order_date);
+          if (dashboardStartDate && d < parseDate(dashboardStartDate)) return false;
+          if (dashboardEndDate && d > parseDate(dashboardEndDate)) return false;
           return true;
         });
 
@@ -14509,13 +14588,13 @@ ${rows.map(r=>{
         const clientSummaries = {} as Record<number, { name: string; revenue: number; cost: number; qty: number }>;
         datedConsumos.forEach(r => {
           const qty = effectiveQty(r);
-          const price = (r.sale_price !== null && r.sale_price !== undefined) ? r.sale_price : (r.unit_cost || 0);
-          
+          const price = unitSalePrice(r);
+
           let cost = 0;
           if (r.sale_price !== null && r.sale_price !== undefined) {
             cost = r.unit_cost || 0;
           } else {
-            const ft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type;
+            const ft = normFilmType(r.film_type);
             const key = `${ft}_${r.size}`;
             const ref = FILM_PRICE_REF[key];
             cost = ref ? ref.costo : (r.unit_cost ? r.unit_cost / 2 : 0);
@@ -14525,7 +14604,7 @@ ${rows.map(r=>{
             const clientName = allClients.find(c => c.id === r.client_id)?.name || 'Cliente Desconocido';
             clientSummaries[r.client_id] = { name: clientName, revenue: 0, cost: 0, qty: 0 };
           }
-          
+
           clientSummaries[r.client_id].revenue += qty * price;
           clientSummaries[r.client_id].cost += qty * cost;
           clientSummaries[r.client_id].qty += qty;
@@ -14540,13 +14619,13 @@ ${rows.map(r=>{
         datedConsumos.forEach(r => {
           const key = `${r.film_type || 'DIHT'}_${r.size}`;
           const qty = effectiveQty(r);
-          const price = (r.sale_price !== null && r.sale_price !== undefined) ? r.sale_price : (r.unit_cost || 0);
-          
+          const price = unitSalePrice(r);
+
           let cost = 0;
           if (r.sale_price !== null && r.sale_price !== undefined) {
             cost = r.unit_cost || 0;
           } else {
-            const ft = (!r.film_type || r.film_type === 'DIHT') ? 'DIHT' : r.film_type;
+            const ft = normFilmType(r.film_type);
             const key = `${ft}_${r.size}`;
             const ref = FILM_PRICE_REF[key];
             cost = ref ? ref.costo : (r.unit_cost ? r.unit_cost / 2 : 0);
@@ -14589,7 +14668,7 @@ ${rows.map(r=>{
 
               {/* Content */}
               <div className="p-6 overflow-y-auto custom-scrollbar space-y-6">
-                
+
                 {/* Visual Summary Card */}
                 <div className={cn("p-5 rounded-2xl border space-y-3.5", darkMode ? "bg-white/2 border-white/5" : "bg-gray-50 border-gray-100")}>
                   <div className="flex items-center justify-between mb-1">
@@ -14618,7 +14697,7 @@ ${rows.map(r=>{
                       )}
                     </div>
                   </div>
-                  
+
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>Ingresos (Venta Total)</p>
@@ -14640,7 +14719,7 @@ ${rows.map(r=>{
                       </p>
                     </div>
                     <div className={cn("px-4 py-2 rounded-xl border flex flex-col items-center",
-                      hasLoss 
+                      hasLoss
                         ? (darkMode ? "bg-red-500/10 border-red-500/20 text-red-400" : "bg-red-50 border-red-200 text-red-700")
                         : (darkMode ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" : "bg-emerald-50 border-emerald-200 text-emerald-700")
                     )}>
@@ -14669,7 +14748,7 @@ ${rows.map(r=>{
                               <p className={cn("text-[8px] font-bold uppercase", darkMode ? "text-gray-600" : "text-gray-400")}>VTA Total</p>
                             </div>
                             <div className={cn("px-2 py-1 rounded-lg text-[9px] font-black font-mono min-w-[50px] text-center",
-                              isLoss 
+                              isLoss
                                 ? (darkMode ? "bg-red-500/10 text-red-400" : "bg-red-50 text-red-700")
                                 : (darkMode ? "bg-emerald-500/10 text-emerald-400" : "bg-emerald-50 text-emerald-700")
                             )}>
@@ -14709,7 +14788,7 @@ ${rows.map(r=>{
                           return (
                             <tr key={i} className={darkMode ? "bg-white/1" : "bg-white"}>
                               <td className="px-3 py-2.5 font-bold">
-                                <span className={cn("px-1.5 py-0.5 rounded text-[8.5px] uppercase font-black mr-1.5", 
+                                <span className={cn("px-1.5 py-0.5 rounded text-[8.5px] uppercase font-black mr-1.5",
                                   p.type === 'DIHL' ? (darkMode ? "bg-blue-500/20 text-blue-400" : "bg-blue-100 text-blue-700") :
                                   p.type === 'DIML' ? (darkMode ? "bg-purple-500/20 text-purple-400" : "bg-purple-100 text-purple-700") :
                                   (darkMode ? "bg-[#ED1C24]/20 text-[#ED1C24]" : "bg-red-100 text-red-700")
@@ -14741,7 +14820,7 @@ ${rows.map(r=>{
                 <div className="space-y-2">
                   <p className={cn("text-[9.5px] font-black uppercase tracking-wider", darkMode ? "text-gray-500" : "text-gray-400")}>🔍 Conclusión de Auditoría</p>
                   <div className={cn("p-4 rounded-xl border text-[11px] leading-relaxed font-semibold",
-                    hasLoss 
+                    hasLoss
                       ? (darkMode ? "bg-red-500/5 border-red-500/15 text-red-400" : "bg-red-50/50 border-red-200 text-red-800")
                       : (darkMode ? "bg-emerald-500/5 border-emerald-500/15 text-emerald-400" : "bg-emerald-50/50 border-red-200 text-emerald-800")
                   )}>
@@ -14776,11 +14855,11 @@ ${rows.map(r=>{
       {showReturnsAuditDetail && (() => {
         const datedReturns = allConsumos.filter(r => {
           if (!r.is_return) return false;
-          const d = new Date(r.order_date);
-          if (dashboardStartDate && d < new Date(dashboardStartDate)) return false;
-          if (dashboardEndDate && d > new Date(dashboardEndDate)) return false;
+          const d = parseDate(r.order_date);
+          if (dashboardStartDate && d < parseDate(dashboardStartDate)) return false;
+          if (dashboardEndDate && d > parseDate(dashboardEndDate)) return false;
           return true;
-        }).sort((a, b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime());
+        }).sort((a, b) => parseDate(b.order_date).getTime() - parseDate(a.order_date).getTime());
 
         return (
           <div className="fixed inset-0 z-[9998] flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans','Inter',system-ui,sans-serif" }} onClick={() => setShowReturnsAuditDetail(false)}>
@@ -14840,7 +14919,7 @@ ${rows.map(r=>{
                             <span className="font-black text-amber-400">{r.quantity}</span>
                           </td>
                           <td className="px-5 py-3 text-right font-bold text-red-400">
-                            ${Math.abs(r.quantity * (r.unit_cost || 0)).toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            ${Math.abs(r.quantity * unitSalePrice(r)).toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </td>
                           <td className="px-5 py-3 text-center">
                             <button onClick={() => { if (client) { setSelectedClient(client); setView('clients'); setShowReturnsAuditDetail(false); setShowFinancialInfoModal(false); } }}
@@ -14881,11 +14960,11 @@ ${rows.map(r=>{
       {showSalesAuditDetail && (() => {
         const datedSales = allConsumos.filter(r => {
           if (r.is_return) return false;
-          const d = new Date(r.order_date);
-          if (dashboardStartDate && d < new Date(dashboardStartDate)) return false;
-          if (dashboardEndDate && d > new Date(dashboardEndDate)) return false;
+          const d = parseDate(r.order_date);
+          if (dashboardStartDate && d < parseDate(dashboardStartDate)) return false;
+          if (dashboardEndDate && d > parseDate(dashboardEndDate)) return false;
           return true;
-        }).sort((a, b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime());
+        }).sort((a, b) => parseDate(b.order_date).getTime() - parseDate(a.order_date).getTime());
 
         return (
           <div className="fixed inset-0 z-[9998] flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans','Inter',system-ui,sans-serif" }} onClick={() => setShowSalesAuditDetail(false)}>
@@ -14930,7 +15009,7 @@ ${rows.map(r=>{
                   <tbody className={cn("divide-y", darkMode ? "divide-white/4" : "divide-gray-50")}>
                     {datedSales.map((r, i) => {
                       const client = allClients.find(c => c.id === r.client_id);
-                      const price = (r.sale_price !== null && r.sale_price !== undefined) ? r.sale_price : (r.unit_cost || 0);
+                      const price = unitSalePrice(r);
                       return (
                         <tr key={i} className={cn("transition-colors", darkMode ? "hover:bg-white/3" : "hover:bg-gray-50/60")}>
                           <td className={cn("px-5 py-3 font-medium", darkMode ? "text-gray-400" : "text-gray-600")}>{r.order_date}</td>
@@ -14942,7 +15021,7 @@ ${rows.map(r=>{
                           <td className={cn("px-5 py-3 font-mono text-[10px]", darkMode ? "text-gray-500" : "text-gray-400")}>{r.invoice_number || '—'}</td>
                           <td className="px-5 py-3 text-center">
                             {r.size && (
-                              <span className={cn("px-1.5 py-0.5 rounded text-[8.5px] uppercase font-black", 
+                              <span className={cn("px-1.5 py-0.5 rounded text-[8.5px] uppercase font-black",
                                 r.film_type === 'DIHL' ? (darkMode ? "bg-blue-500/20 text-blue-400" : "bg-blue-100 text-blue-700") :
                                 r.film_type === 'DIML' ? (darkMode ? "bg-purple-500/20 text-purple-400" : "bg-purple-100 text-purple-700") :
                                 (darkMode ? "bg-[#ED1C24]/20 text-[#ED1C24]" : "bg-red-100 text-red-700")
@@ -15067,7 +15146,7 @@ ${rows.map(r=>{
                       const barPct = (client.m2 / maxM2) * 100;
                       return (
                         <div key={client.id}
-                          onClick={() => { const c = allClients.find(x => x.id === client.id); if (c) setClientPreviewModal({ client: c, rank: idx+1, m2: client.m2, cajas: client.value }); }}
+                          onClick={() => { const c = allClients.find(x => x.id === client.id); if (c) setClientPreviewModal({ client: c, rank: idx+1, m2: client.m2, cajas: client.value }); else { setOrphanModal({ clientId: client.id }); setOrphanSearch(''); setOrphanTarget(null); } }}
                           className={cn("flex items-center gap-4 px-4 py-3.5 rounded-xl border cursor-pointer transition-all",
                             idx === 0
                               ? (darkMode ? "bg-[#ED1C24]/8 border-[#ED1C24]/20 hover:bg-[#ED1C24]/12" : "bg-red-50 border-red-200 hover:bg-red-50/80")
@@ -15128,7 +15207,7 @@ ${rows.map(r=>{
                         return (
                           <tr key={client.id}
                             className={cn("transition-colors cursor-pointer", darkMode ? "hover:bg-white/4" : "hover:bg-gray-50")}
-                            onClick={() => { const c = allClients.find(x => x.id === client.id); if (c) setClientPreviewModal({ client: c, rank: idx+1, m2: client.m2, cajas: client.value }); }}
+                            onClick={() => { const c = allClients.find(x => x.id === client.id); if (c) setClientPreviewModal({ client: c, rank: idx+1, m2: client.m2, cajas: client.value }); else { setOrphanModal({ clientId: client.id }); setOrphanSearch(''); setOrphanTarget(null); } }}
                           >
                             <td className="px-5 py-2.5">
                               <span className={cn("w-6 h-6 rounded-lg flex items-center justify-center font-black text-[10px]",
@@ -15169,10 +15248,10 @@ ${rows.map(r=>{
       {/* ── NC REPORT MODAL ── */}
       {showNCReport && (() => {
         const allNC = allConsumos.filter(r => r.nc_type).filter(r => {
-          if (ncReportStart && new Date(r.order_date) < new Date(ncReportStart)) return false;
-          if (ncReportEnd && new Date(r.order_date) > new Date(ncReportEnd)) return false;
+          if (ncReportStart && parseDate(r.order_date) < parseDate(ncReportStart)) return false;
+          if (ncReportEnd && parseDate(r.order_date) > parseDate(ncReportEnd)) return false;
           return true;
-        }).sort((a,b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime());
+        }).sort((a,b) => parseDate(b.order_date).getTime() - parseDate(a.order_date).getTime());
 
         const devoluciones = allNC.filter(r => r.nc_type === 'devolucion');
         const anulaciones = allNC.filter(r => r.nc_type === 'anulacion');
@@ -15692,9 +15771,9 @@ ${anulaciones.length > 0 ? `
           const consumos = filteredConsumosForView.filter(r => r.client_id === client.id && !r.is_return);
           const totalM2 = consumos.reduce((s, r) => s + getTotalM2(effectiveQty(r), r.size, r.film_type), 0);
           const totalCajas = consumos.reduce((s, r) => s + effectiveQty(r), 0);
-          const totalRevenue = consumos.reduce((s, r) => s + r.quantity * (r.unit_cost || 0), 0);
-          const lastOrder = consumos.length > 0 ? consumos.sort((a,b) => new Date(b.order_date).getTime() - new Date(a.order_date).getTime())[0].order_date : null;
-          const daysSinceLastOrder = lastOrder ? Math.floor((Date.now() - new Date(lastOrder).getTime()) / (1000*60*60*24)) : null;
+          const totalRevenue = consumos.reduce((s, r) => s + recordRevenue(r), 0);
+          const lastOrder = consumos.length > 0 ? consumos.sort((a,b) => parseDate(b.order_date).getTime() - parseDate(a.order_date).getTime())[0].order_date : null;
+          const daysSinceLastOrder = lastOrder ? Math.floor((Date.now() - parseDate(lastOrder).getTime()) / (1000*60*60*24)) : null;
           return { client, totalM2: parseFloat(totalM2.toFixed(1)), totalCajas, totalRevenue, lastOrder, daysSinceLastOrder, facturas: consumos.length };
         }).sort((a,b) => b.totalM2 - a.totalM2);
 
@@ -16245,7 +16324,7 @@ ${sectionsHtml}
                 )}
                 {/* Limpiar — solo admin */}
                 {role === 'admin' && (
-                  <button onClick={() => { if (window.confirm('¿Limpiar todo el historial de auditoría?')) { setAuditLogs([]); localStorage.removeItem('orimec_audit'); } }}
+                  <button onClick={() => { if (window.confirm('¿Limpiar todo el historial de auditoría? Se borrará para todos los usuarios.')) { setAuditLogs([]); localStorage.removeItem('orimec_audit'); getDocs(collection(db, 'audit_logs')).then(async snap => { for (let i = 0; i < snap.docs.length; i += 450) { const b = writeBatch(db); snap.docs.slice(i, i + 450).forEach(d => b.delete(d.ref)); await b.commit(); } }).catch(e => console.warn('No se pudo limpiar audit_logs:', e)); } }}
                     className={cn("px-3 py-1.5 rounded-lg text-[10px] font-bold transition-colors", darkMode ? "bg-white/5 text-gray-500 hover:bg-red-500/15 hover:text-red-400" : "bg-gray-100 text-gray-500 hover:bg-red-50 hover:text-red-500")}>
                     Limpiar
                   </button>
@@ -16457,7 +16536,7 @@ ${sectionsHtml}
                 const ng: Record<string,number> = {};
                 Object.entries(goalsEditForm).forEach(([k,v]) => { ng[k] = parseInt(v as string) || 0; });
                 setSalespersonGoals(ng);
-                localStorage.setItem('sp_goals', JSON.stringify(ng));
+                saveSharedSetting('sp_goals', ng);
                 setShowGoalsModal(false);
                 showToast('Metas actualizadas', 'success');
               }}
