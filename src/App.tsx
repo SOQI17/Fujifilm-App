@@ -3112,6 +3112,10 @@ function App() {
   };
 
   const [purgeYear, setPurgeYear] = useState<string>('2026');
+  // Año de las ventas a importar ('' = todos los años del archivo)
+  const [csvYear, setCsvYear] = useState<string>(String(new Date().getFullYear()));
+  // Años encontrados en el último archivo leído: { año: filas de películas }
+  const [csvYearsFound, setCsvYearsFound] = useState<Record<string, number>>({});
 
   const handlePurgeYearData = async () => {
     const recordsToDelete = allConsumos.filter(r => r.order_date && r.order_date.startsWith(purgeYear));
@@ -3223,6 +3227,27 @@ function App() {
         showToast(`${invalid.length} fila(s) descartadas por datos incompletos. ${invalid.slice(0, 3).join(' · ')}${invalid.length > 3 ? ' …' : ''}`, 'warning');
       }
       rows = validRows;
+
+      // ── Leer qué años trae el archivo y quedarse solo con el año elegido:
+      // evita crear clientes de años antiguos cuando el archivo trae historial desde 2015 ──
+      const yearsFound: Record<string, number> = {};
+      rows.forEach(row => {
+        const y = mapRowToRecord(row, 0, 0).order_date.slice(0, 4);
+        yearsFound[y] = (yearsFound[y] || 0) + 1;
+      });
+      setCsvYearsFound(yearsFound);
+      const yearsTxt = Object.keys(yearsFound).sort().map(y => `${y} (${yearsFound[y]})`).join(', ');
+      if (csvYear) {
+        rows = rows.filter(row => mapRowToRecord(row, 0, 0).order_date.startsWith(csvYear));
+        if (rows.length === 0) {
+          setCsvImportError(`El archivo no tiene ventas de películas del ${csvYear}. Años encontrados: ${yearsTxt}. Elige uno de esos años en "Año a importar" y vuelve a seleccionar el archivo.`);
+          setCsvImportStatus('error');
+          return;
+        }
+        if (Object.keys(yearsFound).length > 1) {
+          showToast(`El archivo trae ${yearsTxt}. Solo se importa ${csvYear} (${rows.length} ventas).`, 'info');
+        }
+      }
       setCsvPreviewRows(rows.slice(0, 5));
 
       const matched: { row: any; clientName: string }[] = [];
@@ -13231,6 +13256,29 @@ ${rows.map(r=>{
                     </div>
                   </button>
 
+                  {/* Año a importar (el archivo puede traer historial desde 2015) */}
+                  <div className={cn(
+                    "mt-5 p-4 rounded-xl border flex flex-wrap items-center gap-3",
+                    darkMode ? "bg-blue-500/8 border-blue-500/20" : "bg-blue-50 border-blue-200"
+                  )}>
+                    <div className="flex-1 min-w-[180px]">
+                      <p className="text-[11px] font-black uppercase tracking-wider text-blue-500">Año a importar</p>
+                      <p className={cn("text-[10px] mt-0.5", darkMode ? "text-gray-400" : "text-gray-500")}>
+                        Elige el año antes de seleccionar el archivo. Se lee la fecha de cada venta y solo se suben las de ese año; las demás se ignoran y sus clientes no se crean.
+                      </p>
+                    </div>
+                    <select
+                      value={csvYear}
+                      onChange={e => setCsvYear(e.target.value)}
+                      className={cn("text-xs font-bold px-3 py-2 rounded-lg border outline-none", darkMode ? "bg-black/40 border-white/10 text-white" : "bg-white border-gray-200 text-gray-800")}
+                    >
+                      {Array.from({ length: new Date().getFullYear() - 2014 }, (_, i) => String(new Date().getFullYear() - i)).map(y => (
+                        <option key={y} value={y}>{y}</option>
+                      ))}
+                      <option value="">Todos los años</option>
+                    </select>
+                  </div>
+
                   <div className={cn(
                     "mt-5 p-4 rounded-xl border text-xs",
                     darkMode ? "bg-white/3 border-white/8 text-gray-400" : "bg-gray-50 border-gray-100 text-gray-500"
@@ -13366,6 +13414,27 @@ ${rows.map(r=>{
               {/* PREVIEW */}
               {csvImportStatus === 'preview' && (
                 <div className="p-6 space-y-5">
+                  {/* Años encontrados en el archivo y el que se importa */}
+                  {Object.keys(csvYearsFound).length > 0 && (
+                    <div className={cn("rounded-xl p-3 border", darkMode ? "bg-white/3 border-white/8" : "bg-gray-50 border-gray-200")}>
+                      <p className={cn("text-[10px] font-black uppercase tracking-wider mb-2", darkMode ? "text-gray-400" : "text-gray-500")}>
+                        Años en el archivo · se importa: <span className="text-blue-500">{csvYear || 'todos'}</span>
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {Object.keys(csvYearsFound).sort().map(y => {
+                          const on = !csvYear || csvYear === y;
+                          return (
+                            <span key={y} className={cn(
+                              "text-[10px] font-bold px-2 py-1 rounded-md border",
+                              on ? "bg-blue-500 text-white border-blue-500" : (darkMode ? "border-white/10 text-gray-500 line-through" : "border-gray-200 text-gray-400 line-through")
+                            )}>
+                              {y}: {csvYearsFound[y]}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                   {/* DIHL-only mode banner */}
                   {csvImportResults.isDihlOnly && (
                     <div className={cn("rounded-xl p-3 border flex items-center gap-3", darkMode ? "bg-blue-500/10 border-blue-500/25" : "bg-blue-50 border-blue-200")}>
