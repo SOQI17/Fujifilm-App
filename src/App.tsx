@@ -54,6 +54,9 @@ const normFilmType = (ft?: string | null): string => {
   const u = String(ft || '').toUpperCase().replace(/[^A-Z]/g, '');
   return u || 'DIHT';
 };
+// Nombre comparable de cliente: sin tildes ni puntuación ("CIMEDLAB S.A." = "CIMEDLAB SA")
+const nameKey = (s: string) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  .toUpperCase().replace(/[.,;:'"()\-]/g, ' ').replace(/\s+/g, ' ').trim();
 // Etiqueta visible del tipo de película
 const filmLabel = (ft?: string | null): string => ({ DIHT: 'DI-HT', DIHL: 'DI-HL', DIML: 'DI-ML' } as Record<string, string>)[normFilmType(ft)] || String(ft || '');
 // Aplica operaciones de Firestore en lotes de 450 (límite de 500 por lote).
@@ -2909,27 +2912,59 @@ function App() {
   // Normalize invoice numbers for comparison — strips leading zeros so "001001000071109" === "1001001000071109" === "71109"
   const normInvoice = (s: string) => (s || '').replace(/^0+/, '').trim();
 
-    // ── Duplicate detection: invoice match OR (date + size + qty + client) ───
-    const isExistingRecord = (tempRec: any, clientId: number): boolean => {
-      return allConsumos.some(r => {
-        // Primary: invoice number match (when both have invoice)
-        if (r.invoice_number && tempRec.invoice_number) {
-          const invMatch = normInvoice(r.invoice_number) === normInvoice(tempRec.invoice_number);
-          if (invMatch && r.size === tempRec.size && Math.abs(r.quantity) === Math.abs(tempRec.quantity)) return true;
-          // If invoice numbers are different, they are different sales!
-          if (normInvoice(r.invoice_number) !== normInvoice(tempRec.invoice_number)) return false;
-        }
-        // Secondary: date + client + size + quantity (catches invoice format mismatches)
-        if (clientId > 0 && r.client_id === clientId &&
-            r.order_date === tempRec.order_date &&
-            r.size === tempRec.size &&
-            Math.abs(r.quantity) === Math.abs(tempRec.quantity)) {
-          if (r.invoice_number && tempRec.invoice_number && normInvoice(r.invoice_number) !== normInvoice(tempRec.invoice_number)) return false;
-          return true;
-        }
-        return false;
-      });
-    };
+  // ── Índices para el importador: buscar en un Map es instantáneo; antes, por cada fila del
+  //    CSV se recorrían todas las ventas y todos los clientes (20.000 filas → la página se colgaba).
+  const consumoIndex = useMemo(() => {
+    const byInvSizeQty = new Map<string, ConsumptionRecord>();
+    const byClientDateSizeQty = new Map<string, ConsumptionRecord[]>();
+    allConsumos.forEach(r => {
+      if (r.invoice_number) {
+        const k = `${normInvoice(r.invoice_number)}|${r.size}|${Math.abs(r.quantity)}`;
+        if (!byInvSizeQty.has(k)) byInvSizeQty.set(k, r);
+      }
+      const k2 = `${Number(r.client_id)}|${r.order_date}|${r.size}|${Math.abs(r.quantity)}`;
+      const arr = byClientDateSizeQty.get(k2);
+      if (arr) arr.push(r); else byClientDateSizeQty.set(k2, [r]);
+    });
+    return { byInvSizeQty, byClientDateSizeQty };
+  }, [allConsumos]);
+
+  // Venta existente con misma factura + medida + cantidad (sin importar el cliente)
+  const findByInvoice = (tempRec: any): ConsumptionRecord | undefined =>
+    tempRec.invoice_number
+      ? consumoIndex.byInvSizeQty.get(`${normInvoice(tempRec.invoice_number)}|${tempRec.size}|${Math.abs(tempRec.quantity)}`)
+      : undefined;
+
+  // ── Duplicate detection: invoice match OR (date + size + qty + client) ───
+  const findExistingRecord = (tempRec: any, clientId: number): ConsumptionRecord | undefined => {
+    // Primary: misma factura + medida + cantidad
+    const byInv = findByInvoice(tempRec);
+    if (byInv) return byInv;
+    // Secondary: cliente + fecha + medida + cantidad, salvo que ambas tengan factura y sean distintas
+    if (clientId > 0) {
+      const cands = consumoIndex.byClientDateSizeQty.get(`${Number(clientId)}|${tempRec.order_date}|${tempRec.size}|${Math.abs(tempRec.quantity)}`) || [];
+      return cands.find(r => !(r.invoice_number && tempRec.invoice_number && normInvoice(r.invoice_number) !== normInvoice(tempRec.invoice_number)));
+    }
+    return undefined;
+  };
+  const isExistingRecord = (tempRec: any, clientId: number): boolean => !!findExistingRecord(tempRec, clientId);
+
+  const clientIndex = useMemo(() => {
+    const byCode = new Map<string, Client>();
+    const byRuc = new Map<string, Client>();
+    const byNameKey = new Map<string, Client>();
+    const byExactName = new Map<string, Client>();
+    const nameList: { c: Client; names: string[] }[] = [];
+    allClients.forEach(c => {
+      byExactName.set(c.name, c);
+      [c.client_code, ...(c.alt_codes || [])].map(x => norm(x)).filter(Boolean).forEach(code => { if (!byCode.has(code)) byCode.set(code, c); });
+      if (c.ruc_id && norm(c.ruc_id) && !byRuc.has(norm(c.ruc_id))) byRuc.set(norm(c.ruc_id), c);
+      const names = [c.name, ...String(altNames[c.id] || '').split(' / ')].map(nameKey).filter(Boolean);
+      names.forEach(n => { if (!byNameKey.has(n)) byNameKey.set(n, c); });
+      nameList.push({ c, names });
+    });
+    return { byCode, byRuc, byNameKey, byExactName, nameList };
+  }, [allClients, altNames]);
 
   // Fix scientific notation numbers (e.g. "1,001E+12" → "001001000071772")
   const fixInvoiceNumber = (raw: string): string => {
@@ -2969,26 +3004,17 @@ function App() {
 
     // 1. Exact match by COD CLIENTE (highest priority — unique identifier)
     if (codeVal) {
-      const found = allClients.find(c =>
-        norm(c.client_code) === codeVal ||
-        (c.alt_codes || []).some(ac => norm(ac) === codeVal)
-      );
+      const found = clientIndex.byCode.get(codeVal);
       if (found) return found;
     }
     // 2. Exact match by RUC
     if (rucVal) {
-      const found = allClients.find(c => norm(c.ruc_id) === rucVal);
+      const found = clientIndex.byRuc.get(rucVal);
       if (found) return found;
     }
-    // Nombre comparable: sin tildes ni puntuación ("CIMEDLAB S.A." = "CIMEDLAB SA")
-    const nameKey = (s: string) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
-      .toUpperCase().replace(/[.,;:'"()\-]/g, ' ').replace(/\s+/g, ' ').trim();
-    // Todos los nombres de un cliente: el principal y los alternativos (las fusiones guardan "A / B")
-    const namesOf = (c: Client) => [c.name, ...String(altNames[c.id] || '').split(' / ')].map(nameKey).filter(Boolean);
     // 3. Exact name match (principal o alternativo)
     if (clientNameVal) {
-      const key = nameKey(clientNameVal);
-      const found = allClients.find(c => namesOf(c).includes(key));
+      const found = clientIndex.byNameKey.get(nameKey(clientNameVal));
       if (found) return found;
     }
     // 4. Nombre parecido: SOLO si la fila no trae código de cliente (si trae un código que
@@ -2996,7 +3022,7 @@ function App() {
     //    coincidencia. Así un cliente nuevo no se pega a otro existente por error.
     if (clientNameVal && !codeVal) {
       const key = nameKey(clientNameVal);
-      const matches = key.length >= 12 ? allClients.filter(c => namesOf(c).some(n => n.length >= 12 && (n.includes(key) || key.includes(n)))) : [];
+      const matches = key.length >= 12 ? clientIndex.nameList.filter(({ names }) => names.some(n => n.length >= 12 && (n.includes(key) || key.includes(n)))).map(x => x.c) : [];
       if (matches.length === 1) return matches[0];
     }
     return null;
@@ -3349,25 +3375,11 @@ function App() {
         // If this code was already resolved to an existing client, use that client directly
         if (normCode && resolvedCodes.has(normCode)) {
           const clientName = resolvedCodes.get(normCode)!;
-          const client = allClients.find(c => c.name === clientName)!;
+          const client = clientIndex.byExactName.get(clientName)!;
           const tempRecord = mapRowToRecord(row, client.id, 0);
           const isDup = isExistingRecord(tempRecord, client.id);
           if (isDup) {
-            const existingRec = allConsumos.find(r => {
-              if (r.invoice_number && tempRecord.invoice_number) {
-                const invMatch = normInvoice(r.invoice_number) === normInvoice(tempRecord.invoice_number);
-                if (invMatch && r.size === tempRecord.size && Math.abs(r.quantity) === Math.abs(tempRecord.quantity)) return true;
-                if (normInvoice(r.invoice_number) !== normInvoice(tempRecord.invoice_number)) return false;
-              }
-              if (r.client_id === client.id &&
-                  r.order_date === tempRecord.order_date &&
-                  r.size === tempRecord.size &&
-                  Math.abs(r.quantity) === Math.abs(tempRecord.quantity)) {
-                if (r.invoice_number && tempRecord.invoice_number && normInvoice(r.invoice_number) !== normInvoice(tempRecord.invoice_number)) return false;
-                return true;
-              }
-              return false;
-            });
+            const existingRec = findExistingRecord(tempRecord, client.id);
             if (existingRec) {
               const hasDiff = 
                 (tempRecord.unit_cost != null && tempRecord.unit_cost !== existingRec.unit_cost) ||
@@ -3414,21 +3426,7 @@ function App() {
         const tempRecord2 = mapRowToRecord(row, client.id, 0);
         const isDup2 = isExistingRecord(tempRecord2, client.id);
         if (isDup2) {
-          const existingRec2 = allConsumos.find(r => {
-            if (r.invoice_number && tempRecord2.invoice_number) {
-              const invMatch = normInvoice(r.invoice_number) === normInvoice(tempRecord2.invoice_number);
-              if (invMatch && r.size === tempRecord2.size && Math.abs(r.quantity) === Math.abs(tempRecord2.quantity)) return true;
-              if (normInvoice(r.invoice_number) !== normInvoice(tempRecord2.invoice_number)) return false;
-            }
-            if (r.client_id === client.id &&
-                r.order_date === tempRecord2.order_date &&
-                r.size === tempRecord2.size &&
-                Math.abs(r.quantity) === Math.abs(tempRecord2.quantity)) {
-              if (r.invoice_number && tempRecord2.invoice_number && normInvoice(r.invoice_number) !== normInvoice(tempRecord2.invoice_number)) return false;
-              return true;
-            }
-            return false;
-          });
+          const existingRec2 = findExistingRecord(tempRecord2, client.id);
           if (existingRec2) {
             const hasDiff2 = 
               (tempRecord2.unit_cost != null && tempRecord2.unit_cost !== existingRec2.unit_cost) ||
@@ -3462,7 +3460,7 @@ function App() {
         const trueDuplicates: any[] = [];
         duplicates.forEach(item => {
           const temp = mapRowToRecord(item.row, 0, 0);
-          const existingForRescue = allConsumos.find(r => r.invoice_number && temp.invoice_number && normInvoice(r.invoice_number) === normInvoice(temp.invoice_number) && r.size === temp.size && Math.abs(r.quantity) === Math.abs(temp.quantity));
+          const existingForRescue = findByInvoice(temp);
           if (existingForRescue && existingForRescue.film_type !== 'DIHL') {
             // Was incorrectly classified as duplicate — it's a DIHT to replace
             rescuedFromDuplicates.push({ row: item.row, clientName: item.clientName, _replaceId: existingForRescue.id });
@@ -3476,7 +3474,7 @@ function App() {
         const stillNew: any[] = [];
         toCreate.forEach(item => {
           const temp = mapRowToRecord(item.row, 0, 0);
-          const existingForNew = allConsumos.find(r => r.invoice_number && temp.invoice_number && normInvoice(r.invoice_number) === normInvoice(temp.invoice_number) && r.size === temp.size && Math.abs(r.quantity) === Math.abs(temp.quantity));
+          const existingForNew = findByInvoice(temp);
           if (existingForNew && existingForNew.film_type === 'DIHL') {
             const hasDiff = 
               (temp.unit_cost != null && temp.unit_cost !== existingForNew.unit_cost) ||
@@ -3501,12 +3499,7 @@ function App() {
         matched.forEach(item => {
           if ((item as any)._updateId) { finalMatched.push(item); return; }
           const temp = mapRowToRecord(item.row, 0, 0);
-          const existingFinal = allConsumos.find(r =>
-            r.invoice_number && temp.invoice_number &&
-            normInvoice(r.invoice_number) === normInvoice(temp.invoice_number) &&
-            r.size === temp.size &&
-            Math.abs(r.quantity) === Math.abs(temp.quantity)
-          );
+          const existingFinal = findByInvoice(temp);
           if (existingFinal && existingFinal.film_type === 'DIHL') {
             const hasDiff = 
               (temp.unit_cost != null && temp.unit_cost !== existingFinal.unit_cost) ||
@@ -13564,8 +13557,8 @@ ${rows.map(r=>{
                               </tr>
                             </thead>
                             <tbody className={cn("divide-y", darkMode ? "divide-white/5" : "divide-gray-50")}>
-                              {csvImportResults.matched.map((item, i) => {
-                                const r = mapRowToRecord(item.row, allClients.find(c => c.name === item.clientName)!.id, 0);
+                              {csvImportResults.matched.slice(0, 200).map((item, i) => {
+                                const r = mapRowToRecord(item.row, clientIndex.byExactName.get(item.clientName)?.id ?? 0, 0);
                                 return (
                                   <tr key={i} className={cn(darkMode ? "hover:bg-white/3" : "hover:bg-gray-50/60")}>
                                     <td className="px-4 py-2 font-semibold max-w-[180px] truncate">{item.clientName}</td>
@@ -13583,6 +13576,9 @@ ${rows.map(r=>{
                             </tbody>
                           </table>
                         </div>
+                        {csvImportResults.matched.length > 200 && (
+                          <p className="px-4 py-2 text-[10px] text-gray-500">Mostrando 200 de {csvImportResults.matched.length.toLocaleString()} registros (se importarán todos).</p>
+                        )}
                       </div>
                     </div>
                   )}
