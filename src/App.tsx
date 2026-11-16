@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, createContext, useContext, useCallback, useRef } from 'react';
-import { 
-  Search, Plus, Hospital, History, TrendingDown, TrendingUp, 
+import {
+  Search, Plus, Hospital, History, TrendingDown, TrendingUp,
   AlertCircle, Package, Calendar, MapPin, User, ChevronRight, Filter,
   Edit2, X, Save, Trash2, LayoutDashboard, Users, BarChart3, PieChart,
   Sun, Moon, Printer, Download, Upload, FileText, CheckCircle2, AlertTriangle,
@@ -8,8 +8,8 @@ import {
   Clock, PhoneCall, ArrowRight, Boxes, Layers, LogOut, Shield, Eye, UserCheck,
   Check as CheckIcon, BarChart2, Sparkles, X as XIcon, Info
 } from 'lucide-react';
-import { 
-  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, 
+import {
+  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Cell, AreaChart, Area, Legend,
 } from 'recharts';
 import { format, isAfter } from 'date-fns';
@@ -17,14 +17,14 @@ import * as XLSX from 'xlsx';
 import { cn } from './lib/utils';
 import { db } from './firebase';
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from 'firebase/auth';
-import { 
-  collection, 
-  onSnapshot, 
-  setDoc, 
+import {
+  collection,
+  onSnapshot,
+  setDoc,
   addDoc,
-  doc, 
-  deleteDoc, 
-  query, 
+  doc,
+  deleteDoc,
+  query,
   getDocs,
   writeBatch,
   updateDoc,
@@ -57,6 +57,9 @@ const normFilmType = (ft?: string | null): string => {
 // Nombre comparable de cliente: sin tildes ni puntuación ("CIMEDLAB S.A." = "CIMEDLAB SA")
 const nameKey = (s: string) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
   .toUpperCase().replace(/[.,;:'"()\-]/g, ' ').replace(/\s+/g, ' ').trim();
+// Ventas de ejemplo que cargaba src/data.js: sin factura, fecha 2025-01-01, lote "B-<cliente>-<medida>"
+const isSeedRecord = (r: { invoice_number?: string; order_date?: string; batch_number?: string; expiry_date?: string }) =>
+  !r.invoice_number && r.order_date === '2025-01-01' && /^B-\d+-\d+$/.test(String(r.batch_number || '')) && r.expiry_date === '2026-12-31';
 // Etiqueta visible del tipo de película
 const filmLabel = (ft?: string | null): string => ({ DIHT: 'DI-HT', DIHL: 'DI-HL', DIML: 'DI-ML' } as Record<string, string>)[normFilmType(ft)] || String(ft || '');
 // Aplica operaciones de Firestore en lotes de 450 (límite de 500 por lote).
@@ -937,7 +940,6 @@ function UsersPanel({ darkMode }: { darkMode: boolean }) {
 }
 
 // Importación de la base de datos local
-import fujifilmData from './data.js';
 
 // --- TIPOS ---
 interface PrinterInfo {
@@ -1176,8 +1178,8 @@ function PurchasesDashboardView({ darkMode, globalMetrics, allConsumos }: {
       <div className={cn('px-4 py-2.5 rounded-xl border flex items-center gap-3', darkMode ? 'bg-blue-500/8 border-blue-500/20' : 'bg-blue-50 border-blue-200')}>
         <span className="text-base shrink-0">📋</span>
         <p className={cn('text-[9px] leading-relaxed', darkMode ? 'text-blue-300' : 'text-blue-700')}>
-          <strong>Metodología:</strong> Inversión = costo landed (FOB + flete + impuestos + gastos locales). 
-          Precio de venta = 2× costo (margen 50% confirmado del Excel de importaciones). 
+          <strong>Metodología:</strong> Inversión = costo landed (FOB + flete + impuestos + gastos locales).
+          Precio de venta = 2× costo (margen 50% confirmado del Excel de importaciones).
           Revenue real 2025 usa facturas registradas con costo unitario en el sistema.
         </p>
       </div>
@@ -2118,152 +2120,17 @@ function App() {
   // Sync with Firestore
   useEffect(() => {
     const unsubClients = onSnapshot(collection(db, "clientes"), (snapshot) => {
+      // Ya no se cargan datos de ejemplo cuando la base está vacía (antes metían ventas ficticias)
       const docs = snapshot.docs.map(doc => doc.data() as Client);
-      // Only seed if there are NO clients at all AND we haven't seeded yet
-      // We use a local storage flag to remember if we've seeded
-      const hasSeeded = localStorage.getItem('orimec_seeded') === 'true';
-      
-      if (snapshot.empty && fujifilmData.clientes.length > 0 && !hasSeeded) {
-        const seedClients = async () => {
-          const batch = writeBatch(db);
-          fujifilmData.clientes.forEach(client => {
-            const docRef = doc(db, "clientes", client.id.toString());
-            batch.set(docRef, client);
-          });
-          await batch.commit();
-          localStorage.setItem('orimec_seeded', 'true');
-        };
-        seedClients();
-      } else {
-        setAllClients(docs.sort((a, b) => a.name.localeCompare(b.name)));
-      }
+      setAllClients(docs.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))));
     });
 
     const unsubConsumos = onSnapshot(collection(db, "consumos"), (snapshot) => {
       const docs = snapshot.docs.map(doc => doc.data() as ConsumptionRecord);
-      
-      const hasSeededConsumos = localStorage.getItem('orimec_seeded_consumos') === 'true';
-      
-      // Seed if empty
-      if (snapshot.empty && fujifilmData.consumos.length > 0 && !hasSeededConsumos) {
-        const seedData = async () => {
-          const batch = writeBatch(db);
-          fujifilmData.consumos.forEach(record => {
-            const docRef = doc(db, "consumos", record.id.toString());
-            batch.set(docRef, record);
-          });
-          await batch.commit();
-          localStorage.setItem('orimec_seeded_consumos', 'true');
-        };
-        seedData();
-      } else {
-        setAllConsumos(docs);
-      }
+      setAllConsumos(docs);
       setLoading(false);
     });
 
-    // One-time CSV Update Utility
-    const runCsvUpdate = async () => {
-      if (localStorage.getItem('orimec_scanner_update_done') === 'true') return;
-      
-      const newConsumos = [
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "14x17", invoice_number: "001001000070734", order_date: "2025-06-19", batch_number: "72512", quantity: 1, unit_cost: 78.04 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "14x17", invoice_number: "001001000070891", order_date: "2025-07-15", batch_number: "72512", quantity: 6, unit_cost: 78.043769 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "14x17", invoice_number: "001001000071136", order_date: "2025-09-02", batch_number: "72513", quantity: 4, unit_cost: 77.98 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000070739", order_date: "2025-06-19", batch_number: "72620", quantity: 1, unit_cost: 25.92 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000070734", order_date: "2025-06-19", batch_number: "72620", quantity: 3, unit_cost: 25.92 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000070756", order_date: "2025-06-23", batch_number: "72620", quantity: 6, unit_cost: 25.92 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000070757", order_date: "2025-06-23", batch_number: "72620", quantity: 6, unit_cost: 25.92 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000070891", order_date: "2025-07-15", batch_number: "72620", quantity: 6, unit_cost: 25.921764 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000070963", order_date: "2025-07-30", batch_number: "72620", quantity: 1, unit_cost: 25.921764 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000070994", order_date: "2025-08-05", batch_number: "72908", quantity: 2, unit_cost: 25.80 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000070996", order_date: "2025-08-05", batch_number: "72908", quantity: 2, unit_cost: 25.80 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000071137", order_date: "2025-09-02", batch_number: "73439", quantity: 5, unit_cost: 38.52 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000071136", order_date: "2025-09-02", batch_number: "73439", quantity: 10, unit_cost: 38.52 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000071242", order_date: "2025-09-22", batch_number: "73439", quantity: 10, unit_cost: 36.90 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000071325", order_date: "2025-10-07", batch_number: "76439", quantity: 6, unit_cost: 36.90 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "8x10", invoice_number: "001001000071529", order_date: "2025-11-17", batch_number: "76439", quantity: 5, unit_cost: 30.12 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x14", invoice_number: "001001000071142", order_date: "2025-09-02", batch_number: "67221", quantity: 1, unit_cost: 113.74 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x14", invoice_number: "001001000071336", order_date: "2025-10-09", batch_number: "67221", quantity: 1, unit_cost: 113.74 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x14", invoice_number: "001001000071529", order_date: "2025-11-17", batch_number: "60356", quantity: 5, unit_cost: 115.54 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x14", invoice_number: "001001000071530", order_date: "2025-11-17", batch_number: "60356", quantity: 5, unit_cost: 115.54 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "14x17", invoice_number: "001001000071142", order_date: "2025-09-02", batch_number: "44941", quantity: 8, unit_cost: 121.93 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "14x17", invoice_number: "001001000071326", order_date: "2025-10-07", batch_number: "46331", quantity: 8, unit_cost: 121.93 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "14x17", invoice_number: "001001000071325", order_date: "2025-10-07", batch_number: "46143", quantity: 8, unit_cost: 121.93 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "14x17", invoice_number: "001001000071545", order_date: "2025-11-19", batch_number: "49547", quantity: 10, unit_cost: 123.70 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "14x17", invoice_number: "001001000071547", order_date: "2025-11-19", batch_number: "49547", quantity: 10, unit_cost: 123.70 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000070739", order_date: "2025-06-19", batch_number: "72523", quantity: 1, unit_cost: 38.89 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000070734", order_date: "2025-06-19", batch_number: "72523", quantity: 4, unit_cost: 38.89 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000070756", order_date: "2025-06-23", batch_number: "72522", quantity: 10, unit_cost: 38.89 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000070757", order_date: "2025-06-23", batch_number: "72522", quantity: 10, unit_cost: 38.89 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000070891", order_date: "2025-07-15", batch_number: "72523", quantity: 15, unit_cost: 38.884303 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000070892", order_date: "2025-07-15", batch_number: "72523", quantity: 15, unit_cost: 38.884303 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000070963", order_date: "2025-07-30", batch_number: "72523", quantity: 1, unit_cost: 38.884303 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000070994", order_date: "2025-08-05", batch_number: "72523", quantity: 15, unit_cost: 38.88 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000070996", order_date: "2025-08-05", batch_number: "72523", quantity: 5, unit_cost: 38.88 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000071137", order_date: "2025-09-02", batch_number: "72523", quantity: 15, unit_cost: 38.87 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000071136", order_date: "2025-09-02", batch_number: "72523", quantity: 15, unit_cost: 38.87 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000071324", order_date: "2025-10-07", batch_number: "72523", quantity: 20, unit_cost: 38.86 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000071325", order_date: "2025-10-07", batch_number: "72523", quantity: 20, unit_cost: 38.86 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000071529", order_date: "2025-11-17", batch_number: "73359", quantity: 20, unit_cost: 39.34 },
-        { clientName: "CORPORACION SCANNER CUENCA CORPSCANNER S.A.S.", size: "10x12", invoice_number: "001001000071530", order_date: "2025-11-17", batch_number: "73359", quantity: 20, unit_cost: 39.34 },
-      ];
-
-      if (allClients.length > 0 && allConsumos.length > 0) {
-        const batch = writeBatch(db);
-        let updates = 0;
-
-        // Get the highest existing consumption ID
-        let nextId = Math.max(0, ...allConsumos.map(r => r.id)) + 1;
-
-        newConsumos.forEach(item => {
-          const client = allClients.find(c => c.name.toUpperCase() === item.clientName.toUpperCase());
-          if (client) {
-            // Check if this exact record already exists to prevent duplicates
-            const exists = allConsumos.some(r => 
-              r.client_id === client.id && 
-              r.invoice_number === item.invoice_number &&
-              r.size === item.size &&
-              r.quantity === item.quantity
-            );
-
-            if (!exists) {
-              const newRecord: ConsumptionRecord = {
-                id: nextId++,
-                client_id: client.id,
-                order_date: item.order_date,
-                invoice_number: item.invoice_number,
-                quantity: item.quantity,
-                size: item.size,
-                batch_number: item.batch_number,
-                expiry_date: "2026-12-31", // Default expiry
-                unit_cost: item.unit_cost
-              };
-              
-              const consumoRef = doc(db, "consumos", newRecord.id.toString());
-              batch.set(consumoRef, newRecord);
-              updates++;
-            }
-          }
-        });
-
-        if (updates > 0) {
-          try {
-            await batch.commit();
-            localStorage.setItem('orimec_scanner_update_done', 'true');
-            console.log(`Successfully added ${updates} new records for Corporacion Scanner.`);
-          } catch (err) {
-            console.error("Error committing batch update:", err);
-          }
-        } else {
-           localStorage.setItem('orimec_scanner_update_done', 'true');
-        }
-      }
-    };
-
-    if (!loading && allClients.length > 0 && allConsumos.length > 0) {
-      runCsvUpdate();
-    }
 
     const unsubAltNames = onSnapshot(collection(db, "altNames"), (snapshot) => {
       const names: Record<number, string> = {};
@@ -2758,7 +2625,7 @@ function App() {
         // Only update next year opening if it differs (avoid infinite loop)
         if (!updated[nextYear]) updated[nextYear] = {};
         if (!updated[nextYear][prod.key]) updated[nextYear][prod.key] = { openingBoxes: 0, openingM2: 0, months: Object.fromEntries(STOCK_FILM_MONTHS.map(m => [m, { inBoxes: 0, outBoxes: 0 }])) };
-        
+
         if (updated[nextYear][prod.key].openingBoxes !== decBalance) {
           updated[nextYear][prod.key].openingBoxes = decBalance;
           updated[nextYear][prod.key].openingM2 = decBalanceM2;
@@ -3154,10 +3021,10 @@ function App() {
     // "precio unitario" / "valor unitario" son precio de venta, no costo
     const unitCostRaw = get(['costo', 'costo unitario', 'costo_unitario', 'unit_cost', 'c/u'], ['total', 'venta', 'vta', 'precio']);
     const totalCostRaw = get(['costo total', 'costo_total', 'total'], ['vta', 'venta', 'precio', 'utilidad']);
-    
+
     const uCost = parseNumber(unitCostRaw);
     const tCost = parseNumber(totalCostRaw);
-    
+
     let finalCost: number | null = null;
     if (uCost !== undefined) {
       finalCost = Math.abs(uCost);
@@ -3248,7 +3115,7 @@ function App() {
 
   const handlePurgeYearData = async () => {
     const recordsToDelete = allConsumos.filter(r => r.order_date && r.order_date.startsWith(purgeYear));
-    
+
     if (recordsToDelete.length === 0) {
       showToast(`No se encontraron registros del año ${purgeYear} para eliminar.`, "info");
       return;
@@ -3257,16 +3124,16 @@ function App() {
     if (!window.confirm(`⚠️ ATENCIÓN: ¿Está seguro de eliminar TODOS los registros de consumo del año ${purgeYear}? Se detectaron ${recordsToDelete.length} registros. Esta acción es irreversible.`)) {
       return;
     }
-    
+
     if (!window.confirm(`¿Confirmar eliminación definitiva? Todos los datos del ${purgeYear} se borrarán de la base de datos.`)) {
       return;
     }
 
     try {
       setCsvImportStatus('importing');
-      
+
       const totalToDelete = recordsToDelete.length;
-      
+
       // Delete in batches of 400
       for (let i = 0; i < recordsToDelete.length; i += 400) {
         const chunk = recordsToDelete.slice(i, i + 400);
@@ -3381,7 +3248,7 @@ function App() {
           if (isDup) {
             const existingRec = findExistingRecord(tempRecord, client.id);
             if (existingRec) {
-              const hasDiff = 
+              const hasDiff =
                 (tempRecord.unit_cost != null && tempRecord.unit_cost !== existingRec.unit_cost) ||
               (tempRecord.sale_price != null && tempRecord.sale_price !== existingRec.sale_price) ||
                 (tempRecord.batch_number !== '' && tempRecord.batch_number !== existingRec.batch_number) ||
@@ -3428,7 +3295,7 @@ function App() {
         if (isDup2) {
           const existingRec2 = findExistingRecord(tempRecord2, client.id);
           if (existingRec2) {
-            const hasDiff2 = 
+            const hasDiff2 =
               (tempRecord2.unit_cost != null && tempRecord2.unit_cost !== existingRec2.unit_cost) ||
               (tempRecord2.sale_price != null && tempRecord2.sale_price !== existingRec2.sale_price) ||
               (tempRecord2.batch_number !== '' && tempRecord2.batch_number !== existingRec2.batch_number) ||
@@ -3476,7 +3343,7 @@ function App() {
           const temp = mapRowToRecord(item.row, 0, 0);
           const existingForNew = findByInvoice(temp);
           if (existingForNew && existingForNew.film_type === 'DIHL') {
-            const hasDiff = 
+            const hasDiff =
               (temp.unit_cost != null && temp.unit_cost !== existingForNew.unit_cost) ||
               (temp.sale_price != null && temp.sale_price !== existingForNew.sale_price) ||
               (temp.batch_number !== '' && temp.batch_number !== existingForNew.batch_number) ||
@@ -3501,7 +3368,7 @@ function App() {
           const temp = mapRowToRecord(item.row, 0, 0);
           const existingFinal = findByInvoice(temp);
           if (existingFinal && existingFinal.film_type === 'DIHL') {
-            const hasDiff = 
+            const hasDiff =
               (temp.unit_cost != null && temp.unit_cost !== existingFinal.unit_cost) ||
               (temp.sale_price != null && temp.sale_price !== existingFinal.sale_price) ||
               (temp.batch_number !== '' && temp.batch_number !== existingFinal.batch_number) ||
@@ -3596,7 +3463,7 @@ function App() {
             if (record.batch_number !== undefined && record.batch_number !== '') updateData.batch_number = record.batch_number;
             if (record.expiry_date !== undefined && record.expiry_date !== '2099-12-31') updateData.expiry_date = record.expiry_date;
             if (record.order_date !== undefined) updateData.order_date = record.order_date;
-            
+
             batch.update(doc(db, 'consumos', (_updateId as number).toString()), updateData);
           });
           await batch.commit();
@@ -3889,14 +3756,14 @@ Sé específico con los números. Usa un tono ejecutivo y directo.`;
 
     // Crear el libro de trabajo
     const wb = XLSX.utils.book_new();
-    
+
     // Añadir hojas
     const wsClients = XLSX.utils.json_to_sheet(clientsData);
     XLSX.utils.book_append_sheet(wb, wsClients, "Clientes");
-    
+
     const wsConsumos = XLSX.utils.json_to_sheet(consumosData);
     XLSX.utils.book_append_sheet(wb, wsConsumos, "Consumos");
-    
+
     if (printersData.length > 0) {
       const wsPrinters = XLSX.utils.json_to_sheet(printersData);
       XLSX.utils.book_append_sheet(wb, wsPrinters, "Impresoras");
@@ -4229,17 +4096,17 @@ ${rows.map(r=>{
       const provinceMatch = String(c.province || '').toLowerCase().includes(searchLower);
       const clientCodeMatch = String(c.client_code || '').toLowerCase().includes(searchLower);
       const salespersonMatch = String(c.salesperson || '').toLowerCase().includes(searchLower);
-      
-      const hasInvoiceMatch = allConsumos.some(r => 
-        r.client_id === c.id && 
-        r.invoice_number && 
+
+      const hasInvoiceMatch = allConsumos.some(r =>
+        r.client_id === c.id &&
+        r.invoice_number &&
         String(r.invoice_number).toLowerCase().includes(searchLower)
       );
 
-      const hasPrinterSerialMatch = c.printers?.some(p => 
+      const hasPrinterSerialMatch = c.printers?.some(p =>
         p.serial && String(p.serial).toLowerCase().includes(searchLower)
       ) || false;
-      
+
       return nameMatch || rucMatch || altNameMatch || provinceMatch || clientCodeMatch || salespersonMatch || hasInvoiceMatch || hasPrinterSerialMatch;
     });
   }, [searchTerm, altNames, allClients, allConsumos]);
@@ -4254,7 +4121,7 @@ ${rows.map(r=>{
   // Consumo filtrado por medida y factura (para métricas, tendencia y tabla)
   const filteredClientConsumption = useMemo(() => {
     let filtered = currentConsumption;
-    
+
     if (clientSizeFilter !== 'Todas') {
       filtered = filtered.filter(r => r.size === clientSizeFilter);
     }
@@ -4262,14 +4129,14 @@ ${rows.map(r=>{
     if (clientFilmFilter !== 'Todos') {
       filtered = filtered.filter(r => r.film_type === clientFilmFilter);
     }
-    
+
     if (invoiceSearchTerm.trim() !== '') {
       const searchLower = invoiceSearchTerm.toLowerCase();
-      filtered = filtered.filter(r => 
+      filtered = filtered.filter(r =>
         r.invoice_number && String(r.invoice_number).toLowerCase().includes(searchLower)
       );
     }
-    
+
     return filtered;
   }, [currentConsumption, clientSizeFilter, clientFilmFilter, invoiceSearchTerm]);
 
@@ -4327,7 +4194,7 @@ ${rows.map(r=>{
           id: nextId
         } as Client;
       }
-      
+
       await setDoc(doc(db, "clientes", finalClient.id.toString()), finalClient);
       setIsClientModalOpen(false);
       setSelectedClient(finalClient);
@@ -4502,7 +4369,7 @@ ${rows.map(r=>{
   const handleSaveAltName = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedClient) return;
-    
+
     try {
       await setDoc(doc(db, "altNames", selectedClient.id.toString()), {
         name: tempAltName
@@ -4544,7 +4411,7 @@ ${rows.map(r=>{
 
       // Sanitize undefined fields before Firestore
       const sanitized = Object.fromEntries(Object.entries(finalRecord).filter(([_, v]) => v !== undefined));
-      
+
       await setDoc(doc(db, "consumos", finalRecord.id.toString()), sanitized);
       setIsModalOpen(false);
       setEditingRecord(null);
@@ -4552,7 +4419,7 @@ ${rows.map(r=>{
       addAuditLog(editingRecord.id ? 'update_record' : 'create_record',
         `${editingRecord.id ? 'Actualizó' : 'Creó'} registro ${finalRecord.invoice_number || finalRecord.id} — ${finalRecord.size} × ${finalRecord.quantity} cj`,
         String(finalRecord.client_id),
-        { 
+        {
           operacion: editingRecord.id ? 'Edición de factura' : 'Nueva factura',
           cambios: editingRecord.id ? [
             `Factura registrada: ${finalRecord.invoice_number || '—'} · ${finalRecord.size} · ${finalRecord.quantity} cj · ${finalRecord.film_type || 'DIHT'} · ${finalRecord.order_date}${finalRecord.is_return ? ' (devolución)' : ''}`
@@ -4583,52 +4450,52 @@ ${rows.map(r=>{
   // Métricas de Fidelidad Calculadas
   const metrics = useMemo(() => {
     if (!filteredClientConsumption.length) return { avg: 0, total: 0, totalCost: 0, trend: 0, loyalty: 0, status: { label: 'Sin Datos', color: 'bg-gray-50 text-gray-400', darkColor: 'bg-white/5 text-gray-500 border-white/10' } };
-    
+
     const total = filteredClientConsumption.reduce((acc, curr) => acc + effectiveQty(curr), 0);
     const totalCost = filteredClientConsumption.reduce((acc, curr) => {
       if (curr.unit_cost) return acc + (curr.unit_cost * curr.quantity);
       return acc;
     }, 0);
-    
+
     // Fechas para cálculos
     const currentDate = new Date();
     const firstOrderDate = parseDate(filteredClientConsumption[filteredClientConsumption.length - 1].order_date);
     const lastOrderDate = parseDate(filteredClientConsumption[0].order_date);
-    
+
     // Meses transcurridos desde el primer pedido hasta HOY (inclusivo)
     let monthsElapsed = (currentDate.getFullYear() - firstOrderDate.getFullYear()) * 12 + (currentDate.getMonth() - firstOrderDate.getMonth()) + 1;
     if (monthsElapsed <= 0) monthsElapsed = 1;
-    
+
     // Promedio real considerando el tiempo total desde su primer pedido
     const avg = total / monthsElapsed;
-    
+
     // Tendencia: comparamos el promedio de los últimos 3 meses vs el promedio histórico
     const threeMonthsAgo = new Date();
     threeMonthsAgo.setMonth(currentDate.getMonth() - 3);
-    
+
     const recentTotal = filteredClientConsumption
       .filter(r => parseDate(r.order_date) >= threeMonthsAgo)
       .reduce((acc, curr) => acc + effectiveQty(curr), 0);
-      
+
     const recentAvg = recentTotal / 3;
     // Only calculate trend if historical avg is meaningful (>=0.5 boxes/month)
     // and there's enough history to compare against
     const trend = (avg < 0.5 || monthsElapsed < 4) ? null : ((recentAvg - avg) / avg) * 100;
     // Cap trend at ±500% to avoid absurd display values
     const trendCapped = trend === null ? null : Math.max(-500, Math.min(500, trend));
-    
+
     // Meses de inactividad (desde el último pedido hasta HOY)
     const monthsSinceLastOrder = (currentDate.getFullYear() - lastOrderDate.getFullYear()) * 12 + (currentDate.getMonth() - lastOrderDate.getMonth());
-    
+
     // Cálculo de Fidelidad (0-100%)
     // Usamos un benchmark de 5 cajas por mes como el 100% para "Socio Estratégico"
     let loyaltyScore = Math.min(100, Math.round((avg / 5) * 100));
-    
+
     // Penalización por inactividad: restamos 15% por cada mes sin comprar (después del primer mes de gracia)
     if (monthsSinceLastOrder > 1) {
       loyaltyScore = Math.max(0, loyaltyScore - ((monthsSinceLastOrder - 1) * 15));
     }
-    
+
     let status = { label: 'Ocasional', color: 'bg-slate-100 text-slate-600 border-slate-200', darkColor: 'bg-slate-900/50 text-slate-400 border-slate-800' };
     if (loyaltyScore >= 90) {
       status = { label: 'Socio Estratégico', color: 'bg-amber-50 text-amber-700 border-amber-200 shadow-lg shadow-amber-100 ring-1 ring-amber-400/20', darkColor: 'bg-amber-900/20 text-amber-400 border-amber-800/50 shadow-lg shadow-amber-900/20 ring-1 ring-amber-500/20' };
@@ -4663,7 +4530,7 @@ ${rows.map(r=>{
   // Métricas Globales para el Dashboard
   const globalMetrics = useMemo(() => {
     let filteredConsumos = allConsumos;
-    
+
     if (dashboardStartDate) {
       filteredConsumos = filteredConsumos.filter(r => parseDate(r.order_date) >= parseDate(dashboardStartDate));
     }
@@ -4679,7 +4546,7 @@ ${rows.map(r=>{
     }
 
     const totalConsumption = filteredConsumos.reduce((acc, curr) => acc + effectiveQty(curr), 0);
-    
+
     const totalRevenue = filteredConsumos.reduce((acc, curr) => acc + recordRevenue(curr), 0);
     const totalCost = filteredConsumos.reduce((acc, curr) => acc + effectiveQty(curr) * unitCostOf(curr), 0);
 
@@ -4713,13 +4580,13 @@ ${rows.map(r=>{
 
     // ── m² calculations ──
     const totalM2 = parseFloat(filteredConsumos.reduce((acc, curr) => acc + getTotalM2(effectiveQty(curr), curr.size, curr.film_type), 0).toFixed(2));
-    
+
     const sizeDist = {} as Record<string, number>;
     const sizeDistM2: Record<string, number> = {};
     const clientDist: Record<number, number> = {};
     const clientDistM2: Record<number, number> = {};
     const salespersonDist: Record<string, { quantity: number, m2: number, revenue: number }> = {};
-    
+
     filteredConsumos.forEach(r => {
       const qty = effectiveQty(r);
       const m2 = getTotalM2(qty, r.size, r.film_type);
@@ -4727,10 +4594,10 @@ ${rows.map(r=>{
       sizeDistM2[r.size] = parseFloat(((sizeDistM2[r.size] || 0) + m2).toFixed(2));
       clientDist[r.client_id] = (clientDist[r.client_id] || 0) + qty;
       clientDistM2[r.client_id] = parseFloat(((clientDistM2[r.client_id] || 0) + m2).toFixed(2));
-      
+
       const client = allClients.find(c => c.id === r.client_id);
       const salesperson = (client?.salesperson || 'Sin Vendedor').toUpperCase().trim();
-      
+
       if (!salespersonDist[salesperson]) {
         salespersonDist[salesperson] = { quantity: 0, m2: 0, revenue: 0 };
       }
@@ -5902,12 +5769,12 @@ ${rows.map(r=>{
 
   return (
     <div className="w-screen h-screen overflow-hidden bg-transparent">
-      <div 
+      <div
         className={cn(
           "flex flex-col text-sm overflow-hidden transition-all duration-300",
           darkMode ? "bg-[#0F0F11] text-white" : "bg-[#F4F5F7] text-[#111827]"
         )}
-        style={{ 
+        style={{
           transform: `scale(${zoomLevel})`,
           transformOrigin: 'top left',
           width: `${100 / zoomLevel}vw`,
@@ -6493,7 +6360,7 @@ ${rows.map(r=>{
                           </div>
                         </div>
                       </div>
-                      
+
                       {showPrinters && (
                         <div className={cn(
                           "mt-5 p-5 rounded-xl border transition-colors duration-300",
@@ -6503,7 +6370,7 @@ ${rows.map(r=>{
                             <h3 className="text-sm font-black uppercase tracking-widest">Impresoras Instaladas</h3>
                             <div className="flex items-center gap-2">
                               {!isEditingPrinters && editingPrinters.length > 0 && role !== 'vendedor' && (
-                                <button 
+                                <button
                                   onClick={() => setIsEditingPrinters(true)}
                                   className={cn(
                                     "text-[10px] font-bold px-3 py-1.5 rounded-full flex items-center gap-1.5 transition-all shadow-sm",
@@ -6514,7 +6381,7 @@ ${rows.map(r=>{
                                 </button>
                               )}
                               {role !== 'vendedor' && (
-                                <button 
+                                <button
                                   onClick={() => {
                                     setEditingPrinters([...editingPrinters, { id: Date.now().toString(), type: '', trays: '', installDate: '', serial: '', location: '' }]);
                                   }}
@@ -6525,18 +6392,18 @@ ${rows.map(r=>{
                               )}
                             </div>
                           </div>
-                          
+
                           <div className="space-y-4">
                             {editingPrinters.map((printer, index) => {
                               const isExistingPrinter = selectedClient?.printers?.some(p => p.id === printer.id);
                               const isDisabled = role === 'vendedor' || (!isEditingPrinters && isExistingPrinter);
-                              
+
                               return (
                                 <div key={printer.id} className="grid grid-cols-12 gap-4 items-end">
                                   <div className="col-span-2">
                                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Tipo Impresora</label>
-                                    <input 
-                                      type="text" 
+                                    <input
+                                      type="text"
                                       value={printer.type}
                                       disabled={isDisabled}
                                       onChange={e => {
@@ -6546,8 +6413,8 @@ ${rows.map(r=>{
                                       }}
                                       className={cn(
                                         "w-full px-3 py-2 rounded-xl border-none outline-none font-bold text-xs transition-colors",
-                                        isDisabled 
-                                          ? "bg-transparent px-0 text-lg" 
+                                        isDisabled
+                                          ? "bg-transparent px-0 text-lg"
                                           : (darkMode ? "bg-[#16161A] text-white focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm" : "bg-white text-gray-900 focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm")
                                       )}
                                       placeholder={!isDisabled ? "Ej: DryPix Plus" : "-"}
@@ -6555,8 +6422,8 @@ ${rows.map(r=>{
                                   </div>
                                   <div className="col-span-1">
                                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Trays</label>
-                                    <input 
-                                      type="text" 
+                                    <input
+                                      type="text"
                                       value={printer.trays}
                                       disabled={isDisabled}
                                       onChange={e => {
@@ -6566,8 +6433,8 @@ ${rows.map(r=>{
                                       }}
                                       className={cn(
                                         "w-full px-3 py-2 rounded-xl border-none outline-none font-bold text-xs transition-colors",
-                                        isDisabled 
-                                          ? "bg-transparent px-0 text-lg" 
+                                        isDisabled
+                                          ? "bg-transparent px-0 text-lg"
                                           : (darkMode ? "bg-[#16161A] text-white focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm" : "bg-white text-gray-900 focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm")
                                       )}
                                       placeholder={!isDisabled ? "Ej: 2" : "-"}
@@ -6575,8 +6442,8 @@ ${rows.map(r=>{
                                   </div>
                                   <div className="col-span-3">
                                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Fecha Instalación</label>
-                                    <input 
-                                      type="date" 
+                                    <input
+                                      type="date"
                                       value={printer.installDate}
                                       disabled={isDisabled}
                                       onChange={e => {
@@ -6586,8 +6453,8 @@ ${rows.map(r=>{
                                       }}
                                       className={cn(
                                         "w-full px-3 py-2 rounded-xl border-none outline-none font-bold text-xs transition-colors",
-                                        isDisabled 
-                                          ? "bg-transparent px-0 text-lg" 
+                                        isDisabled
+                                          ? "bg-transparent px-0 text-lg"
                                           : (darkMode ? "bg-[#16161A] text-white focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm" : "bg-white text-gray-900 focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm")
                                       )}
                                     />
@@ -6601,8 +6468,8 @@ ${rows.map(r=>{
                                       Venc. Garantía / Mantenimiento
                                       {printer.warrantyDate && parseDate(printer.warrantyDate) < new Date() && <span className="ml-1">⚠ Vencida</span>}
                                     </label>
-                                    <input 
-                                      type="date" 
+                                    <input
+                                      type="date"
                                       value={printer.warrantyDate || ''}
                                       disabled={isDisabled}
                                       onChange={e => {
@@ -6612,16 +6479,16 @@ ${rows.map(r=>{
                                       }}
                                       className={cn(
                                         "w-full px-3 py-2 rounded-xl border-none outline-none font-bold text-xs transition-colors",
-                                        isDisabled 
-                                          ? "bg-transparent px-0 text-lg" 
+                                        isDisabled
+                                          ? "bg-transparent px-0 text-lg"
                                           : (darkMode ? "bg-[#16161A] text-white focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm" : "bg-white text-gray-900 focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm")
                                       )}
                                     />
                                   </div>
                                   <div className="col-span-2">
                                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Serial</label>
-                                    <input 
-                                      type="text" 
+                                    <input
+                                      type="text"
                                       value={printer.serial}
                                       disabled={isDisabled}
                                       onChange={e => {
@@ -6631,8 +6498,8 @@ ${rows.map(r=>{
                                       }}
                                       className={cn(
                                         "w-full px-3 py-2 rounded-xl border-none outline-none font-bold text-xs transition-colors",
-                                        isDisabled 
-                                          ? "bg-transparent px-0 text-lg" 
+                                        isDisabled
+                                          ? "bg-transparent px-0 text-lg"
                                           : (darkMode ? "bg-[#16161A] text-white focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm" : "bg-white text-gray-900 focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm")
                                       )}
                                       placeholder={!isDisabled ? "Ej: 12345ABC" : "-"}
@@ -6640,8 +6507,8 @@ ${rows.map(r=>{
                                   </div>
                                   <div className="col-span-3">
                                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Sucursal / Ciudad</label>
-                                    <input 
-                                      type="text" 
+                                    <input
+                                      type="text"
                                       value={printer.location || ''}
                                       disabled={isDisabled}
                                       onChange={e => {
@@ -6651,8 +6518,8 @@ ${rows.map(r=>{
                                       }}
                                       className={cn(
                                         "w-full px-3 py-2 rounded-xl border-none outline-none font-bold text-xs transition-colors",
-                                        isDisabled 
-                                          ? "bg-transparent px-0 text-lg" 
+                                        isDisabled
+                                          ? "bg-transparent px-0 text-lg"
                                           : (darkMode ? "bg-[#16161A] text-white focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm" : "bg-white text-gray-900 focus:ring-2 focus:ring-[#ED1C24]/20 shadow-sm")
                                       )}
                                       placeholder={!isDisabled ? "Ej: Quito - Matriz" : "-"}
@@ -6660,7 +6527,7 @@ ${rows.map(r=>{
                                   </div>
                                   {!isDisabled && (
                                     <div className="col-span-1 flex justify-end pb-1">
-                                      <button 
+                                      <button
                                         onClick={() => {
                                           const newPrinters = editingPrinters.filter((_, i) => i !== index);
                                           setEditingPrinters(newPrinters);
@@ -6681,10 +6548,10 @@ ${rows.map(r=>{
                               <p className="text-xs text-gray-400 font-bold uppercase text-center py-4">No hay impresoras registradas</p>
                             )}
                           </div>
-                          
+
                           {role !== 'vendedor' && (isEditingPrinters || JSON.stringify(editingPrinters) !== JSON.stringify(selectedClient?.printers || [])) && (
                             <div className="mt-6 flex justify-end gap-3">
-                              <button 
+                              <button
                                 onClick={() => {
                                   setEditingPrinters(selectedClient.printers || []);
                                   setIsEditingPrinters(false);
@@ -6696,7 +6563,7 @@ ${rows.map(r=>{
                               >
                                 Cancelar
                               </button>
-                              <button 
+                              <button
                                 onClick={async () => {
                                   if (!selectedClient) return;
                                   try {
@@ -6970,7 +6837,7 @@ ${rows.map(r=>{
                                 formattedDate = `${day}/${month}/${year}`;
                               }
                             }
-                            
+
                             return (
                             <tr key={record.id} className={cn(
                               "transition-colors group",
@@ -7559,7 +7426,7 @@ ${rows.map(r=>{
                   ))}
                 </div>
               </div>
-              
+
               {/* Estadísticas por Vendedor */}
               <div className={cn(
                 "col-span-12 p-6 rounded-xl border transition-colors duration-300",
@@ -7792,7 +7659,7 @@ ${rows.map(r=>{
                 <h3 className={cn("text-[10px] font-bold uppercase tracking-wider mb-5 flex items-center gap-2", darkMode ? "text-gray-500" : "text-gray-400")}>
                   <Printer className="w-3.5 h-3.5 text-[#ED1C24]" /> Análisis de Impresoras Instaladas
                 </h3>
-                
+
                 <div className="grid grid-cols-4 gap-4 mb-6">
                   <div className={cn(
                     "p-4 rounded-xl border transition-colors duration-300",
@@ -12059,7 +11926,7 @@ ${rows.map(r=>{
                 {!selectedClient || !editingRecord.id ? (
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Cliente</label>
-                    <select 
+                    <select
                       required
                       value={editingRecord.client_id}
                       onChange={e => setEditingRecord({...editingRecord, client_id: parseInt(e.target.value)})}
@@ -12088,8 +11955,8 @@ ${rows.map(r=>{
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Fecha de Pedido</label>
-                    <input 
-                      type="date" 
+                    <input
+                      type="date"
                       required
                       value={editingRecord.order_date || ''}
                       onChange={e => setEditingRecord({...editingRecord, order_date: e.target.value})}
@@ -12101,8 +11968,8 @@ ${rows.map(r=>{
                   </div>
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Nº Factura</label>
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       placeholder="Ej: 001-001-000123"
                       value={editingRecord.invoice_number || ''}
                       onChange={e => setEditingRecord({...editingRecord, invoice_number: e.target.value})}
@@ -12148,7 +12015,7 @@ ${rows.map(r=>{
                   </div>
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Medida</label>
-                    <select 
+                    <select
                       value={editingRecord.size || '14x17'}
                       onChange={e => setEditingRecord({...editingRecord, size: e.target.value})}
                       style={darkMode ? { colorScheme: 'dark' } : {}}
@@ -12190,8 +12057,8 @@ ${rows.map(r=>{
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Lote</label>
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       required
                       placeholder="Ej: 72512"
                       value={editingRecord.batch_number || ''}
@@ -12204,8 +12071,8 @@ ${rows.map(r=>{
                   </div>
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Fecha de Expiración</label>
-                    <input 
-                      type="date" 
+                    <input
+                      type="date"
                       required
                       value={editingRecord.expiry_date || ''}
                       onChange={e => setEditingRecord({...editingRecord, expiry_date: e.target.value})}
@@ -12219,8 +12086,8 @@ ${rows.map(r=>{
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Costo Unitario ($)</label>
-                    <input 
-                      type="number" 
+                    <input
+                      type="number"
                       step="0.01"
                       placeholder="Ej: 150.50 o -150.50"
                       value={editingRecord.unit_cost || ''}
@@ -12480,8 +12347,8 @@ ${rows.map(r=>{
               <div className="space-y-4">
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Nombre del Centro</label>
-                  <input 
-                    type="text" 
+                  <input
+                    type="text"
                     required
                     placeholder="Ej: Hospital Metropolitano"
                     value={newClient.name || ''}
@@ -12494,8 +12361,8 @@ ${rows.map(r=>{
                 </div>
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Provincia</label>
-                  <input 
-                    type="text" 
+                  <input
+                    type="text"
                     required
                     placeholder="Ej: Pichincha"
                     value={newClient.province || ''}
@@ -12509,8 +12376,8 @@ ${rows.map(r=>{
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">COD Cliente</label>
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       required
                       placeholder="Ej: CL-001"
                       value={newClient.client_code || ''}
@@ -12523,8 +12390,8 @@ ${rows.map(r=>{
                   </div>
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Vendedor</label>
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       required
                       placeholder="Ej: JUAN PÉREZ"
                       value={newClient.salesperson || ''}
@@ -12538,8 +12405,8 @@ ${rows.map(r=>{
                 </div>
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">RUC / ID</label>
-                  <input 
-                    type="text" 
+                  <input
+                    type="text"
                     required
                     placeholder="Ej: 1792345678001"
                     value={newClient.ruc_id || ''}
@@ -12552,8 +12419,8 @@ ${rows.map(r=>{
                 </div>
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Contacto / Teléfono</label>
-                  <input 
-                    type="text" 
+                  <input
+                    type="text"
                     placeholder="Ej: Dr. Pérez - 0991234567"
                     value={newClient.contact || ''}
                     onChange={e => setNewClient({...newClient, contact: e.target.value})}
@@ -12564,7 +12431,7 @@ ${rows.map(r=>{
                   />
                 </div>
               </div>
-              <button 
+              <button
                 type="submit"
                 className="w-full bg-[#ED1C24] text-white py-4 rounded-2xl font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-[#D11920] shadow-lg shadow-red-500/20 transition-all"
               >
@@ -12597,8 +12464,8 @@ ${rows.map(r=>{
             <form onSubmit={handleSaveAltName} className="p-8 space-y-6">
               <div>
                 <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Nombre Alternativo</label>
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   autoFocus
                   placeholder="Ej: Clínica Central - Sucursal Norte"
                   value={tempAltName || ''}
@@ -12609,7 +12476,7 @@ ${rows.map(r=>{
                   )}
                 />
               </div>
-              <button 
+              <button
                 type="submit"
                 className="w-full bg-[#ED1C24] text-white py-4 rounded-2xl font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-[#D11920] shadow-lg shadow-red-500/20 transition-all"
               >
@@ -12831,7 +12698,7 @@ ${rows.map(r=>{
                           <span className="flex items-center gap-1"><User className="w-3 h-3" /> {client.salesperson || 'Sin vendedor'}</span>
                         </div>
                       </div>
-                      <button 
+                      <button
                         onClick={() => {
                           setSelectedPrinterType(null);
                           setSelectedClient(client);
@@ -13413,8 +13280,8 @@ ${rows.map(r=>{
                         onChange={(e) => setPurgeYear(e.target.value)}
                         className={cn(
                           "px-2.5 py-1.5 rounded-lg font-bold text-xs outline-none transition-all cursor-pointer",
-                          darkMode 
-                            ? "bg-[#16161A] border border-white/10 text-white focus:border-red-500/50" 
+                          darkMode
+                            ? "bg-[#16161A] border border-white/10 text-white focus:border-red-500/50"
                             : "bg-white border border-gray-200 text-gray-800 focus:border-red-500/50"
                         )}
                       >
@@ -13426,8 +13293,8 @@ ${rows.map(r=>{
                         onClick={handlePurgeYearData}
                         className={cn(
                           "px-3 py-1.5 rounded-lg font-black uppercase tracking-wider text-[9px] transition-all whitespace-nowrap shrink-0",
-                          darkMode 
-                            ? "bg-red-500/20 text-red-300 hover:bg-red-500/30 border border-red-500/30" 
+                          darkMode
+                            ? "bg-red-500/20 text-red-300 hover:bg-red-500/30 border border-red-500/30"
                             : "bg-red-600 text-white hover:bg-red-500"
                         )}
                       >
@@ -13435,6 +13302,37 @@ ${rows.map(r=>{
                       </button>
                     </div>
                   </div>
+
+                  {/* Datos de ejemplo cargados automáticamente (no son ventas reales) */}
+                  {role === 'admin' && allConsumos.some(isSeedRecord) && (() => {
+                    const seeds = allConsumos.filter(isSeedRecord);
+                    const cajas = seeds.reduce((s, r) => s + effectiveQty(r), 0);
+                    return (
+                      <div className={cn("mt-4 p-4 rounded-xl border", darkMode ? "bg-red-500/8 border-red-500/20" : "bg-red-50 border-red-200")}>
+                        <p className="text-[11px] font-black uppercase tracking-wider text-red-500 mb-1">Datos de ejemplo en la base</p>
+                        <p className={cn("text-[10px] mb-3", darkMode ? "text-gray-400" : "text-gray-500")}>
+                          Hay <strong>{seeds.length} registros ({cajas} cajas)</strong> que no son ventas reales: los cargó la app como ejemplo
+                          (sin factura, fecha 01-01-2025, lotes "B-…"). Inflan 2025 y aparecen como "Cliente no encontrado". Bórralos antes de importar tus CSV.
+                        </p>
+                        <button
+                          onClick={async () => {
+                            if (!window.confirm(`¿Borrar ${seeds.length} registros de ejemplo (${cajas} cajas)? Las ventas reales no se tocan.`)) return;
+                            try {
+                              await commitInChunks(seeds, (b, r) => b.delete(doc(db, 'consumos', String(r.id))));
+                              showToast(`Se borraron ${seeds.length} registros de ejemplo`, 'success');
+                              addAuditLog('delete_record', `Borró ${seeds.length} registros de ejemplo (${cajas} cj) cargados por src/data.js`);
+                            } catch (e) {
+                              console.error('Error borrando datos de ejemplo:', e);
+                              showToast('No se pudieron borrar los datos de ejemplo. No se cambió nada.', 'error');
+                            }
+                          }}
+                          className="text-[10px] font-black uppercase tracking-wider bg-red-600 text-white px-3 py-1.5 rounded-lg hover:bg-red-500 transition-all"
+                        >
+                          Borrar {seeds.length} registros de ejemplo →
+                        </button>
+                      </div>
+                    );
+                  })()}
 
                   {/* DIHT Migration tool */}
                   {allConsumos.filter(r => !r.film_type).length > 0 && (
@@ -14689,7 +14587,7 @@ ${rows.map(r=>{
         datedConsumos.forEach(r => {
           const qty = effectiveQty(r);
           const price = unitSalePrice(r);
-          
+
           let cost = 0;
           if (r.sale_price !== null && r.sale_price !== undefined) {
             cost = r.unit_cost || 0;
@@ -14704,7 +14602,7 @@ ${rows.map(r=>{
             const clientName = allClients.find(c => c.id === r.client_id)?.name || 'Cliente Desconocido';
             clientSummaries[r.client_id] = { name: clientName, revenue: 0, cost: 0, qty: 0 };
           }
-          
+
           clientSummaries[r.client_id].revenue += qty * price;
           clientSummaries[r.client_id].cost += qty * cost;
           clientSummaries[r.client_id].qty += qty;
@@ -14720,7 +14618,7 @@ ${rows.map(r=>{
           const key = `${r.film_type || 'DIHT'}_${r.size}`;
           const qty = effectiveQty(r);
           const price = unitSalePrice(r);
-          
+
           let cost = 0;
           if (r.sale_price !== null && r.sale_price !== undefined) {
             cost = r.unit_cost || 0;
@@ -14768,7 +14666,7 @@ ${rows.map(r=>{
 
               {/* Content */}
               <div className="p-6 overflow-y-auto custom-scrollbar space-y-6">
-                
+
                 {/* Visual Summary Card */}
                 <div className={cn("p-5 rounded-2xl border space-y-3.5", darkMode ? "bg-white/2 border-white/5" : "bg-gray-50 border-gray-100")}>
                   <div className="flex items-center justify-between mb-1">
@@ -14797,7 +14695,7 @@ ${rows.map(r=>{
                       )}
                     </div>
                   </div>
-                  
+
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <p className={cn("text-[9px] font-bold uppercase tracking-wider mb-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>Ingresos (Venta Total)</p>
@@ -14819,7 +14717,7 @@ ${rows.map(r=>{
                       </p>
                     </div>
                     <div className={cn("px-4 py-2 rounded-xl border flex flex-col items-center",
-                      hasLoss 
+                      hasLoss
                         ? (darkMode ? "bg-red-500/10 border-red-500/20 text-red-400" : "bg-red-50 border-red-200 text-red-700")
                         : (darkMode ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" : "bg-emerald-50 border-emerald-200 text-emerald-700")
                     )}>
@@ -14848,7 +14746,7 @@ ${rows.map(r=>{
                               <p className={cn("text-[8px] font-bold uppercase", darkMode ? "text-gray-600" : "text-gray-400")}>VTA Total</p>
                             </div>
                             <div className={cn("px-2 py-1 rounded-lg text-[9px] font-black font-mono min-w-[50px] text-center",
-                              isLoss 
+                              isLoss
                                 ? (darkMode ? "bg-red-500/10 text-red-400" : "bg-red-50 text-red-700")
                                 : (darkMode ? "bg-emerald-500/10 text-emerald-400" : "bg-emerald-50 text-emerald-700")
                             )}>
@@ -14888,7 +14786,7 @@ ${rows.map(r=>{
                           return (
                             <tr key={i} className={darkMode ? "bg-white/1" : "bg-white"}>
                               <td className="px-3 py-2.5 font-bold">
-                                <span className={cn("px-1.5 py-0.5 rounded text-[8.5px] uppercase font-black mr-1.5", 
+                                <span className={cn("px-1.5 py-0.5 rounded text-[8.5px] uppercase font-black mr-1.5",
                                   p.type === 'DIHL' ? (darkMode ? "bg-blue-500/20 text-blue-400" : "bg-blue-100 text-blue-700") :
                                   p.type === 'DIML' ? (darkMode ? "bg-purple-500/20 text-purple-400" : "bg-purple-100 text-purple-700") :
                                   (darkMode ? "bg-[#ED1C24]/20 text-[#ED1C24]" : "bg-red-100 text-red-700")
@@ -14920,7 +14818,7 @@ ${rows.map(r=>{
                 <div className="space-y-2">
                   <p className={cn("text-[9.5px] font-black uppercase tracking-wider", darkMode ? "text-gray-500" : "text-gray-400")}>🔍 Conclusión de Auditoría</p>
                   <div className={cn("p-4 rounded-xl border text-[11px] leading-relaxed font-semibold",
-                    hasLoss 
+                    hasLoss
                       ? (darkMode ? "bg-red-500/5 border-red-500/15 text-red-400" : "bg-red-50/50 border-red-200 text-red-800")
                       : (darkMode ? "bg-emerald-500/5 border-emerald-500/15 text-emerald-400" : "bg-emerald-50/50 border-red-200 text-emerald-800")
                   )}>
@@ -15121,7 +15019,7 @@ ${rows.map(r=>{
                           <td className={cn("px-5 py-3 font-mono text-[10px]", darkMode ? "text-gray-500" : "text-gray-400")}>{r.invoice_number || '—'}</td>
                           <td className="px-5 py-3 text-center">
                             {r.size && (
-                              <span className={cn("px-1.5 py-0.5 rounded text-[8.5px] uppercase font-black", 
+                              <span className={cn("px-1.5 py-0.5 rounded text-[8.5px] uppercase font-black",
                                 r.film_type === 'DIHL' ? (darkMode ? "bg-blue-500/20 text-blue-400" : "bg-blue-100 text-blue-700") :
                                 r.film_type === 'DIML' ? (darkMode ? "bg-purple-500/20 text-purple-400" : "bg-purple-100 text-purple-700") :
                                 (darkMode ? "bg-[#ED1C24]/20 text-[#ED1C24]" : "bg-red-100 text-red-700")
