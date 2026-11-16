@@ -14394,9 +14394,9 @@ ${rows.map(r=>{
       {orphanModal && (() => {
         const records = allConsumos
           .filter(r => Number(r.client_id) === Number(orphanModal.clientId))
-          .sort((a, b) => b.order_date.localeCompare(a.order_date));
-        const totalCajas = records.reduce((s, r) => s + effectiveQty(r), 0);
-        const totalM2 = records.reduce((s, r) => s + getTotalM2(effectiveQty(r), r.size, r.film_type), 0);
+          .sort((a, b) => String(b.order_date || '').localeCompare(String(a.order_date || '')));
+        const totalCajas = records.reduce((s, r) => s + (Number(effectiveQty(r)) || 0), 0);
+        const totalM2 = records.reduce((s, r) => s + (getTotalM2(Number(effectiveQty(r)) || 0, String(r.size || ''), r.film_type) || 0), 0);
         const q = norm(orphanSearch);
         const candidates = q.length < 2 ? [] : allClients
           .filter(c => norm(c.name).includes(q) || norm(c.client_code).includes(q) || (c.alt_codes || []).some(a => norm(a).includes(q)) || norm(altNames[c.id] || '').includes(q))
@@ -14446,11 +14446,11 @@ ${rows.map(r=>{
                   <tbody>
                     {records.slice(0, 300).map(r => (
                       <tr key={r.id} className={cn("border-t", darkMode ? "border-white/5" : "border-gray-50")}>
-                        <td className="py-1.5">{r.order_date}</td>
-                        <td className="font-mono text-[10px]">{r.invoice_number || '—'}</td>
+                        <td className="py-1.5">{String(r.order_date || '—')}</td>
+                        <td className="font-mono text-[10px]">{String(r.invoice_number || '—')}</td>
                         <td>{filmLabel(r.film_type)}</td>
-                        <td>{r.size}</td>
-                        <td className={cn("text-right font-bold", r.is_return && "text-red-400")}>{effectiveQty(r)}</td>
+                        <td>{String(r.size || '—')}</td>
+                        <td className={cn("text-right font-bold", r.is_return && "text-red-400")}>{String(effectiveQty(r) ?? '—')}</td>
                         <td className="text-right text-[10px]">{r.batch_number || '—'}</td>
                       </tr>
                     ))}
