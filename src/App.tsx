@@ -2570,6 +2570,11 @@ function App() {
   const [topClientsLimit, setTopClientsLimit] = useState<5|10|'all'>(5);
   const [showTopClientsModal, setShowTopClientsModal] = useState(false);
   const [clientPreviewModal, setClientPreviewModal] = useState<{ client: Client; rank: number; m2: number; cajas: number } | null>(null);
+  // Ventas cuyo cliente no existe: ver detalle y reasignarlas a un cliente existente
+  const [orphanModal, setOrphanModal] = useState<{ clientId: number } | null>(null);
+  const [orphanSearch, setOrphanSearch] = useState('');
+  const [orphanTarget, setOrphanTarget] = useState<Client | null>(null);
+  const [orphanSaving, setOrphanSaving] = useState(false);
   const [pickerYear, setPickerYear] = useState(() => new Date().getFullYear());
   const [pickerOpen, setPickerOpen] = useState(false);
   const [showPrinterStatsModal, setShowPrinterStatsModal] = useState(false);
@@ -2975,19 +2980,24 @@ function App() {
       const found = allClients.find(c => norm(c.ruc_id) === rucVal);
       if (found) return found;
     }
-    // 3. Exact name match
+    // Nombre comparable: sin tildes ni puntuación ("CIMEDLAB S.A." = "CIMEDLAB SA")
+    const nameKey = (s: string) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .toUpperCase().replace(/[.,;:'"()\-]/g, ' ').replace(/\s+/g, ' ').trim();
+    // Todos los nombres de un cliente: el principal y los alternativos (las fusiones guardan "A / B")
+    const namesOf = (c: Client) => [c.name, ...String(altNames[c.id] || '').split(' / ')].map(nameKey).filter(Boolean);
+    // 3. Exact name match (principal o alternativo)
     if (clientNameVal) {
-      const found = allClients.find(c => norm(c.name) === clientNameVal || norm(altNames[c.id] || '') === clientNameVal);
+      const key = nameKey(clientNameVal);
+      const found = allClients.find(c => namesOf(c).includes(key));
       if (found) return found;
     }
-    // 4. Partial name match
-    if (clientNameVal) {
-      const found = allClients.find(c =>
-        norm(c.name).includes(clientNameVal) ||
-        clientNameVal.includes(norm(c.name)) ||
-        (altNames[c.id] && (norm(altNames[c.id]).includes(clientNameVal) || clientNameVal.includes(norm(altNames[c.id]))))
-      );
-      if (found) return found;
+    // 4. Nombre parecido: SOLO si la fila no trae código de cliente (si trae un código que
+    //    no existe, es un cliente nuevo), el nombre es suficientemente largo y hay UNA sola
+    //    coincidencia. Así un cliente nuevo no se pega a otro existente por error.
+    if (clientNameVal && !codeVal) {
+      const key = nameKey(clientNameVal);
+      const matches = key.length >= 12 ? allClients.filter(c => namesOf(c).some(n => n.length >= 12 && (n.includes(key) || key.includes(n)))) : [];
+      if (matches.length === 1) return matches[0];
     }
     return null;
   };
@@ -7533,6 +7543,7 @@ ${rows.map(r=>{
                       onClick={() => {
                         const c = allClients.find(x => x.id === client.id);
                         if (c) setClientPreviewModal({ client: c, rank: idx + 1, m2: client.m2, cajas: client.value });
+                        else { setOrphanModal({ clientId: client.id }); setOrphanSearch(''); setOrphanTarget(null); }
                       }}
                     >
                       <div className={cn(
@@ -14380,6 +14391,102 @@ ${rows.map(r=>{
       })()}
 
       {/* ── CLIENT PREVIEW MODAL ── */}
+      {orphanModal && (() => {
+        const records = allConsumos
+          .filter(r => Number(r.client_id) === Number(orphanModal.clientId))
+          .sort((a, b) => b.order_date.localeCompare(a.order_date));
+        const totalCajas = records.reduce((s, r) => s + effectiveQty(r), 0);
+        const totalM2 = records.reduce((s, r) => s + getTotalM2(effectiveQty(r), r.size, r.film_type), 0);
+        const q = norm(orphanSearch);
+        const candidates = q.length < 2 ? [] : allClients
+          .filter(c => norm(c.name).includes(q) || norm(c.client_code).includes(q) || (c.alt_codes || []).some(a => norm(a).includes(q)) || norm(altNames[c.id] || '').includes(q))
+          .slice(0, 8);
+        const canEdit = role === 'admin' || role === 'financiero';
+        const handleReassign = async () => {
+          if (!orphanTarget || !records.length) return;
+          if (!window.confirm(`¿Asignar ${records.length} venta(s) a "${orphanTarget.name}"?`)) return;
+          setOrphanSaving(true);
+          try {
+            await commitInChunks(records, (b, r) => b.update(doc(db, 'consumos', r.id.toString()), { client_id: orphanTarget.id }));
+            showToast(`${records.length} venta(s) asignadas a "${orphanTarget.name}"`, 'success');
+            addAuditLog('update_record', `Asignó ${records.length} ventas sin cliente (ID ${orphanModal.clientId}) a "${orphanTarget.name}"`, String(orphanTarget.id));
+            setOrphanModal(null);
+          } catch (e) {
+            console.error('Error reasignando ventas:', e);
+            showToast('No se pudieron reasignar las ventas. No se cambió nada.', 'error');
+          } finally {
+            setOrphanSaving(false);
+          }
+        };
+        return (
+          <div className="fixed inset-0 z-[9997] flex items-center justify-center" onClick={() => setOrphanModal(null)}>
+            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+            <div className={cn("relative w-full max-w-2xl mx-4 rounded-2xl shadow-2xl border overflow-hidden max-h-[90vh] flex flex-col",
+              darkMode ? "bg-[#16161A] border-white/12 text-gray-200" : "bg-white border-gray-200 text-gray-800")} onClick={e => e.stopPropagation()}>
+              <div className={cn("px-6 py-4 border-b flex items-start justify-between gap-4", darkMode ? "border-white/8" : "border-gray-100")}>
+                <div>
+                  <h3 className="text-sm font-black">{missingClientLabel(orphanModal.clientId)}</h3>
+                  <p className="text-[11px] mt-1 text-gray-500">
+                    Estas ventas apuntan a un cliente que ya no existe (probablemente se borró o se fusionó). Asígnalas al cliente correcto.
+                  </p>
+                </div>
+                <button onClick={() => setOrphanModal(null)} className={cn("p-1.5 rounded-lg", darkMode ? "hover:bg-white/8" : "hover:bg-gray-100")}><X className="w-4 h-4" /></button>
+              </div>
+              <div className="px-6 py-3 flex flex-wrap gap-6 text-xs">
+                <span><b>{records.length}</b> ventas</span>
+                <span><b>{totalCajas}</b> cajas</span>
+                <span><b>{totalM2.toFixed(1)}</b> m²</span>
+                {records.length > 0 && <span>{records[records.length - 1].order_date} → {records[0].order_date}</span>}
+              </div>
+              <div className="flex-1 overflow-auto px-6">
+                <table className="w-full text-xs">
+                  <thead className={cn("text-[10px] uppercase sticky top-0", darkMode ? "bg-[#16161A] text-gray-500" : "bg-white text-gray-400")}>
+                    <tr><th className="text-left py-2">Fecha</th><th className="text-left">Factura</th><th className="text-left">Tipo</th><th className="text-left">Medida</th><th className="text-right">Cajas</th><th className="text-right">Lote</th></tr>
+                  </thead>
+                  <tbody>
+                    {records.slice(0, 300).map(r => (
+                      <tr key={r.id} className={cn("border-t", darkMode ? "border-white/5" : "border-gray-50")}>
+                        <td className="py-1.5">{r.order_date}</td>
+                        <td className="font-mono text-[10px]">{r.invoice_number || '—'}</td>
+                        <td>{filmLabel(r.film_type)}</td>
+                        <td>{r.size}</td>
+                        <td className={cn("text-right font-bold", r.is_return && "text-red-400")}>{effectiveQty(r)}</td>
+                        <td className="text-right text-[10px]">{r.batch_number || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {records.length > 300 && <p className="text-[10px] py-2 text-gray-500">Mostrando 300 de {records.length}.</p>}
+              </div>
+              {canEdit && (
+                <div className={cn("px-6 py-4 border-t space-y-2", darkMode ? "border-white/8 bg-white/2" : "border-gray-100 bg-gray-50/60")}>
+                  <p className="text-[11px] font-bold">Asignar todas estas ventas a un cliente existente</p>
+                  <input value={orphanSearch} onChange={e => { setOrphanSearch(e.target.value); setOrphanTarget(null); }}
+                    placeholder="Buscar por nombre o código (CODIGO2)…"
+                    className={cn("w-full px-3 py-2 rounded-lg text-xs outline-none border", darkMode ? "bg-white/5 border-white/10" : "bg-white border-gray-200")} />
+                  {candidates.length > 0 && !orphanTarget && (
+                    <div className={cn("rounded-lg border max-h-40 overflow-auto", darkMode ? "border-white/10" : "border-gray-200")}>
+                      {candidates.map(c => (
+                        <button key={c.id} onClick={() => { setOrphanTarget(c); setOrphanSearch(c.name); }}
+                          className={cn("w-full text-left px-3 py-1.5 text-xs", darkMode ? "hover:bg-white/8" : "hover:bg-gray-100")}>
+                          {c.name} <span className="text-gray-500">· {c.client_code || 'sin código'} · {c.province || '—'}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex justify-end">
+                    <button disabled={!orphanTarget || orphanSaving} onClick={handleReassign}
+                      className="px-4 py-2 rounded-xl text-xs font-black bg-[#1A3A5C] text-white hover:bg-[#22487A] transition-colors disabled:opacity-40">
+                      {orphanSaving ? 'Asignando…' : orphanTarget ? `Asignar a ${orphanTarget.name}` : 'Elige un cliente'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
       {clientPreviewModal && (() => {
         const { client, rank, m2, cajas } = clientPreviewModal;
         const clientConsumos = filteredConsumosForView
@@ -15143,7 +15250,7 @@ ${rows.map(r=>{
                       const barPct = (client.m2 / maxM2) * 100;
                       return (
                         <div key={client.id}
-                          onClick={() => { const c = allClients.find(x => x.id === client.id); if (c) setClientPreviewModal({ client: c, rank: idx+1, m2: client.m2, cajas: client.value }); }}
+                          onClick={() => { const c = allClients.find(x => x.id === client.id); if (c) setClientPreviewModal({ client: c, rank: idx+1, m2: client.m2, cajas: client.value }); else { setOrphanModal({ clientId: client.id }); setOrphanSearch(''); setOrphanTarget(null); } }}
                           className={cn("flex items-center gap-4 px-4 py-3.5 rounded-xl border cursor-pointer transition-all",
                             idx === 0
                               ? (darkMode ? "bg-[#ED1C24]/8 border-[#ED1C24]/20 hover:bg-[#ED1C24]/12" : "bg-red-50 border-red-200 hover:bg-red-50/80")
@@ -15204,7 +15311,7 @@ ${rows.map(r=>{
                         return (
                           <tr key={client.id}
                             className={cn("transition-colors cursor-pointer", darkMode ? "hover:bg-white/4" : "hover:bg-gray-50")}
-                            onClick={() => { const c = allClients.find(x => x.id === client.id); if (c) setClientPreviewModal({ client: c, rank: idx+1, m2: client.m2, cajas: client.value }); }}
+                            onClick={() => { const c = allClients.find(x => x.id === client.id); if (c) setClientPreviewModal({ client: c, rank: idx+1, m2: client.m2, cajas: client.value }); else { setOrphanModal({ clientId: client.id }); setOrphanSearch(''); setOrphanTarget(null); } }}
                           >
                             <td className="px-5 py-2.5">
                               <span className={cn("w-6 h-6 rounded-lg flex items-center justify-center font-black text-[10px]",
