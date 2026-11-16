@@ -79,11 +79,14 @@ const effectiveQty = (r: { quantity: number; is_return?: boolean }) => r.is_retu
 // DI-HT: 100 hojas/caja | DI-HL y DI-ML: 150 hojas/caja (14x17 DI-HL: 100)
 const FILM_M2_PER_BOX: Record<string, Record<string, number>> = {
   'DIHT': { '8x10': 5.16, '10x12': 7.50, '10x14': 9.03, '14x17': 15.38 },
-  'DIHL': { '8x10': 7.74, '10x12': 7.50, '10x14': 13.55, '14x17': 15.38 },
+  // 10x12 DI-HL: 25x30 cm × 150 hojas = 11.25 m² (como en el Excel de ventas)
+  'DIHL': { '8x10': 7.74, '10x12': 11.25, '10x14': 13.55, '14x17': 15.38 },
   'DIML': { '8x10': 7.74, '10x14': 13.55 },
 };
 const getM2PerBox = (size: string, filmType?: string | null): number => {
   const ft = normFilmType(filmType);
+  // TXE/TXM (película convencional) no suma m² en ventas, igual que en el Excel (factor vacío)
+  if (ft === 'TXE' || ft === 'TXM') return 0;
   return FILM_M2_PER_BOX[ft]?.[size] ?? FILM_M2_PER_BOX.DIHT[size] ?? 0;
 };
 const getTotalM2 = (quantity: number, size: string, filmType?: string | null): number =>
@@ -2697,6 +2700,8 @@ function App() {
   const [csvImportProgress, setCsvImportProgress] = useState(0);
   const [csvImportSummary, setCsvImportSummary] = useState({ records: 0, newClients: 0 });
   const csvFileInputRef = React.useRef<HTMLInputElement>(null);
+  // Ventas ya guardadas cuya factura, según el CSV, no tiene ninguna película (equipos, accesorios…)
+  const [csvNonFilmExisting, setCsvNonFilmExisting] = useState<any[]>([]);
 
   // --- CSV IMPORT LOGIC ---
   const parseCSV = (text: string): any[] => {
@@ -2898,28 +2903,22 @@ function App() {
   // Extract size from ARTICULO field if size column is empty
   const extractSizeFromArticulo = (articulo: string): string => {
     if (!articulo) return '';
-    const patterns = [
-      /\b(35[xX×]43|35x43)\b/i,   // → 14x17
-      /\b(26[xX×]36|26x36)\b/i,   // → 10x14
-      /\b(25[xX×]30|25x30)\b/i,   // → 10x12
-      /\b(20[xX×]25|20x25)\b/i,   // → 8x10
-      /\b(14[xX×]17)\b/i,
-      /\b(10[xX×]14)\b/i,
-      /\b(10[xX×]12)\b/i,
-      /\b(8[xX×]10)\b/i,
+    // Sin \b al final: en "TXE CE 35X43CM (14X17IN)" la medida va pegada a CM/IN.
+    // Solo se exige que no haya otro dígito antes o después.
+    const patterns: [RegExp, string][] = [
+      [/(?<!\d)35\s*[xX×]\s*43(?!\d)/, '14x17'],
+      [/(?<!\d)26\s*[xX×]\s*36(?!\d)/, '10x14'],
+      [/(?<!\d)28\s*[xX×]\s*35(?!\d)/, '11x14'],
+      [/(?<!\d)25\s*[xX×]\s*30(?!\d)/, '10x12'],
+      [/(?<!\d)20(?:[.,]\d)?\s*[xX×]\s*25(?:[.,]\d)?(?!\d)/, '8x10'],
+      [/(?<!\d)14\s*"*\s*[xX×]\s*17(?!\d)/, '14x17'],
+      [/(?<!\d)11\s*[xX×]\s*14(?!\d)/, '11x14'],
+      [/(?<!\d)10\s*[xX×]\s*14(?!\d)/, '10x14'],
+      [/(?<!\d)10\s*[xX×]\s*12(?!\d)/, '10x12'],
+      [/(?<!\d)8\s*[xX×]\s*10(?!\d)/, '8x10'],
     ];
-    const cmToInch: Record<string, string> = {
-      '35X43': '14x17', '35x43': '14x17',
-      '26X36': '10x14', '26x36': '10x14',
-      '25X30': '10x12', '25x30': '10x12',
-      '20X25': '8x10',  '20x25': '8x10',
-    };
-    for (const pat of patterns) {
-      const m = articulo.match(pat);
-      if (m) {
-        const val = m[0].toUpperCase().replace('×', 'X');
-        return cmToInch[val] || m[0].toLowerCase().replace('×', 'x');
-      }
+    for (const [pat, size] of patterns) {
+      if (pat.test(articulo)) return size;
     }
     return '';
   };
@@ -3181,7 +3180,10 @@ function App() {
       // Película por el nombre del producto (DRY FILM, DI-HT/HL/ML, TXE) y no un equipo/accesorio
       const isFilmProduct = (prod: string): boolean => {
         if (/DRYPIX|DRIPYX|MAGAZINE|FEEDER|IMPRESORA|MANTENIMIENTO|SERVICIO|REPUESTO|MAIN UNIT|POWER CORD/.test(prod)) return false;
-        return /FILM|PELICULA/.test(prod) || /DIHT|DIHL|DIML|TXE/.test(prod.replace(/[\s\-\/]/g, ''));
+        // Equipos de rayos X: "EQ RX FUJIFILM ESSENTIAL GXR 40K" contiene "FILM" dentro de "FUJIFILM"
+        if (/^EQ\b|\bEQUIPO|\bFDR\b|\bRX\b|DETECTOR|CONSOLE|MONITOR/.test(prod)) return false;
+        const sinMarca = prod.replace(/FUJI\s*FILM/g, '');
+        return /FILM|PELICULA/.test(sinMarca) || /DIHT|DIHL|DIML|TXE/.test(prod.replace(/[\s\-\/]/g, ''));
       };
       // Filas vacías o la fila "Total" que deja Excel al exportar
       const isBlankRow = (row: any) => !getProducto(row) && !Object.entries(row).some(([k, v]) => plain(k) === 'CANTIDAD' && /\d/.test(String(v))) || /^TOTAL/.test(plain(Object.values(row)[0]));
@@ -3199,6 +3201,18 @@ function App() {
       };
       let rows = allRows.filter(isFilmRow);
       const skippedNonFilm = allRows.filter(r => !isBlankRow(r)).length - rows.length;
+
+      // Facturas del archivo que no tienen NINGUNA película: si ya hay ventas guardadas con
+      // ese número (importaciones anteriores que colaron equipos), se ofrecen para borrar.
+      {
+        const filmInvoices = new Set(rows.map(r => mapRowToRecord(r, 0, 0).invoice_number).filter(Boolean));
+        const nonFilmInvoices = new Set(
+          allRows.filter(r => !isBlankRow(r) && !isFilmRow(r))
+            .map(r => mapRowToRecord(r, 0, 0).invoice_number)
+            .filter(inv => inv && !filmInvoices.has(inv))
+        );
+        setCsvNonFilmExisting(nonFilmInvoices.size ? allConsumos.filter(r => nonFilmInvoices.has(String(r.invoice_number || ''))) : []);
+      }
       if (rows.length === 0) {
         const cats = hasCategoriaCol
           ? [...new Set(allRows.map(r => String(Object.entries(r).find(([k]) => isCategoriaKey(k))?.[1] || '').trim()).filter(Boolean))].join(', ')
@@ -3648,6 +3662,8 @@ function App() {
     setCsvImportStatus('idle');
     setCsvImportError('');
     setCsvPreviewRows([]);
+    setCsvNonFilmExisting([]);
+    setCsvYearsFound({});
     setCsvImportResults({ matched: [], toCreate: [], duplicates: [] });
     setCsvImportProgress(0);
     setCsvImportSummary({ records: 0, newClients: 0 });
@@ -4676,8 +4692,12 @@ ${rows.map(r=>{
       }))
       .sort((a, b) => b.m2 - a.m2);
 
+    // Cajas de película convencional TXE/TXM (no suman m²)
+    const txeBoxes = filteredConsumos.filter(r => ['TXE', 'TXM'].includes(normFilmType(r.film_type))).reduce((s, r) => s + effectiveQty(r), 0);
+
     return {
       totalConsumption,
+      txeBoxes,
       totalRevenue,
       totalCost,
       totalUtility,
@@ -7215,7 +7235,7 @@ ${rows.map(r=>{
                 </div>
                 <p className="text-3xl font-black leading-none text-[#ED1C24]">{globalMetrics.totalM2.toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                 <p className={cn("text-[10px] mt-1 font-semibold", darkMode ? "text-red-400/60" : "text-red-400")}>metros cuadrados</p>
-                <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{globalMetrics.totalConsumption} cajas</p>
+                <p className={cn("text-[9px] mt-0.5", darkMode ? "text-gray-600" : "text-gray-400")}>{globalMetrics.totalConsumption} cajas{globalMetrics.txeBoxes !== 0 && <> · {globalMetrics.totalConsumption - globalMetrics.txeBoxes} dry film + {globalMetrics.txeBoxes} TXE (sin m²)</>}</p>
               </div>
               <div className={cn(
                 "p-5 rounded-xl border transition-colors duration-300",
@@ -13435,6 +13455,36 @@ ${rows.map(r=>{
                       </div>
                     </div>
                   )}
+                  {/* Ventas ya guardadas que en realidad son equipos/accesorios (facturas sin películas) */}
+                  {csvNonFilmExisting.length > 0 && (role === 'admin' || role === 'financiero') && (() => {
+                    const cajas = csvNonFilmExisting.reduce((s, r) => s + effectiveQty(r), 0);
+                    const facturas = [...new Set(csvNonFilmExisting.map(r => String(r.invoice_number)))];
+                    return (
+                      <div className={cn("rounded-xl p-3 border", darkMode ? "bg-red-500/8 border-red-500/20" : "bg-red-50 border-red-200")}>
+                        <p className="text-[11px] font-black uppercase tracking-wider text-red-500 mb-1">Equipos guardados como película</p>
+                        <p className={cn("text-[10px] mb-2", darkMode ? "text-gray-400" : "text-gray-500")}>
+                          Hay <strong>{csvNonFilmExisting.length} venta(s) ({cajas} cajas)</strong> en la base con facturas que, según este archivo, no tienen ninguna película (equipos, accesorios…): {facturas.slice(0, 6).join(', ')}{facturas.length > 6 ? '…' : ''}. Se colaron en una importación anterior.
+                        </p>
+                        <button
+                          onClick={async () => {
+                            if (!window.confirm(`¿Borrar ${csvNonFilmExisting.length} venta(s) (${cajas} cajas) de las facturas ${facturas.join(', ')}?\n\nEsas facturas no tienen películas en el archivo. No se puede deshacer.`)) return;
+                            try {
+                              await commitInChunks(csvNonFilmExisting, (b, r) => b.delete(doc(db, 'consumos', String(r.id))));
+                              showToast(`Se borraron ${csvNonFilmExisting.length} ventas que no eran películas`, 'success');
+                              addAuditLog('delete_record', `Borró ${csvNonFilmExisting.length} ventas de facturas sin películas (${facturas.join(', ')})`);
+                              setCsvNonFilmExisting([]);
+                            } catch (e) {
+                              console.error('Error borrando ventas sin películas:', e);
+                              showToast('No se pudieron borrar. Inténtalo de nuevo.', 'error');
+                            }
+                          }}
+                          className="text-[10px] font-black uppercase tracking-wider bg-red-600 text-white px-3 py-1.5 rounded-lg hover:bg-red-500 transition-all"
+                        >
+                          Borrar {csvNonFilmExisting.length} venta(s) →
+                        </button>
+                      </div>
+                    );
+                  })()}
                   {/* DIHL-only mode banner */}
                   {csvImportResults.isDihlOnly && (
                     <div className={cn("rounded-xl p-3 border flex items-center gap-3", darkMode ? "bg-blue-500/10 border-blue-500/25" : "bg-blue-50 border-blue-200")}>
