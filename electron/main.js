@@ -47,7 +47,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false
     },
-    title: "Fujifilm DI-HT Inventory Manager",
+    title: "Orimec Field Analytics",
     icon: path.join(__dirname, '../public/icon.png')
   });
 

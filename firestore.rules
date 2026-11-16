@@ -1,0 +1,54 @@
+rules_version = '2';
+
+// Reglas de Firestore para Orimec Field Analytics.
+// Solo usuarios con sesión iniciada y registrados como activos en /users pueden
+// leer o escribir. La gestión de usuarios queda reservada al rol admin.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+    function isActive() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && userDoc().data.activo == true;
+    }
+    function isAdmin() {
+      return isActive() && userDoc().data.role == 'admin';
+    }
+
+    // Usuarios: cada uno puede leer su propio perfil (necesario para iniciar sesión);
+    // los admin leen y gestionan todos.
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow write: if isAdmin();
+    }
+
+    // Datos de negocio
+    match /clientes/{id}      { allow read, write: if isActive(); }
+    match /consumos/{id}      { allow read, write: if isActive(); }
+    match /altNames/{id}      { allow read, write: if isActive(); }
+    match /stock_entries/{id} { allow read, write: if isActive(); }
+
+    // Ajustes compartidos: stock_film_data, stock_film_transit, sp_goals,
+    // stock_minimums, imager_data
+    match /settings/{key}     { allow read, write: if isActive(); }
+
+    // Historial de auditoría: todos los activos leen y agregan; solo admin borra
+    // (botón "Limpiar historial"). Los registros no se editan.
+    match /audit_logs/{id} {
+      allow read, create: if isActive();
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    // Todo lo demás, cerrado
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

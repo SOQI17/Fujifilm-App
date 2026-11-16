@@ -1,5 +1,5 @@
 {
-  "name": "fujifilm-di-ht-inventory",
+  "name": "orimec-field-analytics",
   "private": true,
   "version": "1.0.0",
   "type": "module",
@@ -46,12 +46,12 @@
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0",
-    "vite-plugin-pwa": "^1.2.0",
+    "vite-plugin-pwa": "^1.3.0",
     "wait-on": "^9.0.4"
   },
   "build": {
     "appId": "com.fujifilm.inventory",
-    "productName": "Fujifilm DI-HT Inventory",
+    "productName": "Orimec Field Analytics",
     "extraResources": [
       "serviceAccountKey.json"
     ],
@@ -72,7 +72,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Fujifilm Inventory"
+      "shortcutName": "Orimec Field Analytics"
     },
     "asar": true
   }

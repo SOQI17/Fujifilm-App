@@ -14,10 +14,13 @@ export default defineConfig(({command, mode}) => {
       VitePWA({
         registerType: 'autoUpdate',
         includeAssets: ['icon.svg'],
+        workbox: {
+          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5MB
+        },
         manifest: {
-          name: 'Fujifilm DI-HT Inventory',
-          short_name: 'DI-HT',
-          description: 'Sistema de gestión de inventario para películas radiográficas Fujifilm DI-HT.',
+          name: 'Orimec Field Analytics',
+          short_name: 'Orimec',
+          description: 'Orimec Field Analytics: inventario, ventas y consumo de películas Fujifilm DI-HT, DI-HL y DI-ML.',
           theme_color: '#ED1C24',
           background_color: '#121212',
           display: 'standalone',
