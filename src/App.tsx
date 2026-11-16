@@ -3262,18 +3262,46 @@ function App() {
       const allRows = parseCSV(clean);
       if (!allRows.length) { setCsvImportError('El archivo no tiene filas válidas o el separador no fue reconocido. Columnas detectadas: ' + (Object.keys(allRows[0] ?? {}).join(', ') || 'ninguna')); setCsvImportStatus('error'); return; }
 
-      // ── Filtrar solo filas de PELICULAS si existe la columna CATEGORIA ──────
-      const hasCategoriaCol = allRows.length > 0 && Object.keys(allRows[0]).some(k => k.trim().toUpperCase() === 'CATEGORIA');
-      let rows = hasCategoriaCol
-        ? allRows.filter(row => {
-            const cat = Object.entries(row).find(([k]) => k.trim().toUpperCase() === 'CATEGORIA')?.[1] || '';
-            return String(cat).trim().toUpperCase() === 'PELICULAS';
-          })
-        : allRows;
-      if (hasCategoriaCol && rows.length === 0) {
-        setCsvImportError(`El archivo tiene la columna CATEGORIA pero ninguna fila contiene "PELICULAS". Categorías encontradas: ${[...new Set(allRows.map(r => Object.entries(r).find(([k]) => k.trim().toUpperCase() === 'CATEGORIA')?.[1] || '').filter(Boolean))].join(', ')}`);
+      // ── Solo PELÍCULAS: impresoras, magazines, feeders, servicios, etc. se ignoran ──
+      // Sin tildes y en mayúsculas, para comparar "PELÍCULAS", "Pelicula", "CATEGORÍA"…
+      const plain = (v: unknown) => String(v ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().trim();
+      const isCategoriaKey = (k: string) => plain(k) === 'CATEGORIA';
+      const hasCategoriaCol = allRows.length > 0 && Object.keys(allRows[0]).some(isCategoriaKey);
+      const getProducto = (row: any) => {
+        const k = Object.keys(row).find(key => ['ARTICULO', 'PRODUCTO', 'DESCRIPCION', 'ARTICLE', 'DESCRIPTION'].includes(plain(key)));
+        return plain(k ? row[k] : '');
+      };
+      // Película por el nombre del producto (DRY FILM, DI-HT/HL/ML, TXE) y no un equipo/accesorio
+      const isFilmProduct = (prod: string): boolean => {
+        if (/DRYPIX|DRIPYX|MAGAZINE|FEEDER|IMPRESORA|MANTENIMIENTO|SERVICIO|REPUESTO|MAIN UNIT|POWER CORD/.test(prod)) return false;
+        return /FILM|PELICULA/.test(prod) || /DIHT|DIHL|DIML|TXE/.test(prod.replace(/[\s\-\/]/g, ''));
+      };
+      // Filas vacías o la fila "Total" que deja Excel al exportar
+      const isBlankRow = (row: any) => !getProducto(row) && !Object.entries(row).some(([k, v]) => plain(k) === 'CANTIDAD' && /\d/.test(String(v))) || /^TOTAL/.test(plain(Object.values(row)[0]));
+      const isFilmRow = (row: any): boolean => {
+        if (isBlankRow(row)) return false;
+        const prod = getProducto(row);
+        if (hasCategoriaCol) {
+          const cat = plain(Object.entries(row).find(([k]) => isCategoriaKey(k))?.[1]);
+          // Categoría PELICULAS, o película mal categorizada (p. ej. "DRY FILM DI-HL" como ACCESORIOS)
+          return cat.startsWith('PELICULA') || (!!prod && isFilmProduct(prod));
+        }
+        // Sin columna CATEGORIA: se reconoce por el nombre del producto
+        if (!prod) return true; // sin descripción: lo decide la validación por medida
+        return isFilmProduct(prod);
+      };
+      let rows = allRows.filter(isFilmRow);
+      const skippedNonFilm = allRows.filter(r => !isBlankRow(r)).length - rows.length;
+      if (rows.length === 0) {
+        const cats = hasCategoriaCol
+          ? [...new Set(allRows.map(r => String(Object.entries(r).find(([k]) => isCategoriaKey(k))?.[1] || '').trim()).filter(Boolean))].join(', ')
+          : '';
+        setCsvImportError(`El archivo no contiene filas de películas.${cats ? ` Categorías encontradas: ${cats}` : ''}`);
         setCsvImportStatus('error');
         return;
+      }
+      if (skippedNonFilm > 0) {
+        showToast(`Se ignoraron ${skippedNonFilm} fila(s) que no son películas (impresoras, accesorios, servicios…).`, 'info');
       }
       // ── Validar filas: sin cantidad, sin fecha válida o con medida desconocida se descartan ──
       const VALID_SIZES = ['8x10', '10x12', '10x14', '11x14', '14x17'];
@@ -13336,6 +13364,7 @@ ${rows.map(r=>{
                     "mt-5 p-4 rounded-xl border text-xs",
                     darkMode ? "bg-white/3 border-white/8 text-gray-400" : "bg-gray-50 border-gray-100 text-gray-500"
                   )}>
+                    <p className="mb-3 text-[11px]"><span className="font-bold">Solo se importan películas</span> (DI-HT, DI-HL, DI-ML, TXE). Impresoras, accesorios, repuestos y servicios se ignoran automáticamente.</p>
                     <p className="font-bold mb-2 text-[11px] uppercase tracking-wide">Columnas reconocidas automáticamente:</p>
                     <div className="grid grid-cols-2 gap-x-6 gap-y-1">
                       {[
